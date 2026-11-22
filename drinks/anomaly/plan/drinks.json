@@ -1,0 +1,307 @@
+[
+  {
+    "id": 7,
+    "name": "ジンジャーエール",
+    "rarity": "R",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 1,
+    "description": "強気に変更\n全力値+1",
+    "dsl": {
+      "actions": "setStance(strength); fullPowerCharge+=1"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "call",
+              "name": "setStance",
+              "target": null,
+              "args": [
+                {
+                  "type": "identifier",
+                  "name": "strength"
+                }
+              ]
+            },
+            {
+              "type": "assignment",
+              "lhs": "fullPowerCharge",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/7.png",
+      "details": "images/details/7.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/anomaly/plan/images/icons/7.png",
+      "repoDetails": "drinks/anomaly/plan/images/details/7.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 8,
+    "name": "ほうじ茶",
+    "rarity": "R",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 1,
+    "description": "温存に変更\n全力値+2",
+    "dsl": {
+      "actions": "setStance(preservation); fullPowerCharge+=2"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "call",
+              "name": "setStance",
+              "target": null,
+              "args": [
+                {
+                  "type": "identifier",
+                  "name": "preservation"
+                }
+              ]
+            },
+            {
+              "type": "assignment",
+              "lhs": "fullPowerCharge",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/8.png",
+      "details": "images/details/8.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/anomaly/plan/images/icons/8.png",
+      "repoDetails": "drinks/anomaly/plan/images/details/8.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 17,
+    "name": "ほっと緑茶",
+    "rarity": "SR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 21,
+    "description": "山札か捨札にあるスキルカードを選択し、保留に移動\n温存2段階目に変更",
+    "dsl": {
+      "actions": "holdSelected[deck | discarded]; setStance(preservation2)"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "call",
+              "name": "holdSelected",
+              "target": {
+                "type": "binary",
+                "op": "|",
+                "left": {
+                  "type": "identifier",
+                  "name": "deck"
+                },
+                "right": {
+                  "type": "identifier",
+                  "name": "discarded"
+                }
+              },
+              "args": []
+            },
+            {
+              "type": "call",
+              "name": "setStance",
+              "target": null,
+              "args": [
+                {
+                  "type": "identifier",
+                  "name": "preservation2"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/17.png",
+      "details": "images/details/17.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/anomaly/plan/images/icons/17.png",
+      "repoDetails": "drinks/anomaly/plan/images/details/17.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 26,
+    "name": "初星スーパーソーダ",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 26,
+    "description": "強気2段階目に変更\n消費体力減少1ターン",
+    "dsl": {
+      "actions": "setStance(strength2); halfCostTurns+=1"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "call",
+              "name": "setStance",
+              "target": null,
+              "args": [
+                {
+                  "type": "identifier",
+                  "name": "strength2"
+                }
+              ]
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/26.png",
+      "details": "images/details/26.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/anomaly/plan/images/icons/26.png",
+      "repoDetails": "drinks/anomaly/plan/images/details/26.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 27,
+    "name": "厳選初星チャイ",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 27,
+    "description": "以降、ターン開始時、全力値+1",
+    "dsl": {
+      "actions": "at:startOfTurn { fullPowerCharge+=1 }"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "phase": "startOfTurn",
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "fullPowerCharge",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/27.png",
+      "details": "images/details/27.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/anomaly/plan/images/icons/27.png",
+      "repoDetails": "drinks/anomaly/plan/images/details/27.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 28,
+    "name": "初星湯",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 60,
+    "description": "ターン追加+1\n体力消費2\n消費体力増加1ターン",
+    "dsl": {
+      "actions": "turnsRemaining+=1; fixedStamina-=2; doubleCostTurns+=1"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "turnsRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "fixedStamina",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "doubleCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/28.png",
+      "details": "images/details/28.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/anomaly/plan/images/icons/28.png",
+      "repoDetails": "drinks/anomaly/plan/images/details/28.png",
+      "repoIconVariants": {}
+    }
+  }
+]

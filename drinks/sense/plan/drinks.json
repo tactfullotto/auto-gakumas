@@ -1,0 +1,285 @@
+[
+  {
+    "id": 3,
+    "name": "ビタミンドリンク",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 1,
+    "description": "好調3ターン",
+    "dsl": {
+      "actions": "goodConditionTurns+=3"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "goodConditionTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/3.png",
+      "details": "images/details/3.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/plan/images/icons/3.png",
+      "repoDetails": "drinks/sense/plan/images/details/3.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 4,
+    "name": "アイスコーヒー",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 1,
+    "description": "集中+3",
+    "dsl": {
+      "actions": "concentration+=3"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "concentration",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/4.png",
+      "details": "images/details/4.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/plan/images/icons/4.png",
+      "repoDetails": "drinks/sense/plan/images/details/4.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 15,
+    "name": "スタミナ爆発ドリンク",
+    "rarity": "SR",
+    "plan": "sense",
+    "planZh": "感性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 21,
+    "description": "絶好調1ターン\n元気+9",
+    "dsl": {
+      "actions": "perfectConditionTurns+=1; genki+=9"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "perfectConditionTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 9
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/15.png",
+      "details": "images/details/15.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/plan/images/icons/15.png",
+      "repoDetails": "drinks/sense/plan/images/details/15.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 20,
+    "name": "厳選初星マキアート",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 27,
+    "description": "以降、ターン終了時、集中+1",
+    "dsl": {
+      "actions": "at:endOfTurn { concentration+=1 }"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "phase": "endOfTurn",
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "concentration",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/20.png",
+      "details": "images/details/20.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/plan/images/icons/20.png",
+      "repoDetails": "drinks/sense/plan/images/details/20.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 21,
+    "name": "初星ブーストエナジー",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 26,
+    "description": "絶好調2ターン\n手札をすべてレッスン中強化",
+    "dsl": {
+      "actions": "perfectConditionTurns+=2; upgradeHand"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "perfectConditionTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/21.png",
+      "details": "images/details/21.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/plan/images/icons/21.png",
+      "repoDetails": "drinks/sense/plan/images/details/21.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 22,
+    "name": "初星黒酢",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 61,
+    "description": "山札か捨札にあるスキルカードを選択し、手札に移動\n次に使用したスキルカードの消費体力を0にする（2回）\n体力消費2\n消費体力増加1ターン",
+    "dsl": {
+      "actions": "moveSelectedToHand[deck | discarded]; nullifyCostCards+=2; fixedStamina-=2; doubleCostTurns+=1"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "call",
+              "name": "moveSelectedToHand",
+              "target": {
+                "type": "binary",
+                "op": "|",
+                "left": {
+                  "type": "identifier",
+                  "name": "deck"
+                },
+                "right": {
+                  "type": "identifier",
+                  "name": "discarded"
+                }
+              },
+              "args": []
+            },
+            {
+              "type": "assignment",
+              "lhs": "nullifyCostCards",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "fixedStamina",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "doubleCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/22.png",
+      "details": "images/details/22.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/plan/images/icons/22.png",
+      "repoDetails": "drinks/sense/plan/images/details/22.png",
+      "repoIconVariants": {}
+    }
+  }
+]

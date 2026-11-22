@@ -1,0 +1,286 @@
+[
+  {
+    "id": 5,
+    "name": "ルイボスティー",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 1,
+    "description": "好印象+3",
+    "dsl": {
+      "actions": "goodImpressionTurns+=3"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "goodImpressionTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/5.png",
+      "details": "images/details/5.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/logic/plan/images/icons/5.png",
+      "repoDetails": "drinks/logic/plan/images/details/5.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 6,
+    "name": "ホットコーヒー",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 1,
+    "description": "やる気+3",
+    "dsl": {
+      "actions": "motivation+=3"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "motivation",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/6.png",
+      "details": "images/details/6.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/logic/plan/images/icons/6.png",
+      "repoDetails": "drinks/logic/plan/images/details/6.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 16,
+    "name": "おしゃれハーブティー",
+    "rarity": "SR",
+    "plan": "logic",
+    "planZh": "理性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 21,
+    "description": "好印象の100%分パラメータ上昇\n元気+3",
+    "dsl": {
+      "actions": "score+=goodImpressionTurns; genki+=3"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "identifier",
+                "name": "goodImpressionTurns"
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/16.png",
+      "details": "images/details/16.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/logic/plan/images/icons/16.png",
+      "repoDetails": "drinks/logic/plan/images/details/16.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 23,
+    "name": "厳選初星ティー",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 27,
+    "description": "以降、ターン終了時、好印象+1",
+    "dsl": {
+      "actions": "at:endOfTurn { goodImpressionTurns+=1 }"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "phase": "endOfTurn",
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "goodImpressionTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/23.png",
+      "details": "images/details/23.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/logic/plan/images/icons/23.png",
+      "repoDetails": "drinks/logic/plan/images/details/23.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 24,
+    "name": "厳選初星ブレンド",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 26,
+    "description": "以降、ターン終了時、やる気+1",
+    "dsl": {
+      "actions": "at:endOfTurn { motivation+=1 }"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "phase": "endOfTurn",
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "motivation",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/24.png",
+      "details": "images/details/24.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/logic/plan/images/icons/24.png",
+      "repoDetails": "drinks/logic/plan/images/details/24.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 25,
+    "name": "特製ハツボシエキス",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 55,
+    "description": "次に使用するアクティブスキルカードの効果をもう1回発動（1回・1ターン）\n体力消費2\n消費体力増加1ターン",
+    "dsl": {
+      "actions": "at:cardUsed[active] { if:cardRarity!=L { doubleCardEffectCards+=1 }; limit:1; ttl:1 }; fixedStamina-=2; doubleCostTurns+=1"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "phase": "activeCardUsed",
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": "!=",
+              "left": {
+                "type": "identifier",
+                "name": "cardRarity"
+              },
+              "right": {
+                "type": "identifier",
+                "name": "L"
+              }
+            }
+          ],
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "doubleCardEffectCards",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ],
+          "limit": 1,
+          "ttl": 1
+        },
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "fixedStamina",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "doubleCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "images/icons/25.png",
+      "details": "images/details/25.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/logic/plan/images/icons/25.png",
+      "repoDetails": "drinks/logic/plan/images/details/25.png",
+      "repoIconVariants": {}
+    }
+  }
+]

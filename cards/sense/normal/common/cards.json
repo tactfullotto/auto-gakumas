@@ -1,0 +1,7681 @@
+[
+  {
+    "id": 1,
+    "baseId": 1,
+    "upgradedId": 2,
+    "name": "アピールの基本",
+    "rarity": "N",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "default",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": false,
+    "isUniqueInDeck": false,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": null,
+    "contestPower": 0,
+    "hidden": false,
+    "description": "パラメータ+9",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=4",
+      "actions": "score+=9",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 9
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/1.png",
+      "details": "images/details/1.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/1.png",
+      "repoDetails": "cards/sense/normal/common/images/details/1.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 2,
+    "baseId": 1,
+    "upgradedId": null,
+    "name": "アピールの基本+",
+    "rarity": "N",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "default",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": false,
+    "isUniqueInDeck": false,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": null,
+    "contestPower": 0,
+    "hidden": false,
+    "description": "パラメータ+14",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=3",
+      "actions": "score+=14",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 14
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/2.png",
+      "details": "images/details/2.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/2.png",
+      "repoDetails": "cards/sense/normal/common/images/details/2.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 3,
+    "baseId": 3,
+    "upgradedId": 4,
+    "name": "ポーズの基本",
+    "rarity": "N",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "default",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": false,
+    "isUniqueInDeck": false,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": null,
+    "contestPower": 0,
+    "hidden": false,
+    "description": "パラメータ+2\n元気+2",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=3",
+      "actions": "score+=2; genki+=2",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/3.png",
+      "details": "images/details/3.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/3.png",
+      "repoDetails": "cards/sense/normal/common/images/details/3.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 4,
+    "baseId": 3,
+    "upgradedId": null,
+    "name": "ポーズの基本+",
+    "rarity": "N",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "default",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": false,
+    "isUniqueInDeck": false,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": null,
+    "contestPower": 0,
+    "hidden": false,
+    "description": "パラメータ+6\n元気+4",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=3",
+      "actions": "score+=6; genki+=4",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 6
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/4.png",
+      "details": "images/details/4.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/4.png",
+      "repoDetails": "cards/sense/normal/common/images/details/4.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 13,
+    "baseId": 13,
+    "upgradedId": 14,
+    "name": "表現の基本",
+    "rarity": "N",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "default",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": false,
+    "isUniqueInDeck": false,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 0,
+    "hidden": false,
+    "description": "元気+4\nレッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "genki+=4",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/13.png",
+      "details": "images/details/13.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/13.png",
+      "repoDetails": "cards/sense/normal/common/images/details/13.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 14,
+    "baseId": 13,
+    "upgradedId": null,
+    "name": "表現の基本+",
+    "rarity": "N",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "default",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": false,
+    "isUniqueInDeck": false,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 0,
+    "hidden": false,
+    "description": "元気+7\nレッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "genki+=7",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 7
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/14.png",
+      "details": "images/details/14.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/14.png",
+      "repoDetails": "cards/sense/normal/common/images/details/14.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 23,
+    "baseId": 23,
+    "upgradedId": null,
+    "name": "眠気",
+    "rarity": "T",
+    "type": "trouble",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": false,
+    "isUniqueInDeck": false,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": 158,
+    "relatedPIdol": {
+      "id": 158,
+      "idolId": 5,
+      "idolName": "葛城 リーリヤ",
+      "title": "Agitato",
+      "rarity": "SSR",
+      "plan": "sense",
+      "planZh": "感性",
+      "recommendedEffect": "goodConditionTurns"
+    },
+    "generatedByCardIds": [
+      702,
+      703,
+      704,
+      705,
+      706,
+      707,
+      708,
+      709,
+      710,
+      711,
+      712,
+      713,
+      714,
+      715,
+      716,
+      717,
+      718,
+      719,
+      883,
+      884
+    ],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 0,
+    "hidden": false,
+    "description": "レッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/23.png",
+      "details": "images/details/23.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/23.png",
+      "repoDetails": "cards/sense/normal/common/images/details/23.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 48,
+    "baseId": 48,
+    "upgradedId": 49,
+    "name": "気合十分！",
+    "rarity": "R",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 16,
+    "upgraded": false,
+    "unique": false,
+    "isUniqueInDeck": false,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": null,
+    "contestPower": 45,
+    "hidden": false,
+    "description": "元気+2\n消費体力減少2ターン",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "genki+=2; halfCostTurns+=2",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/48.png",
+      "details": "images/details/48.png",
+      "iconVariants": {
+        "1": "images/icon_variants/48_1.png",
+        "2": "images/icon_variants/48_2.png",
+        "3": "images/icon_variants/48_3.png",
+        "4": "images/icon_variants/48_4.png",
+        "5": "images/icon_variants/48_5.png",
+        "6": "images/icon_variants/48_6.png",
+        "7": "images/icon_variants/48_7.png",
+        "8": "images/icon_variants/48_8.png",
+        "9": "images/icon_variants/48_9.png",
+        "10": "images/icon_variants/48_10.png",
+        "11": "images/icon_variants/48_11.png",
+        "12": "images/icon_variants/48_12.png",
+        "13": "images/icon_variants/48_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/48.png",
+      "repoDetails": "cards/sense/normal/common/images/details/48.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/48_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/48_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/48_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/48_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/48_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/48_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/48_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/48_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/48_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/48_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/48_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/48_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/48_13.png"
+      }
+    }
+  },
+  {
+    "id": 49,
+    "baseId": 48,
+    "upgradedId": null,
+    "name": "気合十分！+",
+    "rarity": "R",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 16,
+    "upgraded": true,
+    "unique": false,
+    "isUniqueInDeck": false,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": null,
+    "contestPower": 60,
+    "hidden": false,
+    "description": "元気+2\n消費体力減少3ターン",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "genki+=2; halfCostTurns+=3",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      75,
+      74,
+      36
+    ],
+    "availableCustomizations": [
+      {
+        "id": 75,
+        "alias": "genki3",
+        "name": "元気+",
+        "type": "genki",
+        "prices": [
+          40,
+          40,
+          70
+        ],
+        "maxLevel": 3
+      },
+      {
+        "id": 74,
+        "alias": "halfCostTurns3",
+        "name": "消費軽減+",
+        "type": "buff",
+        "prices": [
+          40,
+          40,
+          70
+        ],
+        "maxLevel": 3
+      },
+      {
+        "id": 36,
+        "alias": "forceInitialHand1",
+        "name": "開始時手札に入る",
+        "type": "effect",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/49.png",
+      "details": "images/details/49.png",
+      "iconVariants": {
+        "1": "images/icon_variants/49_1.png",
+        "2": "images/icon_variants/49_2.png",
+        "3": "images/icon_variants/49_3.png",
+        "4": "images/icon_variants/49_4.png",
+        "5": "images/icon_variants/49_5.png",
+        "6": "images/icon_variants/49_6.png",
+        "7": "images/icon_variants/49_7.png",
+        "8": "images/icon_variants/49_8.png",
+        "9": "images/icon_variants/49_9.png",
+        "10": "images/icon_variants/49_10.png",
+        "11": "images/icon_variants/49_11.png",
+        "12": "images/icon_variants/49_12.png",
+        "13": "images/icon_variants/49_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/49.png",
+      "repoDetails": "cards/sense/normal/common/images/details/49.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/49_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/49_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/49_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/49_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/49_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/49_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/49_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/49_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/49_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/49_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/49_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/49_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/49_13.png"
+      }
+    }
+  },
+  {
+    "id": 50,
+    "baseId": 50,
+    "upgradedId": 51,
+    "name": "ファーストステップ",
+    "rarity": "R",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 16,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 45,
+    "hidden": false,
+    "description": "元気+3\n体力が50%以上の場合、消費体力削減1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "genki+=3; if:stamina>=maxStamina*0.5 { costReduction+=1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": ">=",
+              "left": {
+                "type": "identifier",
+                "name": "stamina"
+              },
+              "right": {
+                "type": "binary",
+                "op": "*",
+                "left": {
+                  "type": "identifier",
+                  "name": "maxStamina"
+                },
+                "right": {
+                  "type": "number",
+                  "value": 0.5
+                }
+              }
+            }
+          ],
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "costReduction",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/50.png",
+      "details": "images/details/50.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/50.png",
+      "repoDetails": "cards/sense/normal/common/images/details/50.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 51,
+    "baseId": 50,
+    "upgradedId": null,
+    "name": "ファーストステップ+",
+    "rarity": "R",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 16,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 60,
+    "hidden": false,
+    "description": "元気+6\n体力が50%以上の場合、消費体力削減1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "genki+=6; if:stamina>=maxStamina*0.5 { costReduction+=1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 6
+              }
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": ">=",
+              "left": {
+                "type": "identifier",
+                "name": "stamina"
+              },
+              "right": {
+                "type": "binary",
+                "op": "*",
+                "left": {
+                  "type": "identifier",
+                  "name": "maxStamina"
+                },
+                "right": {
+                  "type": "number",
+                  "value": 0.5
+                }
+              }
+            }
+          ],
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "costReduction",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      75,
+      36,
+      3
+    ],
+    "availableCustomizations": [
+      {
+        "id": 75,
+        "alias": "genki3",
+        "name": "元気+",
+        "type": "genki",
+        "prices": [
+          40,
+          40,
+          70
+        ],
+        "maxLevel": 3
+      },
+      {
+        "id": 36,
+        "alias": "forceInitialHand1",
+        "name": "開始時手札に入る",
+        "type": "effect",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 3,
+        "alias": "scoreAdd1_6",
+        "name": "パラメータ追加",
+        "type": "score",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/51.png",
+      "details": "images/details/51.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/51.png",
+      "repoDetails": "cards/sense/normal/common/images/details/51.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 70,
+    "baseId": 70,
+    "upgradedId": 71,
+    "name": "前途洋々",
+    "rarity": "SR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 3,
+    "upgraded": false,
+    "unique": false,
+    "isUniqueInDeck": false,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": null,
+    "contestPower": 105,
+    "hidden": false,
+    "description": "パラメータ+8\n元気+7",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=4",
+      "actions": "score+=8; genki+=7",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 8
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 7
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/70.png",
+      "details": "images/details/70.png",
+      "iconVariants": {
+        "1": "images/icon_variants/70_1.png",
+        "2": "images/icon_variants/70_2.png",
+        "3": "images/icon_variants/70_3.png",
+        "4": "images/icon_variants/70_4.png",
+        "5": "images/icon_variants/70_5.png",
+        "6": "images/icon_variants/70_6.png",
+        "7": "images/icon_variants/70_7.png",
+        "8": "images/icon_variants/70_8.png",
+        "9": "images/icon_variants/70_9.png",
+        "10": "images/icon_variants/70_10.png",
+        "11": "images/icon_variants/70_11.png",
+        "12": "images/icon_variants/70_12.png",
+        "13": "images/icon_variants/70_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/70.png",
+      "repoDetails": "cards/sense/normal/common/images/details/70.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/70_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/70_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/70_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/70_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/70_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/70_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/70_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/70_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/70_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/70_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/70_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/70_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/70_13.png"
+      }
+    }
+  },
+  {
+    "id": 71,
+    "baseId": 70,
+    "upgradedId": null,
+    "name": "前途洋々+",
+    "rarity": "SR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 3,
+    "upgraded": true,
+    "unique": false,
+    "isUniqueInDeck": false,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": null,
+    "contestPower": 141,
+    "hidden": false,
+    "description": "パラメータ+12\n元気+10",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=4",
+      "actions": "score+=12; genki+=10",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 12
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 10
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      59,
+      4,
+      47
+    ],
+    "availableCustomizations": [
+      {
+        "id": 59,
+        "alias": "genki2",
+        "name": "元気+",
+        "type": "genki",
+        "prices": [
+          40,
+          70
+        ],
+        "maxLevel": 2
+      },
+      {
+        "id": 4,
+        "alias": "scoreTimes1",
+        "name": "パラメータ上昇回数+",
+        "type": "score",
+        "prices": [
+          100
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 47,
+        "alias": "score2_3",
+        "name": "パラメータ+",
+        "type": "score",
+        "prices": [
+          40,
+          70
+        ],
+        "maxLevel": 2
+      }
+    ],
+    "images": {
+      "icon": "images/icons/71.png",
+      "details": "images/details/71.png",
+      "iconVariants": {
+        "1": "images/icon_variants/71_1.png",
+        "2": "images/icon_variants/71_2.png",
+        "3": "images/icon_variants/71_3.png",
+        "4": "images/icon_variants/71_4.png",
+        "5": "images/icon_variants/71_5.png",
+        "6": "images/icon_variants/71_6.png",
+        "7": "images/icon_variants/71_7.png",
+        "8": "images/icon_variants/71_8.png",
+        "9": "images/icon_variants/71_9.png",
+        "10": "images/icon_variants/71_10.png",
+        "11": "images/icon_variants/71_11.png",
+        "12": "images/icon_variants/71_12.png",
+        "13": "images/icon_variants/71_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/71.png",
+      "repoDetails": "cards/sense/normal/common/images/details/71.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/71_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/71_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/71_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/71_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/71_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/71_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/71_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/71_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/71_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/71_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/71_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/71_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/71_13.png"
+      }
+    }
+  },
+  {
+    "id": 98,
+    "baseId": 98,
+    "upgradedId": 99,
+    "name": "アイドル宣言",
+    "rarity": "SR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 23,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 105,
+    "hidden": false,
+    "description": "体力消費1\nスキルカード使用数追加+1\nスキルカードを2枚引く\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "stamina-=1",
+      "actions": "cardUsesRemaining+=1; drawCard(2)",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "stamina",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "call",
+              "name": "drawCard",
+              "target": null,
+              "args": [
+                {
+                  "type": "number",
+                  "value": 2
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/98.png",
+      "details": "images/details/98.png",
+      "iconVariants": {
+        "1": "images/icon_variants/98_1.png",
+        "2": "images/icon_variants/98_2.png",
+        "3": "images/icon_variants/98_3.png",
+        "4": "images/icon_variants/98_4.png",
+        "5": "images/icon_variants/98_5.png",
+        "6": "images/icon_variants/98_6.png",
+        "7": "images/icon_variants/98_7.png",
+        "8": "images/icon_variants/98_8.png",
+        "9": "images/icon_variants/98_9.png",
+        "10": "images/icon_variants/98_10.png",
+        "11": "images/icon_variants/98_11.png",
+        "12": "images/icon_variants/98_12.png",
+        "13": "images/icon_variants/98_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/98.png",
+      "repoDetails": "cards/sense/normal/common/images/details/98.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/98_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/98_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/98_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/98_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/98_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/98_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/98_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/98_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/98_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/98_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/98_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/98_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/98_13.png"
+      }
+    }
+  },
+  {
+    "id": 99,
+    "baseId": 98,
+    "upgradedId": null,
+    "name": "アイドル宣言+",
+    "rarity": "SR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 23,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 141,
+    "hidden": false,
+    "description": "スキルカード使用数追加+1\nスキルカードを2枚引く\n消費体力減少1ターン\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "cardUsesRemaining+=1; drawCard(2); halfCostTurns+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "call",
+              "name": "drawCard",
+              "target": null,
+              "args": [
+                {
+                  "type": "number",
+                  "value": 2
+                }
+              ]
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      24,
+      27
+    ],
+    "availableCustomizations": [
+      {
+        "id": 24,
+        "alias": "halfCostTurns1",
+        "name": "消費軽減+",
+        "type": "buff",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 27,
+        "alias": "genkiAdd1_4",
+        "name": "元気追加",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/99.png",
+      "details": "images/details/99.png",
+      "iconVariants": {
+        "1": "images/icon_variants/99_1.png",
+        "2": "images/icon_variants/99_2.png",
+        "3": "images/icon_variants/99_3.png",
+        "4": "images/icon_variants/99_4.png",
+        "5": "images/icon_variants/99_5.png",
+        "6": "images/icon_variants/99_6.png",
+        "7": "images/icon_variants/99_7.png",
+        "8": "images/icon_variants/99_8.png",
+        "9": "images/icon_variants/99_9.png",
+        "10": "images/icon_variants/99_10.png",
+        "11": "images/icon_variants/99_11.png",
+        "12": "images/icon_variants/99_12.png",
+        "13": "images/icon_variants/99_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/99.png",
+      "repoDetails": "cards/sense/normal/common/images/details/99.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/99_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/99_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/99_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/99_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/99_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/99_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/99_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/99_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/99_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/99_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/99_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/99_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/99_13.png"
+      }
+    }
+  },
+  {
+    "id": 100,
+    "baseId": 100,
+    "upgradedId": 101,
+    "name": "ハイテンション",
+    "rarity": "SR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 23,
+    "upgraded": false,
+    "unique": false,
+    "isUniqueInDeck": false,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 105,
+    "hidden": false,
+    "description": "元気+11\n元気増加無効2ターン\n消費体力減少3ターン\nレッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "genki+=11; nullifyGenkiTurns+=2; halfCostTurns+=3",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 11
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "nullifyGenkiTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/100.png",
+      "details": "images/details/100.png",
+      "iconVariants": {
+        "1": "images/icon_variants/100_1.png",
+        "2": "images/icon_variants/100_2.png",
+        "3": "images/icon_variants/100_3.png",
+        "4": "images/icon_variants/100_4.png",
+        "5": "images/icon_variants/100_5.png",
+        "6": "images/icon_variants/100_6.png",
+        "7": "images/icon_variants/100_7.png",
+        "8": "images/icon_variants/100_8.png",
+        "9": "images/icon_variants/100_9.png",
+        "10": "images/icon_variants/100_10.png",
+        "11": "images/icon_variants/100_11.png",
+        "12": "images/icon_variants/100_12.png",
+        "13": "images/icon_variants/100_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/100.png",
+      "repoDetails": "cards/sense/normal/common/images/details/100.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/100_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/100_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/100_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/100_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/100_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/100_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/100_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/100_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/100_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/100_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/100_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/100_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/100_13.png"
+      }
+    }
+  },
+  {
+    "id": 101,
+    "baseId": 100,
+    "upgradedId": null,
+    "name": "ハイテンション+",
+    "rarity": "SR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 23,
+    "upgraded": true,
+    "unique": false,
+    "isUniqueInDeck": false,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 141,
+    "hidden": false,
+    "description": "元気+13\n元気増加無効2ターン\n消費体力減少4ターン\nレッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "genki+=13; nullifyGenkiTurns+=2; halfCostTurns+=4",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 13
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "nullifyGenkiTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      3,
+      59,
+      58
+    ],
+    "availableCustomizations": [
+      {
+        "id": 3,
+        "alias": "scoreAdd1_6",
+        "name": "パラメータ追加",
+        "type": "score",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 59,
+        "alias": "genki2",
+        "name": "元気+",
+        "type": "genki",
+        "prices": [
+          40,
+          70
+        ],
+        "maxLevel": 2
+      },
+      {
+        "id": 58,
+        "alias": "halfCostTurns2",
+        "name": "消費軽減+",
+        "type": "buff",
+        "prices": [
+          40,
+          70
+        ],
+        "maxLevel": 2
+      }
+    ],
+    "images": {
+      "icon": "images/icons/101.png",
+      "details": "images/details/101.png",
+      "iconVariants": {
+        "1": "images/icon_variants/101_1.png",
+        "2": "images/icon_variants/101_2.png",
+        "3": "images/icon_variants/101_3.png",
+        "4": "images/icon_variants/101_4.png",
+        "5": "images/icon_variants/101_5.png",
+        "6": "images/icon_variants/101_6.png",
+        "7": "images/icon_variants/101_7.png",
+        "8": "images/icon_variants/101_8.png",
+        "9": "images/icon_variants/101_9.png",
+        "10": "images/icon_variants/101_10.png",
+        "11": "images/icon_variants/101_11.png",
+        "12": "images/icon_variants/101_12.png",
+        "13": "images/icon_variants/101_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/101.png",
+      "repoDetails": "cards/sense/normal/common/images/details/101.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/101_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/101_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/101_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/101_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/101_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/101_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/101_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/101_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/101_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/101_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/101_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/101_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/101_13.png"
+      }
+    }
+  },
+  {
+    "id": 154,
+    "baseId": 154,
+    "upgradedId": 155,
+    "name": "テレビ出演",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 5,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 150,
+    "hidden": false,
+    "description": "元気+3\n消費体力減少4ターン\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=1",
+      "actions": "genki+=3; halfCostTurns+=4",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/154.png",
+      "details": "images/details/154.png",
+      "iconVariants": {
+        "1": "images/icon_variants/154_1.png",
+        "2": "images/icon_variants/154_2.png",
+        "3": "images/icon_variants/154_3.png",
+        "4": "images/icon_variants/154_4.png",
+        "5": "images/icon_variants/154_5.png",
+        "6": "images/icon_variants/154_6.png",
+        "7": "images/icon_variants/154_7.png",
+        "8": "images/icon_variants/154_8.png",
+        "9": "images/icon_variants/154_9.png",
+        "10": "images/icon_variants/154_10.png",
+        "11": "images/icon_variants/154_11.png",
+        "12": "images/icon_variants/154_12.png",
+        "13": "images/icon_variants/154_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/154.png",
+      "repoDetails": "cards/sense/normal/common/images/details/154.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/154_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/154_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/154_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/154_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/154_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/154_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/154_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/154_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/154_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/154_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/154_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/154_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/154_13.png"
+      }
+    }
+  },
+  {
+    "id": 155,
+    "baseId": 154,
+    "upgradedId": null,
+    "name": "テレビ出演+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 5,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 204,
+    "hidden": false,
+    "description": "元気+5\n消費体力減少5ターン\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=1",
+      "actions": "genki+=5; halfCostTurns+=5",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      38,
+      3
+    ],
+    "availableCustomizations": [
+      {
+        "id": 38,
+        "alias": "cardUsesRemaining1",
+        "name": "スキルカード使用数+",
+        "type": "effect",
+        "prices": [
+          100
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 3,
+        "alias": "scoreAdd1_6",
+        "name": "パラメータ追加",
+        "type": "score",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/155.png",
+      "details": "images/details/155.png",
+      "iconVariants": {
+        "1": "images/icon_variants/155_1.png",
+        "2": "images/icon_variants/155_2.png",
+        "3": "images/icon_variants/155_3.png",
+        "4": "images/icon_variants/155_4.png",
+        "5": "images/icon_variants/155_5.png",
+        "6": "images/icon_variants/155_6.png",
+        "7": "images/icon_variants/155_7.png",
+        "8": "images/icon_variants/155_8.png",
+        "9": "images/icon_variants/155_9.png",
+        "10": "images/icon_variants/155_10.png",
+        "11": "images/icon_variants/155_11.png",
+        "12": "images/icon_variants/155_12.png",
+        "13": "images/icon_variants/155_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/155.png",
+      "repoDetails": "cards/sense/normal/common/images/details/155.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/155_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/155_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/155_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/155_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/155_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/155_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/155_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/155_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/155_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/155_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/155_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/155_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/155_13.png"
+      }
+    }
+  },
+  {
+    "id": 156,
+    "baseId": 156,
+    "upgradedId": 157,
+    "name": "叶えたい夢",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 10,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 150,
+    "hidden": false,
+    "description": "体力消費1\n元気+8\n消費体力削減1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "stamina-=1",
+      "actions": "genki+=8; costReduction+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "stamina",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 8
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "costReduction",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/156.png",
+      "details": "images/details/156.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/156.png",
+      "repoDetails": "cards/sense/normal/common/images/details/156.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 157,
+    "baseId": 156,
+    "upgradedId": null,
+    "name": "叶えたい夢+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 10,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 204,
+    "hidden": false,
+    "description": "体力消費1\n元気+9\n消費体力削減2\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "stamina-=1",
+      "actions": "genki+=9; costReduction+=2",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "stamina",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 9
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "costReduction",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      27,
+      25
+    ],
+    "availableCustomizations": [
+      {
+        "id": 27,
+        "alias": "genkiAdd1_4",
+        "name": "元気追加",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 25,
+        "alias": "genki1_4",
+        "name": "元気+",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/157.png",
+      "details": "images/details/157.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/157.png",
+      "repoDetails": "cards/sense/normal/common/images/details/157.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 158,
+    "baseId": 158,
+    "upgradedId": 159,
+    "name": "アイドル魂",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 35,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": true,
+    "limit": 1,
+    "contestPower": 150,
+    "hidden": false,
+    "description": "レッスン開始時手札に入る\n元気+6\n低下状態無効1回\nスキルカード使用数追加+1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=2",
+      "actions": "genki+=6; nullifyDebuff+=1; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 6
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "nullifyDebuff",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/158.png",
+      "details": "images/details/158.png",
+      "iconVariants": {
+        "1": "images/icon_variants/158_1.png",
+        "2": "images/icon_variants/158_2.png",
+        "3": "images/icon_variants/158_3.png",
+        "4": "images/icon_variants/158_4.png",
+        "5": "images/icon_variants/158_5.png",
+        "6": "images/icon_variants/158_6.png",
+        "7": "images/icon_variants/158_7.png",
+        "8": "images/icon_variants/158_8.png",
+        "9": "images/icon_variants/158_9.png",
+        "10": "images/icon_variants/158_10.png",
+        "11": "images/icon_variants/158_11.png",
+        "12": "images/icon_variants/158_12.png",
+        "13": "images/icon_variants/158_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/158.png",
+      "repoDetails": "cards/sense/normal/common/images/details/158.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/158_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/158_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/158_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/158_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/158_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/158_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/158_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/158_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/158_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/158_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/158_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/158_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/158_13.png"
+      }
+    }
+  },
+  {
+    "id": 159,
+    "baseId": 158,
+    "upgradedId": null,
+    "name": "アイドル魂+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 35,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": true,
+    "limit": 1,
+    "contestPower": 204,
+    "hidden": false,
+    "description": "レッスン開始時手札に入る\n元気+6\n低下状態無効1回\n次のターン、手札をすべてレッスン中強化\nスキルカード使用数追加+1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=2",
+      "actions": "genki+=6; nullifyDebuff+=1; cardUsesRemaining+=1; at:turn { upgradeHand; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 6
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "nullifyDebuff",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      26,
+      29
+    ],
+    "availableCustomizations": [
+      {
+        "id": 26,
+        "alias": "genki1_9",
+        "name": "元気+",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 29,
+        "alias": "cost1",
+        "name": "コスト値-",
+        "type": "cost",
+        "prices": [
+          20
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/159.png",
+      "details": "images/details/159.png",
+      "iconVariants": {
+        "1": "images/icon_variants/159_1.png",
+        "2": "images/icon_variants/159_2.png",
+        "3": "images/icon_variants/159_3.png",
+        "4": "images/icon_variants/159_4.png",
+        "5": "images/icon_variants/159_5.png",
+        "6": "images/icon_variants/159_6.png",
+        "7": "images/icon_variants/159_7.png",
+        "8": "images/icon_variants/159_8.png",
+        "9": "images/icon_variants/159_9.png",
+        "10": "images/icon_variants/159_10.png",
+        "11": "images/icon_variants/159_11.png",
+        "12": "images/icon_variants/159_12.png",
+        "13": "images/icon_variants/159_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/159.png",
+      "repoDetails": "cards/sense/normal/common/images/details/159.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/159_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/159_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/159_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/159_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/159_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/159_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/159_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/159_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/159_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/159_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/159_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/159_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/159_13.png"
+      }
+    }
+  },
+  {
+    "id": 160,
+    "baseId": 160,
+    "upgradedId": 161,
+    "name": "仕切り直し",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 40,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 150,
+    "hidden": false,
+    "description": "手札をすべて入れ替える\n消費体力減少4ターン\nスキルカード使用数追加+1\nスキルカードを2枚引く\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=5",
+      "actions": "exchangeHand; halfCostTurns+=4; cardUsesRemaining+=1; drawCard(2)",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "exchangeHand"
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "call",
+              "name": "drawCard",
+              "target": null,
+              "args": [
+                {
+                  "type": "number",
+                  "value": 2
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/160.png",
+      "details": "images/details/160.png",
+      "iconVariants": {
+        "1": "images/icon_variants/160_1.png",
+        "2": "images/icon_variants/160_2.png",
+        "3": "images/icon_variants/160_3.png",
+        "4": "images/icon_variants/160_4.png",
+        "5": "images/icon_variants/160_5.png",
+        "6": "images/icon_variants/160_6.png",
+        "7": "images/icon_variants/160_7.png",
+        "8": "images/icon_variants/160_8.png",
+        "9": "images/icon_variants/160_9.png",
+        "10": "images/icon_variants/160_10.png",
+        "11": "images/icon_variants/160_11.png",
+        "12": "images/icon_variants/160_12.png",
+        "13": "images/icon_variants/160_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/160.png",
+      "repoDetails": "cards/sense/normal/common/images/details/160.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/160_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/160_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/160_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/160_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/160_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/160_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/160_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/160_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/160_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/160_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/160_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/160_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/160_13.png"
+      }
+    }
+  },
+  {
+    "id": 161,
+    "baseId": 160,
+    "upgradedId": null,
+    "name": "仕切り直し+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "produce",
+    "unlockPlv": 40,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 204,
+    "hidden": false,
+    "description": "手札をすべて入れ替える\n消費体力減少4ターン\nスキルカード使用数追加+1\nスキルカードを2枚引く\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=2",
+      "actions": "exchangeHand; halfCostTurns+=4; cardUsesRemaining+=1; drawCard(2)",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "exchangeHand"
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "call",
+              "name": "drawCard",
+              "target": null,
+              "args": [
+                {
+                  "type": "number",
+                  "value": 2
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      29,
+      24
+    ],
+    "availableCustomizations": [
+      {
+        "id": 29,
+        "alias": "cost1",
+        "name": "コスト値-",
+        "type": "cost",
+        "prices": [
+          20
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 24,
+        "alias": "halfCostTurns1",
+        "name": "消費軽減+",
+        "type": "buff",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/161.png",
+      "details": "images/details/161.png",
+      "iconVariants": {
+        "1": "images/icon_variants/161_1.png",
+        "2": "images/icon_variants/161_2.png",
+        "3": "images/icon_variants/161_3.png",
+        "4": "images/icon_variants/161_4.png",
+        "5": "images/icon_variants/161_5.png",
+        "6": "images/icon_variants/161_6.png",
+        "7": "images/icon_variants/161_7.png",
+        "8": "images/icon_variants/161_8.png",
+        "9": "images/icon_variants/161_9.png",
+        "10": "images/icon_variants/161_10.png",
+        "11": "images/icon_variants/161_11.png",
+        "12": "images/icon_variants/161_12.png",
+        "13": "images/icon_variants/161_13.png"
+      },
+      "repoIcon": "cards/sense/normal/common/images/icons/161.png",
+      "repoDetails": "cards/sense/normal/common/images/details/161.png",
+      "repoIconVariants": {
+        "1": "cards/sense/normal/common/images/icon_variants/161_1.png",
+        "2": "cards/sense/normal/common/images/icon_variants/161_2.png",
+        "3": "cards/sense/normal/common/images/icon_variants/161_3.png",
+        "4": "cards/sense/normal/common/images/icon_variants/161_4.png",
+        "5": "cards/sense/normal/common/images/icon_variants/161_5.png",
+        "6": "cards/sense/normal/common/images/icon_variants/161_6.png",
+        "7": "cards/sense/normal/common/images/icon_variants/161_7.png",
+        "8": "cards/sense/normal/common/images/icon_variants/161_8.png",
+        "9": "cards/sense/normal/common/images/icon_variants/161_9.png",
+        "10": "cards/sense/normal/common/images/icon_variants/161_10.png",
+        "11": "cards/sense/normal/common/images/icon_variants/161_11.png",
+        "12": "cards/sense/normal/common/images/icon_variants/161_12.png",
+        "13": "cards/sense/normal/common/images/icon_variants/161_13.png"
+      }
+    }
+  },
+  {
+    "id": 236,
+    "baseId": 236,
+    "upgradedId": 237,
+    "name": "お姉ちゃんだもの！",
+    "rarity": "SR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "レッスンCLEARの100%以下の場合、使用可\nパラメータ+6\n元気+6\n次のターン、スキルカードを引く\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "if:score<=1000",
+      "cost": "cost-=3",
+      "actions": "score+=6; genki+=6; at:turn { drawCard; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [
+        {
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": "<=",
+              "left": {
+                "type": "identifier",
+                "name": "score"
+              },
+              "right": {
+                "type": "number",
+                "value": 1000
+              }
+            }
+          ]
+        }
+      ],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 6
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 6
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/236.png",
+      "details": "images/details/236.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/236.png",
+      "repoDetails": "cards/sense/normal/common/images/details/236.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 237,
+    "baseId": 236,
+    "upgradedId": null,
+    "name": "お姉ちゃんだもの！+",
+    "rarity": "SR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "レッスンCLEARの100%以下の場合、使用可\nパラメータ+10\n元気+9\n次のターン、スキルカードを引く\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "if:score<=1000",
+      "cost": "cost-=3",
+      "actions": "score+=10; genki+=9; at:turn { drawCard; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [
+        {
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": "<=",
+              "left": {
+                "type": "identifier",
+                "name": "score"
+              },
+              "right": {
+                "type": "number",
+                "value": 1000
+              }
+            }
+          ]
+        }
+      ],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 10
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 9
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      59,
+      4,
+      47
+    ],
+    "availableCustomizations": [
+      {
+        "id": 59,
+        "alias": "genki2",
+        "name": "元気+",
+        "type": "genki",
+        "prices": [
+          40,
+          70
+        ],
+        "maxLevel": 2
+      },
+      {
+        "id": 4,
+        "alias": "scoreTimes1",
+        "name": "パラメータ上昇回数+",
+        "type": "score",
+        "prices": [
+          100
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 47,
+        "alias": "score2_3",
+        "name": "パラメータ+",
+        "type": "score",
+        "prices": [
+          40,
+          70
+        ],
+        "maxLevel": 2
+      }
+    ],
+    "images": {
+      "icon": "images/icons/237.png",
+      "details": "images/details/237.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/237.png",
+      "repoDetails": "cards/sense/normal/common/images/details/237.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 238,
+    "baseId": 238,
+    "upgradedId": 239,
+    "name": "おアツイ視線",
+    "rarity": "SR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "元気が0の場合、使用可\n元気+5\n消費体力減少2ターン\n次のターン、スキルカードを引く\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "if:genki==0",
+      "cost": "cost-=0",
+      "actions": "genki+=5; halfCostTurns+=2; at:turn { drawCard; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [
+        {
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": "==",
+              "left": {
+                "type": "identifier",
+                "name": "genki"
+              },
+              "right": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/238.png",
+      "details": "images/details/238.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/238.png",
+      "repoDetails": "cards/sense/normal/common/images/details/238.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 239,
+    "baseId": 238,
+    "upgradedId": null,
+    "name": "おアツイ視線+",
+    "rarity": "SR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "元気が0の場合、使用可\n元気+6\n消費体力減少3ターン\n次のターン、スキルカードを引く\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "if:genki==0",
+      "cost": "cost-=0",
+      "actions": "genki+=6; halfCostTurns+=3; at:turn { drawCard; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [
+        {
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": "==",
+              "left": {
+                "type": "identifier",
+                "name": "genki"
+              },
+              "right": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 6
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      59,
+      58,
+      3
+    ],
+    "availableCustomizations": [
+      {
+        "id": 59,
+        "alias": "genki2",
+        "name": "元気+",
+        "type": "genki",
+        "prices": [
+          40,
+          70
+        ],
+        "maxLevel": 2
+      },
+      {
+        "id": 58,
+        "alias": "halfCostTurns2",
+        "name": "消費軽減+",
+        "type": "buff",
+        "prices": [
+          40,
+          70
+        ],
+        "maxLevel": 2
+      },
+      {
+        "id": 3,
+        "alias": "scoreAdd1_6",
+        "name": "パラメータ追加",
+        "type": "score",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/239.png",
+      "details": "images/details/239.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/239.png",
+      "repoDetails": "cards/sense/normal/common/images/details/239.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 240,
+    "baseId": 240,
+    "upgradedId": 241,
+    "name": "ご指導ご鞭撻",
+    "rarity": "SR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "体力が50%以上の場合、使用可\nパラメータ+4\n元気+5\n次のターン、手札をすべてレッスン中強化\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "if:stamina>=maxStamina*0.5",
+      "cost": "cost-=5",
+      "actions": "score+=4; genki+=5; at:turn { upgradeHand; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [
+        {
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": ">=",
+              "left": {
+                "type": "identifier",
+                "name": "stamina"
+              },
+              "right": {
+                "type": "binary",
+                "op": "*",
+                "left": {
+                  "type": "identifier",
+                  "name": "maxStamina"
+                },
+                "right": {
+                  "type": "number",
+                  "value": 0.5
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/240.png",
+      "details": "images/details/240.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/240.png",
+      "repoDetails": "cards/sense/normal/common/images/details/240.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 241,
+    "baseId": 240,
+    "upgradedId": null,
+    "name": "ご指導ご鞭撻+",
+    "rarity": "SR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "体力が50%以上の場合、使用可\nパラメータ+4\n元気+5\n次のターン、手札をすべてレッスン中強化\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "if:stamina>=maxStamina*0.5",
+      "cost": "cost-=2",
+      "actions": "score+=4; genki+=5; at:turn { upgradeHand; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [
+        {
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": ">=",
+              "left": {
+                "type": "identifier",
+                "name": "stamina"
+              },
+              "right": {
+                "type": "binary",
+                "op": "*",
+                "left": {
+                  "type": "identifier",
+                  "name": "maxStamina"
+                },
+                "right": {
+                  "type": "number",
+                  "value": 0.5
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      48,
+      59,
+      27
+    ],
+    "availableCustomizations": [
+      {
+        "id": 48,
+        "alias": "score2_6",
+        "name": "パラメータ+",
+        "type": "score",
+        "prices": [
+          40,
+          70
+        ],
+        "maxLevel": 2
+      },
+      {
+        "id": 59,
+        "alias": "genki2",
+        "name": "元気+",
+        "type": "genki",
+        "prices": [
+          40,
+          70
+        ],
+        "maxLevel": 2
+      },
+      {
+        "id": 27,
+        "alias": "genkiAdd1_4",
+        "name": "元気追加",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/241.png",
+      "details": "images/details/241.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/241.png",
+      "repoDetails": "cards/sense/normal/common/images/details/241.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 242,
+    "baseId": 242,
+    "upgradedId": 243,
+    "name": "ストレッチ談義",
+    "rarity": "SR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "3ターン目以降の場合、使用可\nパラメータ+3\n消費体力減少2ターン\n次のターン、手札をすべてレッスン中強化\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "if:turnsElapsed>=2",
+      "cost": "cost-=3",
+      "actions": "score+=3; halfCostTurns+=2; at:turn { upgradeHand; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [
+        {
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": ">=",
+              "left": {
+                "type": "identifier",
+                "name": "turnsElapsed"
+              },
+              "right": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/242.png",
+      "details": "images/details/242.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/242.png",
+      "repoDetails": "cards/sense/normal/common/images/details/242.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 243,
+    "baseId": 242,
+    "upgradedId": null,
+    "name": "ストレッチ談義+",
+    "rarity": "SR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "3ターン目以降の場合、使用可\nパラメータ+3\n消費体力減少2ターン\n次のターン、手札をすべてレッスン中強化\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "if:turnsElapsed>=2",
+      "cost": "cost-=0",
+      "actions": "score+=3; halfCostTurns+=2; at:turn { upgradeHand; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [
+        {
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": ">=",
+              "left": {
+                "type": "identifier",
+                "name": "turnsElapsed"
+              },
+              "right": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      48,
+      58,
+      27
+    ],
+    "availableCustomizations": [
+      {
+        "id": 48,
+        "alias": "score2_6",
+        "name": "パラメータ+",
+        "type": "score",
+        "prices": [
+          40,
+          70
+        ],
+        "maxLevel": 2
+      },
+      {
+        "id": 58,
+        "alias": "halfCostTurns2",
+        "name": "消費軽減+",
+        "type": "buff",
+        "prices": [
+          40,
+          70
+        ],
+        "maxLevel": 2
+      },
+      {
+        "id": 27,
+        "alias": "genkiAdd1_4",
+        "name": "元気追加",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/243.png",
+      "details": "images/details/243.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/243.png",
+      "repoDetails": "cards/sense/normal/common/images/details/243.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 244,
+    "baseId": 244,
+    "upgradedId": 245,
+    "name": "全力サポート",
+    "rarity": "SR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "スキルカード使用数追加+1\n次のターン、スキルカードを引く\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=2",
+      "actions": "cardUsesRemaining+=1; at:turn { drawCard; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/244.png",
+      "details": "images/details/244.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/244.png",
+      "repoDetails": "cards/sense/normal/common/images/details/244.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 245,
+    "baseId": 244,
+    "upgradedId": null,
+    "name": "全力サポート+",
+    "rarity": "SR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "スキルカード使用数追加+1\n次のターン、スキルカードを2枚引く\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "cardUsesRemaining+=1; at:turn { drawCard(2); limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "call",
+              "name": "drawCard",
+              "target": null,
+              "args": [
+                {
+                  "type": "number",
+                  "value": 2
+                }
+              ]
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      3,
+      27
+    ],
+    "availableCustomizations": [
+      {
+        "id": 3,
+        "alias": "scoreAdd1_6",
+        "name": "パラメータ追加",
+        "type": "score",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 27,
+        "alias": "genkiAdd1_4",
+        "name": "元気追加",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/245.png",
+      "details": "images/details/245.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/245.png",
+      "repoDetails": "cards/sense/normal/common/images/details/245.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 246,
+    "baseId": 246,
+    "upgradedId": 247,
+    "name": "花萌ゆ季節",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "ランダムな強化済みスキルカードを、手札に生成\nスキルカード使用数追加+1\n次のターン、スキルカードを引く\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=4",
+      "actions": "addRandomUpgradedCardToHand; cardUsesRemaining+=1; at:turn { drawCard; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "addRandomUpgradedCardToHand"
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/246.png",
+      "details": "images/details/246.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/246.png",
+      "repoDetails": "cards/sense/normal/common/images/details/246.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 247,
+    "baseId": 246,
+    "upgradedId": null,
+    "name": "花萌ゆ季節+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "ランダムな強化済みスキルカードを、手札に生成\nスキルカード使用数追加+1\n次のターン、スキルカードを引く\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=1",
+      "actions": "addRandomUpgradedCardToHand; cardUsesRemaining+=1; at:turn { drawCard; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "addRandomUpgradedCardToHand"
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      27,
+      3
+    ],
+    "availableCustomizations": [
+      {
+        "id": 27,
+        "alias": "genkiAdd1_4",
+        "name": "元気追加",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 3,
+        "alias": "scoreAdd1_6",
+        "name": "パラメータ追加",
+        "type": "score",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/247.png",
+      "details": "images/details/247.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/247.png",
+      "repoDetails": "cards/sense/normal/common/images/details/247.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 248,
+    "baseId": 248,
+    "upgradedId": 249,
+    "name": "陽だまりの生徒会室",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "体力回復3\nスキルカード使用数追加+1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=3",
+      "actions": "fixedStamina+=3; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "fixedStamina",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/248.png",
+      "details": "images/details/248.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/248.png",
+      "repoDetails": "cards/sense/normal/common/images/details/248.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 249,
+    "baseId": 248,
+    "upgradedId": null,
+    "name": "陽だまりの生徒会室+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "体力回復5\nスキルカード使用数追加+1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=2",
+      "actions": "fixedStamina+=5; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "fixedStamina",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      3,
+      27
+    ],
+    "availableCustomizations": [
+      {
+        "id": 3,
+        "alias": "scoreAdd1_6",
+        "name": "パラメータ追加",
+        "type": "score",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 27,
+        "alias": "genkiAdd1_4",
+        "name": "元気追加",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/249.png",
+      "details": "images/details/249.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/249.png",
+      "repoDetails": "cards/sense/normal/common/images/details/249.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 250,
+    "baseId": 250,
+    "upgradedId": 251,
+    "name": "心のアルバム",
+    "rarity": "SSR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "パラメータ+3\n元気+3\n次のターン、スキルカードを引く\n2ターン後、スキルカードを引く\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "score+=3; genki+=3; at:turn { drawCard; limit:1 }; at:turn { drawCard; limit:1; delay:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 1
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 1,
+          "delay": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/250.png",
+      "details": "images/details/250.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/250.png",
+      "repoDetails": "cards/sense/normal/common/images/details/250.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 251,
+    "baseId": 250,
+    "upgradedId": null,
+    "name": "心のアルバム+",
+    "rarity": "SSR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "パラメータ+6\n元気+5\n次のターン、スキルカードを引く\n2ターン後、スキルカードを引く\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "score+=6; genki+=5; at:turn { drawCard; limit:1 }; at:turn { drawCard; limit:1; delay:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 6
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 1
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 1,
+          "delay": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      2,
+      38
+    ],
+    "availableCustomizations": [
+      {
+        "id": 2,
+        "alias": "score1_12",
+        "name": "パラメータ+",
+        "type": "score",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 38,
+        "alias": "cardUsesRemaining1",
+        "name": "スキルカード使用数+",
+        "type": "effect",
+        "prices": [
+          100
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/251.png",
+      "details": "images/details/251.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/251.png",
+      "repoDetails": "cards/sense/normal/common/images/details/251.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 252,
+    "baseId": 252,
+    "upgradedId": 253,
+    "name": "ティーパーティ",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "スキルカード使用数追加+1\n手札をすべてレッスン中強化\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=3",
+      "actions": "cardUsesRemaining+=1; upgradeHand",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/252.png",
+      "details": "images/details/252.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/252.png",
+      "repoDetails": "cards/sense/normal/common/images/details/252.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 253,
+    "baseId": 252,
+    "upgradedId": null,
+    "name": "ティーパーティ+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "スキルカード使用数追加+1\nスキルカードを引く\n手札をすべてレッスン中強化\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=1",
+      "actions": "cardUsesRemaining+=1; drawCard; upgradeHand",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            },
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      36,
+      27
+    ],
+    "availableCustomizations": [
+      {
+        "id": 36,
+        "alias": "forceInitialHand1",
+        "name": "開始時手札に入る",
+        "type": "effect",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 27,
+        "alias": "genkiAdd1_4",
+        "name": "元気追加",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/253.png",
+      "details": "images/details/253.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/253.png",
+      "repoDetails": "cards/sense/normal/common/images/details/253.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 254,
+    "baseId": 254,
+    "upgradedId": 255,
+    "name": "光のステージ",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "消費体力削減1\nスキルカード使用数追加+1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=3",
+      "actions": "costReduction+=1; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "costReduction",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/254.png",
+      "details": "images/details/254.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/254.png",
+      "repoDetails": "cards/sense/normal/common/images/details/254.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 255,
+    "baseId": 254,
+    "upgradedId": null,
+    "name": "光のステージ+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "消費体力削減1\nスキルカード使用数追加+1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "costReduction+=1; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "costReduction",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      36,
+      27
+    ],
+    "availableCustomizations": [
+      {
+        "id": 36,
+        "alias": "forceInitialHand1",
+        "name": "開始時手札に入る",
+        "type": "effect",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 27,
+        "alias": "genkiAdd1_4",
+        "name": "元気追加",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/255.png",
+      "details": "images/details/255.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/255.png",
+      "repoDetails": "cards/sense/normal/common/images/details/255.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 260,
+    "baseId": 260,
+    "upgradedId": 261,
+    "name": "新生徒会爆誕！",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": true,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "レッスン開始時手札に入る\n消費体力減少2ターン\nスキルカード使用数追加+1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=5",
+      "actions": "halfCostTurns+=2; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/260.png",
+      "details": "images/details/260.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/260.png",
+      "repoDetails": "cards/sense/normal/common/images/details/260.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 261,
+    "baseId": 260,
+    "upgradedId": null,
+    "name": "新生徒会爆誕！+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": true,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "レッスン開始時手札に入る\n消費体力減少4ターン\nスキルカード使用数追加+1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=4",
+      "actions": "halfCostTurns+=4; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      27,
+      24
+    ],
+    "availableCustomizations": [
+      {
+        "id": 27,
+        "alias": "genkiAdd1_4",
+        "name": "元気追加",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 24,
+        "alias": "halfCostTurns1",
+        "name": "消費軽減+",
+        "type": "buff",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/261.png",
+      "details": "images/details/261.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/261.png",
+      "repoDetails": "cards/sense/normal/common/images/details/261.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 262,
+    "baseId": 262,
+    "upgradedId": 263,
+    "name": "薄れゆく壁",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "元気+3\n次のターン、手札をすべてレッスン中強化\n2ターン後、手札をすべてレッスン中強化\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=5",
+      "actions": "genki+=3; at:turn { upgradeHand; limit:1 }; at:turn { upgradeHand; limit:1; delay:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ],
+          "limit": 1
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ],
+          "limit": 1,
+          "delay": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/262.png",
+      "details": "images/details/262.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/262.png",
+      "repoDetails": "cards/sense/normal/common/images/details/262.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 263,
+    "baseId": 262,
+    "upgradedId": null,
+    "name": "薄れゆく壁+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "元気+3\n次のターン、手札をすべてレッスン中強化\n2ターン後、手札をすべてレッスン中強化\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=2",
+      "actions": "genki+=3; at:turn { upgradeHand; limit:1 }; at:turn { upgradeHand; limit:1; delay:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ],
+          "limit": 1
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ],
+          "limit": 1,
+          "delay": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      26,
+      3
+    ],
+    "availableCustomizations": [
+      {
+        "id": 26,
+        "alias": "genki1_9",
+        "name": "元気+",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 3,
+        "alias": "scoreAdd1_6",
+        "name": "パラメータ追加",
+        "type": "score",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/263.png",
+      "details": "images/details/263.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/263.png",
+      "repoDetails": "cards/sense/normal/common/images/details/263.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 276,
+    "baseId": 276,
+    "upgradedId": 277,
+    "name": "みずたまりスキップ",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "体力消費1\n元気+3\nスキルカード使用数追加+1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "stamina-=1",
+      "actions": "genki+=3; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "stamina",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/276.png",
+      "details": "images/details/276.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/276.png",
+      "repoDetails": "cards/sense/normal/common/images/details/276.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 277,
+    "baseId": 276,
+    "upgradedId": null,
+    "name": "みずたまりスキップ+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "体力消費1\n元気+8\nスキルカード使用数追加+1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "stamina-=1",
+      "actions": "genki+=8; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "stamina",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 8
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      26,
+      3
+    ],
+    "availableCustomizations": [
+      {
+        "id": 26,
+        "alias": "genki1_9",
+        "name": "元気+",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 3,
+        "alias": "scoreAdd1_6",
+        "name": "パラメータ追加",
+        "type": "score",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/277.png",
+      "details": "images/details/277.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/277.png",
+      "repoDetails": "cards/sense/normal/common/images/details/277.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 452,
+    "baseId": 452,
+    "upgradedId": 453,
+    "name": "紅葉ランニング",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "低下状態無効1回\nスキルカードを引く\nスキルカード使用数追加+1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=1",
+      "actions": "nullifyDebuff+=1; drawCard; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "nullifyDebuff",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/452.png",
+      "details": "images/details/452.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/452.png",
+      "repoDetails": "cards/sense/normal/common/images/details/452.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 453,
+    "baseId": 452,
+    "upgradedId": null,
+    "name": "紅葉ランニング+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "低下状態無効1回\nスキルカードを2枚引く\nスキルカード使用数追加+1\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=0",
+      "actions": "nullifyDebuff+=1; drawCard(2); cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "nullifyDebuff",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "call",
+              "name": "drawCard",
+              "target": null,
+              "args": [
+                {
+                  "type": "number",
+                  "value": 2
+                }
+              ]
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      3,
+      27
+    ],
+    "availableCustomizations": [
+      {
+        "id": 3,
+        "alias": "scoreAdd1_6",
+        "name": "パラメータ追加",
+        "type": "score",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 27,
+        "alias": "genkiAdd1_4",
+        "name": "元気追加",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/453.png",
+      "details": "images/details/453.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/453.png",
+      "repoDetails": "cards/sense/normal/common/images/details/453.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 456,
+    "baseId": 456,
+    "upgradedId": 457,
+    "name": "旬の味わい",
+    "rarity": "SR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "パラメータ+4（2回）\n次のターン、手札をすべてレッスン中強化\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=5",
+      "actions": "score+=4; score+=4; at:turn { upgradeHand; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/456.png",
+      "details": "images/details/456.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/456.png",
+      "repoDetails": "cards/sense/normal/common/images/details/456.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 457,
+    "baseId": 456,
+    "upgradedId": null,
+    "name": "旬の味わい+",
+    "rarity": "SR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "パラメータ+6（2回）\n次のターン、手札をすべてレッスン中強化\nレッスン中1回 重複不可",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=4",
+      "actions": "score+=6; score+=6; at:turn { upgradeHand; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 6
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 6
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      47,
+      29,
+      27
+    ],
+    "availableCustomizations": [
+      {
+        "id": 47,
+        "alias": "score2_3",
+        "name": "パラメータ+",
+        "type": "score",
+        "prices": [
+          40,
+          70
+        ],
+        "maxLevel": 2
+      },
+      {
+        "id": 29,
+        "alias": "cost1",
+        "name": "コスト値-",
+        "type": "cost",
+        "prices": [
+          20
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 27,
+        "alias": "genkiAdd1_4",
+        "name": "元気追加",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/457.png",
+      "details": "images/details/457.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/457.png",
+      "repoDetails": "cards/sense/normal/common/images/details/457.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 530,
+    "baseId": 530,
+    "upgradedId": 531,
+    "name": "勝負はこれから！",
+    "rarity": "SSR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "パラメータ+2\n元気+2\n消費体力減少3ターン\n次のターン、スキルカードを引く\n重複不可 レッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=4",
+      "actions": "score+=2; genki+=2; halfCostTurns+=3; at:turn { drawCard; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/530.png",
+      "details": "images/details/530.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/530.png",
+      "repoDetails": "cards/sense/normal/common/images/details/530.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 531,
+    "baseId": 530,
+    "upgradedId": null,
+    "name": "勝負はこれから！+",
+    "rarity": "SSR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "パラメータ+5\n元気+5\n消費体力減少3ターン\n次のターン、スキルカードを引く\n重複不可 レッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=3",
+      "actions": "score+=5; genki+=5; halfCostTurns+=3; at:turn { drawCard; limit:1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        },
+        {
+          "phase": "turn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 1
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      2,
+      26
+    ],
+    "availableCustomizations": [
+      {
+        "id": 2,
+        "alias": "score1_12",
+        "name": "パラメータ+",
+        "type": "score",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 26,
+        "alias": "genki1_9",
+        "name": "元気+",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/531.png",
+      "details": "images/details/531.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/531.png",
+      "repoDetails": "cards/sense/normal/common/images/details/531.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 584,
+    "baseId": 584,
+    "upgradedId": 585,
+    "name": "夏夜に咲く思い出",
+    "rarity": "SSR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "ランダムな山札か捨札の眠気を除外に移動\nスキルカード使用数追加+1\n以降、スキルカードを5回使用するごとに、パラメータ+4\n重複不可 レッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=7",
+      "actions": "removeRandom[trouble & (deck | discarded)]; cardUsesRemaining+=1; at:cardUsed { effectCounter+=1; if:effectCounter%5==4 { score+=4 } }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 7
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "call",
+              "name": "removeRandom",
+              "target": {
+                "type": "binary",
+                "op": "&",
+                "left": {
+                  "type": "identifier",
+                  "name": "trouble"
+                },
+                "right": {
+                  "type": "binary",
+                  "op": "|",
+                  "left": {
+                    "type": "identifier",
+                    "name": "deck"
+                  },
+                  "right": {
+                    "type": "identifier",
+                    "name": "discarded"
+                  }
+                }
+              },
+              "args": []
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        },
+        {
+          "phase": "cardUsed",
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "effectCounter",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        },
+        {
+          "phase": "cardUsed",
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": "==",
+              "left": {
+                "type": "binary",
+                "op": "%",
+                "left": {
+                  "type": "identifier",
+                  "name": "effectCounter"
+                },
+                "right": {
+                  "type": "number",
+                  "value": 5
+                }
+              },
+              "right": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ],
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/584.png",
+      "details": "images/details/584.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/584.png",
+      "repoDetails": "cards/sense/normal/common/images/details/584.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 585,
+    "baseId": 584,
+    "upgradedId": null,
+    "name": "夏夜に咲く思い出+",
+    "rarity": "SSR",
+    "type": "active",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "ランダムな山札か捨札の眠気を除外に移動\nスキルカード使用数追加+1\n以降、スキルカードを5回使用するごとに、パラメータ+4\n重複不可 レッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=4",
+      "actions": "removeRandom[trouble & (deck | discarded)]; cardUsesRemaining+=1; at:cardUsed { effectCounter+=1; if:effectCounter%5==4 { score+=4 } }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "call",
+              "name": "removeRandom",
+              "target": {
+                "type": "binary",
+                "op": "&",
+                "left": {
+                  "type": "identifier",
+                  "name": "trouble"
+                },
+                "right": {
+                  "type": "binary",
+                  "op": "|",
+                  "left": {
+                    "type": "identifier",
+                    "name": "deck"
+                  },
+                  "right": {
+                    "type": "identifier",
+                    "name": "discarded"
+                  }
+                }
+              },
+              "args": []
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        },
+        {
+          "phase": "cardUsed",
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "effectCounter",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        },
+        {
+          "phase": "cardUsed",
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": "==",
+              "left": {
+                "type": "binary",
+                "op": "%",
+                "left": {
+                  "type": "identifier",
+                  "name": "effectCounter"
+                },
+                "right": {
+                  "type": "number",
+                  "value": 5
+                }
+              },
+              "right": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ],
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      29,
+      83
+    ],
+    "availableCustomizations": [
+      {
+        "id": 29,
+        "alias": "cost1",
+        "name": "コスト値-",
+        "type": "cost",
+        "prices": [
+          20
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 83,
+        "alias": "halfCostTurnsAdd1",
+        "name": "消費体力減少追加",
+        "type": "buff",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/585.png",
+      "details": "images/details/585.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/585.png",
+      "repoDetails": "cards/sense/normal/common/images/details/585.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 586,
+    "baseId": 586,
+    "upgradedId": 587,
+    "name": "月明かりに包まれて",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": true,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "レッスン開始時手札に入る\n消費体力削減1\nスキルカード使用数追加+1\n重複不可 レッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=5",
+      "actions": "costReduction+=1; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "costReduction",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/586.png",
+      "details": "images/details/586.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/586.png",
+      "repoDetails": "cards/sense/normal/common/images/details/586.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 587,
+    "baseId": 586,
+    "upgradedId": null,
+    "name": "月明かりに包まれて+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": true,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "レッスン開始時手札に入る\n消費体力削減1\nスキルカード使用数追加+1\n重複不可 レッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=2",
+      "actions": "costReduction+=1; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "costReduction",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      29,
+      27
+    ],
+    "availableCustomizations": [
+      {
+        "id": 29,
+        "alias": "cost1",
+        "name": "コスト値-",
+        "type": "cost",
+        "prices": [
+          20
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 27,
+        "alias": "genkiAdd1_4",
+        "name": "元気追加",
+        "type": "genki",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/587.png",
+      "details": "images/details/587.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/587.png",
+      "repoDetails": "cards/sense/normal/common/images/details/587.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 608,
+    "baseId": 608,
+    "upgradedId": 609,
+    "name": "勝利をつかめ！",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "次に使用したスキルカードの消費体力を0にする（1回）\nスキルカードを引く\nスキルカード使用数追加+1\n重複不可 レッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=4",
+      "actions": "nullifyCostCards+=1; drawCard; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 4
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "nullifyCostCards",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/608.png",
+      "details": "images/details/608.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/608.png",
+      "repoDetails": "cards/sense/normal/common/images/details/608.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 609,
+    "baseId": 608,
+    "upgradedId": null,
+    "name": "勝利をつかめ！+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "次に使用したスキルカードの消費体力を0にする（1回）\nスキルカードを引く\nスキルカード使用数追加+1\n重複不可 レッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "cost-=1",
+      "actions": "nullifyCostCards+=1; drawCard; cardUsesRemaining+=1",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cost",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "nullifyCostCards",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            },
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      36,
+      39
+    ],
+    "availableCustomizations": [
+      {
+        "id": 36,
+        "alias": "forceInitialHand1",
+        "name": "開始時手札に入る",
+        "type": "effect",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 39,
+        "alias": "upgradeHand1",
+        "name": "スキルカード強化追加",
+        "type": "effect",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/609.png",
+      "details": "images/details/609.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/609.png",
+      "repoDetails": "cards/sense/normal/common/images/details/609.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 626,
+    "baseId": 626,
+    "upgradedId": 627,
+    "name": "執念キャッチャー",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": false,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 96,
+    "hidden": false,
+    "description": "体力消費1\n固定元気+5\n体力が50%以上の場合、スキルカード使用数追加+1\n重複不可 レッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "stamina-=1",
+      "actions": "fixedGenki+=5; if:stamina>=maxStamina*0.5 { cardUsesRemaining+=1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "stamina",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "fixedGenki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 5
+              }
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": ">=",
+              "left": {
+                "type": "identifier",
+                "name": "stamina"
+              },
+              "right": {
+                "type": "binary",
+                "op": "*",
+                "left": {
+                  "type": "identifier",
+                  "name": "maxStamina"
+                },
+                "right": {
+                  "type": "number",
+                  "value": 0.5
+                }
+              }
+            }
+          ],
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [],
+    "availableCustomizations": [],
+    "images": {
+      "icon": "images/icons/626.png",
+      "details": "images/details/626.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/626.png",
+      "repoDetails": "cards/sense/normal/common/images/details/626.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 627,
+    "baseId": 626,
+    "upgradedId": null,
+    "name": "執念キャッチャー+",
+    "rarity": "SSR",
+    "type": "mental",
+    "plan": "free",
+    "planZh": "通用",
+    "category": "normal",
+    "categoryZh": "普通技能卡",
+    "scope": "common",
+    "scopeZh": "通用",
+    "sourceType": "support",
+    "unlockPlv": 1,
+    "upgraded": true,
+    "unique": true,
+    "isUniqueInDeck": true,
+    "isSignature": false,
+    "pIdolId": null,
+    "pIdol": null,
+    "relatedPIdolId": null,
+    "relatedPIdol": null,
+    "generatedByCardIds": [],
+    "forceInitialHand": false,
+    "limit": 1,
+    "contestPower": 126,
+    "hidden": false,
+    "description": "体力消費1\n固定元気+10\n体力が50%以上の場合、スキルカード使用数追加+1\n重複不可 レッスン中1回",
+    "dsl": {
+      "conditions": "",
+      "cost": "stamina-=1",
+      "actions": "fixedGenki+=10; if:stamina>=maxStamina*0.5 { cardUsesRemaining+=1 }",
+      "effects": ""
+    },
+    "parsedEffects": {
+      "conditions": [],
+      "cost": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "stamina",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "fixedGenki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 10
+              }
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "comparison",
+              "op": ">=",
+              "left": {
+                "type": "identifier",
+                "name": "stamina"
+              },
+              "right": {
+                "type": "binary",
+                "op": "*",
+                "left": {
+                  "type": "identifier",
+                  "name": "maxStamina"
+                },
+                "right": {
+                  "type": "number",
+                  "value": 0.5
+                }
+              }
+            }
+          ],
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    "availableCustomizationIds": [
+      30,
+      83
+    ],
+    "availableCustomizations": [
+      {
+        "id": 30,
+        "alias": "staminaCost1",
+        "name": "体力消費コスト値-",
+        "type": "cost",
+        "prices": [
+          20
+        ],
+        "maxLevel": 1
+      },
+      {
+        "id": 83,
+        "alias": "halfCostTurnsAdd1",
+        "name": "消費体力減少追加",
+        "type": "buff",
+        "prices": [
+          70
+        ],
+        "maxLevel": 1
+      }
+    ],
+    "images": {
+      "icon": "images/icons/627.png",
+      "details": "images/details/627.png",
+      "iconVariants": {},
+      "repoIcon": "cards/sense/normal/common/images/icons/627.png",
+      "repoDetails": "cards/sense/normal/common/images/details/627.png",
+      "repoIconVariants": {}
+    }
+  }
+]

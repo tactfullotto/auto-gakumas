@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    try {
+      const saved = localStorage.getItem("gakumas-color-scheme");
+      if (saved === "light" || saved === "dark") {
+        document.querySelector('meta[name="color-scheme"]').content = saved;
+      }
+    } catch (_) {}
+  </script>
+  <title>GakumasMAA · 学园偶像大师智能打牌控制台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <a href="#main-content" class="skip-link visually-hidden">跳转到主工作区</a>
+
+  <!-- Top Titlebar (MFAAvalonia RootView Shell) -->
+  <header class="app-titlebar">
+    <div class="titlebar-brand">
+      <div class="brand-badge" aria-hidden="true">G</div>
+      <div class="brand-text">
+        <span class="brand-name">GakumasMAA</span>
+        <span class="brand-sub">MaaFw × LLM 智能打牌台</span>
+      </div>
+    </div>
+
+    <div class="titlebar-tabs-area">
+      <div id="instance-tablist" class="instance-tablist" role="tablist" aria-label="运行实例标签页"></div>
+      <button id="btn-add-instance" type="button" class="tab-add-btn" aria-label="新建配置实例">+</button>
+    </div>
+
+    <div class="titlebar-status">
+      <span id="header-mode-pill" class="status-chip">MOCK</span>
+      <span id="header-llm-pill" class="status-chip status-chip--accent">LLM 就绪</span>
+      <button id="btn-theme-toggle" type="button" class="icon-toggle-btn" aria-label="切换浅色或深色主题">
+        <span class="theme-icon-light" aria-hidden="true">☀ 浅色</span>
+        <span class="theme-icon-dark" aria-hidden="true">☾ 深色</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    <!-- Left Navigation Rail (MFAAvalonia SideMenu) -->
+    <nav class="nav-rail" aria-label="主导航">
+      <button type="button" class="nav-item" data-view="tasks" aria-current="page">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 6h16M4 12h16M4 18h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span class="nav-label">任务队列</span>
+      </button>
+      <button type="button" class="nav-item" data-view="monitor">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="4" width="8" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/>
+          <rect x="13" y="4" width="8" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/>
+          <rect x="3" y="13" width="8" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/>
+          <rect x="13" y="13" width="8" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/>
+        </svg>
+        <span class="nav-label">实时监视</span>
+      </button>
+      <button type="button" class="nav-item" data-view="library">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 4h11a2 2 0 0 1 2 2v14l-5-3-5 3V6a2 2 0 0 1 2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+        <span class="nav-label">卡牌图鉴</span>
+      </button>
+
+      <button type="button" class="nav-item nav-item--bottom" data-view="settings">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span class="nav-label">系统设置</span>
+      </button>
+    </nav>
+
+    <!-- Main Workspace -->
+    <main id="main-content" class="app-main" tabindex="-1">
+      <!-- View 1: Task Queue (MFAAvalonia 3-Column Workbench) -->
+      <section id="view-tasks" class="page-view">
+        <div class="view-header-row">
+          <h1 class="view-title">任务队列与实时决策台</h1>
+          <p class="view-subtitle">图像识别 → 知识库校验 → 紧凑文本 Prompt → LLM 决策 → MaaFw 点击闭环</p>
+        </div>
+
+        <!-- Top Configuration Toolbar Card -->
+        <section class="glass-card top-toolbar" aria-label="资源与控制器栏">
+          <div class="toolbar-field">
+            <label for="cfg-plan">资源流派 (Plan)</label>
+            <select id="cfg-plan">
+              <option value="sense">感性 Sense（好调 / 集中）</option>
+              <option value="logic">理性 Logic（好印象 / 干劲）</option>
+              <option value="anomaly">异常 Anomaly（强气 / 全力 / 温存）</option>
+            </select>
+          </div>
+
+          <div class="toolbar-field">
+            <label for="cfg-mode">控制器类型</label>
+            <select id="cfg-mode">
+              <option value="mock">Mock 合成帧（离线演示）</option>
+              <option value="adb">ADB（Android 模拟器）</option>
+              <option value="win32">Win32（桌面窗口）</option>
+            </select>
+          </div>
+
+          <div class="toolbar-field toolbar-field--grow">
+            <label for="cfg-target" id="lbl-target">连接目标 (ADB 地址 / Win32 标题)</label>
+            <input id="cfg-target" type="text" value="192.168.0.115:5555" aria-describedby="target-hint">
+            <span id="target-hint" class="visually-hidden">ADB 模式填写 IP:端口，Win32 模式填写窗口标题</span>
+          </div>
+
+          <div class="toolbar-actions">
+            <button id="btn-refresh-preview" type="button" class="btn-secondary">抓取预览</button>
+            <button id="btn-test-conn" type="button" class="btn-secondary">测试连接</button>
+          </div>
+        </section>
+
+        <!-- MFAAvalonia 3-Column Main Grid -->
+        <div class="workbench-grid">
+          <!-- Left Column: Task Settings + Task Instructions/Prompt -->
+          <div class="col-stack">
+            <section class="glass-card panel-card">
+              <div class="panel-header">
+                <h2 class="panel-title">任务设置</h2>
+                <span class="panel-badge" id="badge-scenario">SEQUENCE</span>
+              </div>
+
+              <div class="form-stack">
+                <div class="form-row">
+                  <label for="cfg-scenario-id">培育剧本 (Produce Scenario)</label>
+                  <select id="cfg-scenario-id">
+                    <option value="hajime_regular">定期公演『初』· 常规 (Regular, 13周)</option>
+                    <option value="hajime_pro">定期公演『初』· 进阶 (Pro, 16周)</option>
+                    <option value="hajime_master">定期公演『初』· 大师 (Master, 18周)</option>
+                    <option value="nia_master">『N.I.A』Next Idol Audition (18周)</option>
+                  </select>
+                </div>
+
+                <div class="form-row">
+                  <label for="cfg-week">当前识别/执行周目</label>
+                  <div class="inline-control-group">
+                    <select id="cfg-week">
+                      <option value="1">第 1 周 · 基础通常课程</option>
+                    </select>
+                    <button id="btn-jump-week" type="button" class="btn-secondary">跳转周目</button>
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <label for="cfg-preset">模拟场景预设</label>
+                  <div class="inline-control-group">
+                    <select id="cfg-preset">
+                      <option value="hajime_regular">按剧本识别周目走流程（第1周 → 最终周）</option>
+                      <option value="sequence">全场景连续序列（培育 → 选卡 → 商店 → 弹窗 → 战斗）</option>
+                      <option value="battle_turn">战斗出牌回合 (battle_turn)</option>
+                      <option value="produce_schedule">培育行动日程 (produce_schedule)</option>
+                      <option value="card_reward">三选一选卡奖励 (card_reward)</option>
+                      <option value="shop">商店购买界面 (shop)</option>
+                      <option value="popup">确认弹窗 (popup)</option>
+                    </select>
+                    <button id="btn-apply-scenario" type="button" class="btn-secondary">注入</button>
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <label for="cfg-llm-mode">决策模型来源</label>
+                  <select id="cfg-llm-mode">
+                    <option value="auto_xai">自动 xAI / 环境变量 (grok-build-0.1)</option>
+                    <option value="custom">自定义 OpenAI 兼容接口</option>
+                    <option value="offline">纯本地规则 / 零网络回退</option>
+                  </select>
+                </div>
+
+                <div class="form-two-col">
+                  <div class="form-row">
+                    <label for="cfg-steps">连续执行步数</label>
+                    <input id="cfg-steps" type="number" min="1" max="50" value="5">
+                  </div>
+                  <div class="form-row">
+                    <label for="cfg-delay">步间延迟 (秒)</label>
+                    <input id="cfg-delay" type="number" min="0" max="10" step="0.1" value="0.5">
+                  </div>
+                </div>
+
+                <div class="checkbox-stack">
+                  <label class="check-pill">
+                    <input id="chk-overlay" type="checkbox" checked>
+                    <span>在实时视图显示 BBox 与点击准星</span>
+                  </label>
+                  <label class="check-pill">
+                    <input id="chk-auto-progress" type="checkbox" checked>
+                    <span>Mock 点击后自动流转下一场景</span>
+                  </label>
+                  <label class="check-pill">
+                    <input id="chk-fallback-mock" type="checkbox" checked>
+                    <span>实机未连接时允许回退 Mock 帧</span>
+                  </label>
+                </div>
+
+                <details class="sim-details" open>
+                  <summary>剧本全周目流程表 (<span id="roadmap-title-span">初·常规 13周</span>)</summary>
+                  <ul id="scenario-roadmap-list" class="roadmap-list" aria-label="剧本各周活动流程表"></ul>
+                </details>
+
+                <details class="sim-details">
+                  <summary>战斗数值模拟微调 (Mock 注入)</summary>
+                  <div class="sim-details-body">
+                    <div class="form-three-col">
+                      <div class="form-row">
+                        <label for="sim-stamina">体力</label>
+                        <input id="sim-stamina" type="number" min="0" max="60" value="22">
+                      </div>
+                      <div class="form-row">
+                        <label for="sim-genki">元气</label>
+                        <input id="sim-genki" type="number" min="0" max="99" value="6">
+                      </div>
+                      <div class="form-row">
+                        <label for="sim-score">当前分</label>
+                        <input id="sim-score" type="number" min="0" max="99999" value="1450">
+                      </div>
+                    </div>
+                    <button id="btn-inject-battle" type="button" class="btn-secondary btn-full">按以上数值生成战斗帧</button>
+                  </div>
+                </details>
+              </div>
+            </section>
+
+            <section class="glass-card panel-card panel-card--grow">
+              <div class="panel-header">
+                <h2 class="panel-title">任务说明 · 完整上下文 Prompt</h2>
+                <span id="prompt-token-label" class="token-pill token-pill--ok">0 tok · 无上限</span>
+              </div>
+
+              <div id="obs-kpi-grid" class="kpi-grid" aria-label="当前画面关键数值">
+                <div class="kpi-tile"><span class="kpi-k">剧本周目</span><strong id="kpi-week" class="kpi-v">第1/13周</strong></div>
+                <div class="kpi-tile"><span class="kpi-k">当前场景</span><strong id="kpi-scene" class="kpi-v">—</strong></div>
+                <div class="kpi-tile"><span class="kpi-k">回合/阶段</span><strong id="kpi-turn" class="kpi-v">—</strong></div>
+                <div class="kpi-tile"><span class="kpi-k">体力</span><strong id="kpi-stamina" class="kpi-v">—</strong></div>
+                <div class="kpi-tile"><span class="kpi-k">元气</span><strong id="kpi-genki" class="kpi-v">—</strong></div>
+                <div class="kpi-tile"><span class="kpi-k">分数/选项</span><strong id="kpi-score" class="kpi-v">—</strong></div>
+              </div>
+              <span id="kpi-limits" class="visually-hidden">0</span>
+
+              <div id="obs-buffs-row" class="buffs-row" aria-label="当前 Buff"></div>
+
+              <pre id="prompt-preview" class="prompt-code-box" role="region" aria-label="发送给 LLM 的纯文本 Prompt" tabindex="0"><code id="prompt-code">正在等待画面观测...</code></pre>
+            </section>
+          </div>
+
+          <!-- Center Column: Task List + Legal Actions & Start Shimmer Button -->
+          <section class="glass-card panel-card panel-center">
+            <div class="panel-header">
+              <h2 class="panel-title">任务列表与合法动作</h2>
+              <span id="runner-status-pill" class="panel-badge">IDLE</span>
+            </div>
+
+            <div class="task-control-bar">
+              <div class="task-secondary-btns">
+                <button id="btn-step" type="button" class="btn-secondary">单步执行 (Step)</button>
+                <button id="btn-reset" type="button" class="btn-secondary">重设追踪</button>
+              </div>
+              <button id="btn-toggle-run" type="button" class="btn-primary-shimmer">
+                <span class="btn-run-label">▶ 开始任务</span>
+              </button>
+            </div>
+
+            <div class="sub-section-header">
+              <h3>自动化管线队列</h3>
+              <span class="muted-note">按当前识别场景自动高亮</span>
+            </div>
+            <ul id="pipeline-list" class="pipeline-list"></ul>
+
+            <div id="decision-banner" class="decision-banner" aria-live="polite">
+              <div class="decision-banner-head">
+                <span id="decision-source-tag" class="source-pill">READY</span>
+                <span id="decision-metrics" class="muted-note">点击「单步执行」或「开始任务」驱动闭环</span>
+              </div>
+              <p id="decision-reason" class="decision-reason">等待第一次识别与决策结果...</p>
+            </div>
+
+            <div class="sub-section-header">
+              <h3>合法动作清单 (<span id="action-count">0</span>)</h3>
+              <span class="muted-note">点击卡片可查看高清详情</span>
+            </div>
+            <ul id="legal-actions-list" class="action-list"></ul>
+          </section>
+
+          <!-- Right Column: Live View + Execution Logs -->
+          <div class="col-stack">
+            <section class="glass-card panel-card">
+              <div class="panel-header">
+                <div class="live-title-group">
+                  <span id="live-dot" class="live-dot" aria-hidden="true"></span>
+                  <h2 class="panel-title">实时视图</h2>
+                  <span id="live-badge" class="live-tag">MOCK LIVE</span>
+                </div>
+                <div class="live-meta-actions">
+                  <span id="live-resolution" class="muted-note">1080×1920</span>
+                  <button id="btn-zoom-frame" type="button" class="btn-secondary btn-compact">放大检视</button>
+                </div>
+              </div>
+
+              <div class="frame-stage">
+                <div id="live-canvas-wrap" class="frame-canvas-wrap">
+                  <img id="live-frame-img" src="/api/frame" alt="游戏实时识别画面" width="1080" height="1920">
+                  <svg id="live-overlay-svg" class="frame-overlay-svg" viewBox="0 0 1080 1920" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+                </div>
+              </div>
+
+              <div class="legend-strip" aria-hidden="true">
+                <span class="legend-item"><i class="dot dot-card"></i>手牌</span>
+                <span class="legend-item"><i class="dot dot-drink"></i>饮料</span>
+                <span class="legend-item"><i class="dot dot-option"></i>选项</span>
+                <span class="legend-item"><i class="dot dot-click"></i>执行点击坐标</span>
+              </div>
+            </section>
+
+            <section class="glass-card panel-card panel-card--grow">
+              <div class="panel-header">
+                <h2 class="panel-title">日志控制台</h2>
+                <div class="log-actions">
+                  <button id="btn-clear-logs" type="button" class="btn-secondary btn-compact">清空日志</button>
+                </div>
+              </div>
+              <div id="logs-container" class="logs-console" role="region" aria-label="运行日志输出" tabindex="0"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- View 2: Monitor View (Multi-Instance & Turn Snapshots) -->
+      <section id="view-monitor" class="page-view" hidden>
+        <div class="view-header-row view-header-row--split">
+          <div>
+            <h1 class="view-title">多实例实时监视</h1>
+            <p class="view-subtitle">参考 MFAAvalonia MonitorView · 同屏监看所有流派实例画面、状态与最新决策</p>
+          </div>
+          <div class="monitor-controls">
+            <span id="monitor-summary-badge" class="status-chip">3 实例</span>
+            <label for="monitor-zoom">卡片大小</label>
+            <input id="monitor-zoom" type="range" min="220" max="380" value="280">
+            <button id="btn-monitor-refresh" type="button" class="btn-secondary">刷新全部画面</button>
+          </div>
+        </div>
+        <div id="monitor-grid" class="monitor-grid"></div>
+      </section>
+
+      <!-- View 3: Card & Drink Library Explorer (Read-Only DB) -->
+      <section id="view-library" class="page-view" hidden>
+        <div class="view-header-row">
+          <h1 class="view-title">本地卡牌与饮料只读图鉴</h1>
+          <p class="view-subtitle">直接读取根目录 gakumas_library.db 与 cards/ · drinks/ 资产库（100% 只读访问）</p>
+        </div>
+
+        <section class="glass-card library-toolbar">
+          <search class="library-search-form">
+            <div class="toolbar-field toolbar-field--grow">
+              <label for="lib-query">关键词搜索（名称 / 效果 / ID）</label>
+              <input id="lib-query" type="search" placeholder="例如：好調、集中、元气、ID...">
+            </div>
+            <div class="toolbar-field">
+              <label for="lib-kind">资产类别</label>
+              <select id="lib-kind">
+                <option value="cards">技能卡 (Cards)</option>
+                <option value="drinks">支援饮料 (Drinks)</option>
+              </select>
+            </div>
+            <div class="toolbar-field">
+              <label for="lib-plan">职业流派</label>
+              <select id="lib-plan">
+                <option value="all">全部职业</option>
+                <option value="sense">感性 Sense</option>
+                <option value="logic">理性 Logic</option>
+                <option value="anomaly">异常 Anomaly</option>
+              </select>
+            </div>
+            <div class="toolbar-field" id="lib-category-wrap">
+              <label for="lib-category">卡池分类</label>
+              <select id="lib-category">
+                <option value="all">全部卡池</option>
+                <option value="signature">角色固有卡 (signature)</option>
+                <option value="normal">通用 / 流派技能卡 (normal)</option>
+              </select>
+            </div>
+            <div class="toolbar-actions">
+              <button id="btn-lib-search" type="button" class="btn-secondary">检索图鉴</button>
+            </div>
+          </search>
+        </section>
+
+        <div class="library-meta-row">
+          <span id="lib-count-label" class="muted-note">正在加载图鉴数据...</span>
+        </div>
+        <div id="library-grid" class="library-grid"></div>
+      </section>
+
+      <!-- View 4: Settings View (MFAAvalonia Stack Settings) -->
+      <section id="view-settings" class="page-view" hidden>
+        <div class="view-header-row">
+          <h1 class="view-title">连接与系统设置</h1>
+          <p class="view-subtitle">参考 MFAAvalonia SettingsView · 统一配置 ADB 模拟器、Win32 窗口、LLM 接口与外观主题</p>
+        </div>
+
+        <div class="settings-stack">
+          <section class="glass-card settings-card">
+            <h2>控制器与实机连接配置</h2>
+            <div class="settings-grid">
+              <div class="form-row">
+                <label for="set-adb-host">ADB 主机 IP</label>
+                <input id="set-adb-host" type="text" value="192.168.0.115">
+              </div>
+              <div class="form-row">
+                <label for="set-adb-port">ADB 端口</label>
+                <input id="set-adb-port" type="number" min="1" max="65535" value="5555">
+              </div>
+              <div class="form-row">
+                <label for="set-adb-root">Root 凭据</label>
+                <input id="set-adb-root" type="text" value="root/114514">
+              </div>
+              <div class="form-row">
+                <label for="set-win32-title">Win32 桌面窗口标题</label>
+                <input id="set-win32-title" type="text" value="学园偶像大师">
+              </div>
+            </div>
+            <div class="settings-footer-row">
+              <button id="btn-save-conn" type="button" class="btn-secondary">保存连接配置</button>
+              <button id="btn-diag-adb" type="button" class="btn-secondary">探测 ADB 连通性并测分辨率</button>
+              <span id="diag-adb-result" class="muted-note" aria-live="polite"></span>
+            </div>
+          </section>
+
+          <section class="glass-card settings-card">
+            <h2>LLM 决策模型与 API 配置</h2>
+            <div class="settings-grid">
+              <div class="form-row">
+                <label for="set-llm-mode">运行策略</label>
+                <select id="set-llm-mode">
+                  <option value="auto_xai">自动读取 xAI Key / 环境变量</option>
+                  <option value="custom">自定义 OpenAI 兼容接口</option>
+                  <option value="offline">纯本地启发式规则模式（零 API 请求）</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <label for="set-llm-base">Base URL</label>
+                <input id="set-llm-base" type="url" placeholder="https://api.x.ai/v1">
+              </div>
+              <div class="form-row">
+                <label for="set-llm-model">模型名称 (Model)</label>
+                <input id="set-llm-model" type="text" placeholder="grok-build-0.1">
+              </div>
+              <div class="form-row">
+                <label for="set-llm-key">API Key（留空保持当前配置）</label>
+                <input id="set-llm-key" type="password" autocomplete="off" placeholder="已从环境或本地密钥载入时可留空">
+              </div>
+            </div>
+            <div class="settings-footer-row">
+              <button id="btn-save-llm" type="button" class="btn-secondary">保存 LLM 配置</button>
+              <button id="btn-diag-llm" type="button" class="btn-secondary">发送单次 LLM 决策测试</button>
+              <span id="diag-llm-result" class="muted-note" aria-live="polite"></span>
+            </div>
+          </section>
+
+          <section class="glass-card settings-card">
+            <h2>外观与主题偏好 (SukiUI Glass)</h2>
+            <fieldset class="theme-fieldset">
+              <legend>配色方案（支持浏览器与 OS 自动适配）</legend>
+              <div class="radio-group">
+                <label class="radio-card">
+                  <input type="radio" name="theme-pref" value="system">
+                  <span>跟随系统 (<span id="system-theme-status">自动</span>)</span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="theme-pref" value="light">
+                  <span>浅色毛玻璃 (MFAAvalonia Light)</span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="theme-pref" value="dark">
+                  <span>深色磨砂 (MFAAvalonia Dark)</span>
+                </label>
+              </div>
+            </fieldset>
+          </section>
+
+          <section class="glass-card settings-card">
+            <h2>关于与只读架构声明</h2>
+            <p class="about-text">
+              本前端界面参考 <code>MaaXYZ/MFAAvalonia</code> 的多实例顶部标签页、左侧图标导航栏、三栏式任务队列工作台与 SukiUI 玻璃拟态视觉层次构建；后端直接复用 <code>demo/</code> 下既有 MaaFramework 控制器桥接、<code>PromptBuilder</code>（&lt;800 tokens）及只读本地数据库 <code>gakumas_library.db</code>，保证根目录 <code>cards/</code>、<code>drinks/</code> 与数据库零写入修改。
+            </p>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Native Modal Dialog 1: Card / Drink Detail Inspector -->
+  <dialog id="card-detail-dialog" closedby="any" aria-labelledby="card-dialog-title">
+    <div class="dialog-shell">
+      <div class="dialog-header">
+        <h1 id="card-dialog-title" class="dialog-title">卡牌详情</h1>
+        <form method="dialog">
+          <button type="submit" value="close" class="dialog-close-btn" aria-label="关闭详情弹窗">✕</button>
+        </form>
+      </div>
+      <div class="dialog-body dialog-card-layout">
+        <div class="dialog-artwork-wrap">
+          <img id="dialog-card-img" src="" alt="卡牌或饮料大图" width="320" height="380">
+        </div>
+        <div class="dialog-info-col">
+          <div id="dialog-card-tags" class="dialog-tags"></div>
+          <p id="dialog-card-desc" class="dialog-desc"></p>
+          <pre class="dialog-dsl-box" role="region" aria-label="DSL 原始数据" tabindex="0"><code id="dialog-card-dsl"></code></pre>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Native Modal Dialog 2: Zoomed Frame Inspector -->
+  <dialog id="frame-zoom-dialog" closedby="any" aria-labelledby="zoom-dialog-title">
+    <div class="dialog-shell dialog-shell--wide">
+      <div class="dialog-header">
+        <h1 id="zoom-dialog-title" class="dialog-title">高清画面与坐标叠加检视</h1>
+        <form method="dialog">
+          <button type="submit" value="close" class="dialog-close-btn" aria-label="关闭放大视图">✕</button>
+        </form>
+      </div>
+      <div class="dialog-body zoom-body">
+        <div id="zoom-canvas-wrap" class="frame-canvas-wrap frame-canvas-wrap--zoom">
+          <img id="zoom-frame-img" src="/api/frame" alt="放大后的实时游戏截图" width="1080" height="1920">
+          <svg id="zoom-overlay-svg" class="frame-overlay-svg" viewBox="0 0 1080 1920" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="toast-region" class="toast-region" aria-live="polite"></div>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

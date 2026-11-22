@@ -1,0 +1,97 @@
+{
+  "SceneRouting": {
+    "recognition": "Custom",
+    "custom_recognition": "GakumasSceneRoutingRecognition",
+    "custom_recognition_param": { "mode": "route" },
+    "action": "DoNothing",
+    "next": [
+      "PopupConfirmation",
+      "BattleTurn",
+      "ProduceSchedule",
+      "CardReward",
+      "Shop",
+      "SkipCutscene"
+    ],
+    "on_error": ["SceneRouting"]
+  },
+  "BattleTurn": {
+    "recognition": "Custom",
+    "custom_recognition": "GakumasBattleRecognition",
+    "custom_recognition_param": { "expected_scene": "battle_turn" },
+    "action": "Custom",
+    "custom_action": "GakumasDecisionAction",
+    "custom_action_param": { "scene": "battle_turn" },
+    "next": [
+      "BattleTurn",
+      "PopupConfirmation",
+      "SceneRouting"
+    ],
+    "on_error": ["SceneRouting"]
+  },
+  "ProduceSchedule": {
+    "recognition": "Custom",
+    "custom_recognition": "GakumasProduceRecognition",
+    "custom_recognition_param": { "expected_scene": "produce_schedule" },
+    "action": "Custom",
+    "custom_action": "GakumasDecisionAction",
+    "custom_action_param": { "scene": "produce_schedule" },
+    "next": [
+      "PopupConfirmation",
+      "BattleTurn",
+      "SceneRouting"
+    ],
+    "on_error": ["SceneRouting"]
+  },
+  "CardReward": {
+    "recognition": "Custom",
+    "custom_recognition": "GakumasRewardRecognition",
+    "custom_recognition_param": { "expected_scene": "card_reward" },
+    "action": "Custom",
+    "custom_action": "GakumasDecisionAction",
+    "custom_action_param": { "scene": "card_reward" },
+    "next": [
+      "PopupConfirmation",
+      "ProduceSchedule",
+      "SceneRouting"
+    ],
+    "on_error": ["SceneRouting"]
+  },
+  "Shop": {
+    "recognition": "Custom",
+    "custom_recognition": "GakumasShopRecognition",
+    "custom_recognition_param": { "expected_scene": "shop" },
+    "action": "Custom",
+    "custom_action": "GakumasDecisionAction",
+    "custom_action_param": { "scene": "shop" },
+    "next": [
+      "Shop",
+      "PopupConfirmation",
+      "ProduceSchedule",
+      "SceneRouting"
+    ],
+    "on_error": ["SceneRouting"]
+  },
+  "PopupConfirmation": {
+    "recognition": "Custom",
+    "custom_recognition": "GakumasPopupRecognition",
+    "custom_recognition_param": { "expected_scene": "popup" },
+    "action": "Custom",
+    "custom_action": "GakumasDecisionAction",
+    "custom_action_param": { "scene": "popup" },
+    "next": [
+      "SceneRouting",
+      "BattleTurn",
+      "ProduceSchedule"
+    ],
+    "on_error": ["SceneRouting"]
+  },
+  "SkipCutscene": {
+    "recognition": "Custom",
+    "custom_recognition": "GakumasSkipRecognition",
+    "custom_recognition_param": { "expected_scene": "skip" },
+    "action": "Click",
+    "target": [900, 40, 140, 80],
+    "next": ["SceneRouting"],
+    "on_error": ["SceneRouting"]
+  }
+}

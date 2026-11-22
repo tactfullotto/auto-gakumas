@@ -1,0 +1,763 @@
+[
+  {
+    "id": 3,
+    "name": "ビタミンドリンク",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 1,
+    "description": "好調3ターン",
+    "dsl": {
+      "actions": "goodConditionTurns+=3"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "goodConditionTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "plan/images/icons/3.png",
+      "details": "plan/images/details/3.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/plan/images/icons/3.png",
+      "repoDetails": "drinks/sense/plan/images/details/3.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 4,
+    "name": "アイスコーヒー",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 1,
+    "description": "集中+3",
+    "dsl": {
+      "actions": "concentration+=3"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "concentration",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "plan/images/icons/4.png",
+      "details": "plan/images/details/4.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/plan/images/icons/4.png",
+      "repoDetails": "drinks/sense/plan/images/details/4.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 15,
+    "name": "スタミナ爆発ドリンク",
+    "rarity": "SR",
+    "plan": "sense",
+    "planZh": "感性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 21,
+    "description": "絶好調1ターン\n元気+9",
+    "dsl": {
+      "actions": "perfectConditionTurns+=1; genki+=9"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "perfectConditionTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 9
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "plan/images/icons/15.png",
+      "details": "plan/images/details/15.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/plan/images/icons/15.png",
+      "repoDetails": "drinks/sense/plan/images/details/15.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 20,
+    "name": "厳選初星マキアート",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 27,
+    "description": "以降、ターン終了時、集中+1",
+    "dsl": {
+      "actions": "at:endOfTurn { concentration+=1 }"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "phase": "endOfTurn",
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "concentration",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "plan/images/icons/20.png",
+      "details": "plan/images/details/20.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/plan/images/icons/20.png",
+      "repoDetails": "drinks/sense/plan/images/details/20.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 21,
+    "name": "初星ブーストエナジー",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 26,
+    "description": "絶好調2ターン\n手札をすべてレッスン中強化",
+    "dsl": {
+      "actions": "perfectConditionTurns+=2; upgradeHand"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "perfectConditionTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "plan/images/icons/21.png",
+      "details": "plan/images/details/21.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/plan/images/icons/21.png",
+      "repoDetails": "drinks/sense/plan/images/details/21.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 22,
+    "name": "初星黒酢",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "scope": "plan",
+    "scopeZh": "职业专属",
+    "unlockPlv": 61,
+    "description": "山札か捨札にあるスキルカードを選択し、手札に移動\n次に使用したスキルカードの消費体力を0にする（2回）\n体力消費2\n消費体力増加1ターン",
+    "dsl": {
+      "actions": "moveSelectedToHand[deck | discarded]; nullifyCostCards+=2; fixedStamina-=2; doubleCostTurns+=1"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "call",
+              "name": "moveSelectedToHand",
+              "target": {
+                "type": "binary",
+                "op": "|",
+                "left": {
+                  "type": "identifier",
+                  "name": "deck"
+                },
+                "right": {
+                  "type": "identifier",
+                  "name": "discarded"
+                }
+              },
+              "args": []
+            },
+            {
+              "type": "assignment",
+              "lhs": "nullifyCostCards",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "fixedStamina",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "doubleCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "plan/images/icons/22.png",
+      "details": "plan/images/details/22.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/plan/images/icons/22.png",
+      "repoDetails": "drinks/sense/plan/images/details/22.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 1,
+    "name": "初星水",
+    "rarity": "R",
+    "plan": "free",
+    "planZh": "通用",
+    "scope": "common",
+    "scopeZh": "通用",
+    "unlockPlv": 1,
+    "description": "パラメータ+10",
+    "dsl": {
+      "actions": "score+=10"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "score",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 10
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "common/images/icons/1.png",
+      "details": "common/images/details/1.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/common/images/icons/1.png",
+      "repoDetails": "drinks/sense/common/images/details/1.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 2,
+    "name": "烏龍茶",
+    "rarity": "R",
+    "plan": "free",
+    "planZh": "通用",
+    "scope": "common",
+    "scopeZh": "通用",
+    "unlockPlv": 1,
+    "description": "元気+7",
+    "dsl": {
+      "actions": "genki+=7"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "genki",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 7
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "common/images/icons/2.png",
+      "details": "common/images/details/2.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/common/images/icons/2.png",
+      "repoDetails": "drinks/sense/common/images/details/2.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 9,
+    "name": "ミックススムージー",
+    "rarity": "SR",
+    "plan": "free",
+    "planZh": "通用",
+    "scope": "common",
+    "scopeZh": "通用",
+    "unlockPlv": 8,
+    "description": "手札をすべて入れ替える\n体力回復2",
+    "dsl": {
+      "actions": "exchangeHand; fixedStamina+=2"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "exchangeHand"
+            },
+            {
+              "type": "assignment",
+              "lhs": "fixedStamina",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "common/images/icons/9.png",
+      "details": "common/images/details/9.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/common/images/icons/9.png",
+      "repoDetails": "drinks/sense/common/images/details/9.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 10,
+    "name": "リカバリドリンク",
+    "rarity": "SR",
+    "plan": "free",
+    "planZh": "通用",
+    "scope": "common",
+    "scopeZh": "通用",
+    "unlockPlv": 15,
+    "description": "体力回復6",
+    "dsl": {
+      "actions": "fixedStamina+=6"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "fixedStamina",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "common/images/icons/10.png",
+      "details": "common/images/details/10.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/common/images/icons/10.png",
+      "repoDetails": "drinks/sense/common/images/details/10.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 11,
+    "name": "フレッシュビネガー",
+    "rarity": "SR",
+    "plan": "free",
+    "planZh": "通用",
+    "scope": "common",
+    "scopeZh": "通用",
+    "unlockPlv": 1,
+    "description": "手札をすべてレッスン中強化\n体力回復3",
+    "dsl": {
+      "actions": "upgradeHand; fixedStamina+=3"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "upgradeHand"
+            },
+            {
+              "type": "assignment",
+              "lhs": "fixedStamina",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "common/images/icons/11.png",
+      "details": "common/images/details/11.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/common/images/icons/11.png",
+      "repoDetails": "drinks/sense/common/images/details/11.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 12,
+    "name": "ブーストエキス",
+    "rarity": "SR",
+    "plan": "free",
+    "planZh": "通用",
+    "scope": "common",
+    "scopeZh": "通用",
+    "unlockPlv": 55,
+    "description": "パラメータ上昇量増加30%（3ターン）\n消費体力減少3ターン\n体力消費2",
+    "dsl": {
+      "actions": "setScoreBuff(0.3,3); halfCostTurns+=3; fixedStamina-=2"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "call",
+              "name": "setScoreBuff",
+              "target": null,
+              "args": [
+                {
+                  "type": "number",
+                  "value": 0.3
+                },
+                {
+                  "type": "number",
+                  "value": 3
+                }
+              ]
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            },
+            {
+              "type": "assignment",
+              "lhs": "fixedStamina",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "common/images/icons/12.png",
+      "details": "common/images/details/12.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/common/images/icons/12.png",
+      "repoDetails": "drinks/sense/common/images/details/12.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 13,
+    "name": "パワフル漢方ドリンク",
+    "rarity": "SR",
+    "plan": "free",
+    "planZh": "通用",
+    "scope": "common",
+    "scopeZh": "通用",
+    "unlockPlv": 60,
+    "description": "山札か捨札にあるアイドル固有スキルカード1枚を手札に移動\n消費体力減少3ターン",
+    "dsl": {
+      "actions": "moveRandomToHand[pIdol & (deck | discarded)]; halfCostTurns+=3"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "call",
+              "name": "moveRandomToHand",
+              "target": {
+                "type": "binary",
+                "op": "&",
+                "left": {
+                  "type": "identifier",
+                  "name": "pIdol"
+                },
+                "right": {
+                  "type": "binary",
+                  "op": "|",
+                  "left": {
+                    "type": "identifier",
+                    "name": "deck"
+                  },
+                  "right": {
+                    "type": "identifier",
+                    "name": "discarded"
+                  }
+                }
+              },
+              "args": []
+            },
+            {
+              "type": "assignment",
+              "lhs": "halfCostTurns",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "common/images/icons/13.png",
+      "details": "common/images/details/13.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/common/images/icons/13.png",
+      "repoDetails": "drinks/sense/common/images/details/13.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 14,
+    "name": "センブリソーダ",
+    "rarity": "SR",
+    "plan": "free",
+    "planZh": "通用",
+    "scope": "common",
+    "scopeZh": "通用",
+    "unlockPlv": 61,
+    "description": "パラメータ上昇量増加10%（5ターン）\nスキルカードを2枚引く\n体力消費2\n以降の5ターンの間、ターン開始後、スキルカードを引く",
+    "dsl": {
+      "actions": "setScoreBuff(0.1,5); drawCard(2); fixedStamina-=2; at:afterStartOfTurn { drawCard; limit:5 }"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "call",
+              "name": "setScoreBuff",
+              "target": null,
+              "args": [
+                {
+                  "type": "number",
+                  "value": 0.1
+                },
+                {
+                  "type": "number",
+                  "value": 5
+                }
+              ]
+            },
+            {
+              "type": "call",
+              "name": "drawCard",
+              "target": null,
+              "args": [
+                {
+                  "type": "number",
+                  "value": 2
+                }
+              ]
+            },
+            {
+              "type": "assignment",
+              "lhs": "fixedStamina",
+              "op": "-=",
+              "rhs": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          ]
+        },
+        {
+          "phase": "afterStartOfTurn",
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "drawCard"
+            }
+          ],
+          "limit": 5
+        }
+      ]
+    },
+    "images": {
+      "icon": "common/images/icons/14.png",
+      "details": "common/images/details/14.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/common/images/icons/14.png",
+      "repoDetails": "drinks/sense/common/images/details/14.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 18,
+    "name": "初星ホエイプロテイン",
+    "rarity": "SSR",
+    "plan": "free",
+    "planZh": "通用",
+    "scope": "common",
+    "scopeZh": "通用",
+    "unlockPlv": 1,
+    "description": "スキルカード使用数追加+1",
+    "dsl": {
+      "actions": "cardUsesRemaining+=1"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "assignment",
+              "lhs": "cardUsesRemaining",
+              "op": "+=",
+              "rhs": {
+                "type": "number",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "common/images/icons/18.png",
+      "details": "common/images/details/18.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/common/images/icons/18.png",
+      "repoDetails": "drinks/sense/common/images/details/18.png",
+      "repoIconVariants": {}
+    }
+  },
+  {
+    "id": 19,
+    "name": "初星スペシャル青汁",
+    "rarity": "SSR",
+    "plan": "free",
+    "planZh": "通用",
+    "scope": "common",
+    "scopeZh": "通用",
+    "unlockPlv": 15,
+    "description": "ランダムな強化済みスキルカード（SSR）を、手札に生成",
+    "dsl": {
+      "actions": "addRandomUpgradedSSRCardToHand"
+    },
+    "parsedEffects": {
+      "actions": [
+        {
+          "actions": [
+            {
+              "type": "identifier",
+              "name": "addRandomUpgradedSSRCardToHand"
+            }
+          ]
+        }
+      ]
+    },
+    "images": {
+      "icon": "common/images/icons/19.png",
+      "details": "common/images/details/19.png",
+      "iconVariants": {},
+      "repoIcon": "drinks/sense/common/images/icons/19.png",
+      "repoDetails": "drinks/sense/common/images/details/19.png",
+      "repoIconVariants": {}
+    }
+  }
+]

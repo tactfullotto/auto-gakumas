@@ -1,0 +1,28 @@
+# Logs and run artifacts
+*.log
+*.csv
+debug_frames*/
+produce_library_live*.json
+
+# Database WAL / cache files
+*.db-shm
+*.db-wal
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Environment
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

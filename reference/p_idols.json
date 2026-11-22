@@ -1,0 +1,1652 @@
+[
+  {
+    "id": 1,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "学園生活",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 2,
+    "idolId": 2,
+    "idolName": "月村 手毬",
+    "title": "学園生活",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 3,
+    "idolId": 3,
+    "idolName": "藤田 ことね",
+    "title": "学園生活",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 4,
+    "idolId": 4,
+    "idolName": "有村 麻央",
+    "title": "学園生活",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 5,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "学園生活",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 6,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "学園生活",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 7,
+    "idolId": 7,
+    "idolName": "紫雲 清夏",
+    "title": "学園生活",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 8,
+    "idolId": 8,
+    "idolName": "篠澤 広",
+    "title": "学園生活",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 9,
+    "idolId": 9,
+    "idolName": "姫崎 莉波",
+    "title": "学園生活",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 10,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "わたしが一番！",
+    "rarity": "SR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 11,
+    "idolId": 2,
+    "idolName": "月村 手毬",
+    "title": "一匹狼",
+    "rarity": "SR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 12,
+    "idolId": 3,
+    "idolName": "藤田 ことね",
+    "title": "カワイイ♡はじめました",
+    "rarity": "SR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 13,
+    "idolId": 4,
+    "idolName": "有村 麻央",
+    "title": "はじまりはカッコよく",
+    "rarity": "SR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 14,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "一つ踏み出した先に",
+    "rarity": "SR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 15,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "胸を張って一歩ずつ",
+    "rarity": "SR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 16,
+    "idolId": 7,
+    "idolName": "紫雲 清夏",
+    "title": "夢へのリスタート",
+    "rarity": "SR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 17,
+    "idolId": 8,
+    "idolName": "篠澤 広",
+    "title": "一番向いてないこと",
+    "rarity": "SR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 18,
+    "idolId": 9,
+    "idolName": "姫崎 莉波",
+    "title": "『私らしさ』のはじまり",
+    "rarity": "SR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 19,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "Fighting My Way",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 20,
+    "idolId": 2,
+    "idolName": "月村 手毬",
+    "title": "Luna say maybe",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 21,
+    "idolId": 3,
+    "idolName": "藤田 ことね",
+    "title": "世界一可愛い私",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 22,
+    "idolId": 4,
+    "idolName": "有村 麻央",
+    "title": "Fluorite",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 23,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "白線",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 24,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "Wonder Scale",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 25,
+    "idolId": 7,
+    "idolName": "紫雲 清夏",
+    "title": "Tame-Lie-One-Step",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 26,
+    "idolId": 8,
+    "idolName": "篠澤 広",
+    "title": "光景",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 27,
+    "idolId": 9,
+    "idolName": "姫崎 莉波",
+    "title": "clumsy trick",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 28,
+    "idolId": 2,
+    "idolName": "月村 手毬",
+    "title": "アイヴイ",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 29,
+    "idolId": 10,
+    "idolName": "花海 佑芽",
+    "title": "学園生活",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 30,
+    "idolId": 10,
+    "idolName": "花海 佑芽",
+    "title": "アイドル、はじめっ！",
+    "rarity": "SR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 31,
+    "idolId": 10,
+    "idolName": "花海 佑芽",
+    "title": "The Rolling Riceball",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 32,
+    "idolId": 3,
+    "idolName": "藤田 ことね",
+    "title": "Yellow Big Bang！",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 33,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "Boom Boom Pow",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 34,
+    "idolId": 4,
+    "idolName": "有村 麻央",
+    "title": "キミとセミブルー",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 35,
+    "idolId": 7,
+    "idolName": "紫雲 清夏",
+    "title": "キミとセミブルー",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 36,
+    "idolId": 9,
+    "idolName": "姫崎 莉波",
+    "title": "キミとセミブルー",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 37,
+    "idolId": 8,
+    "idolName": "篠澤 広",
+    "title": "コントラスト",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 38,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "冠菊",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 39,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "冠菊",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 40,
+    "idolId": 3,
+    "idolName": "藤田 ことね",
+    "title": "冠菊",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 41,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "初声",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 42,
+    "idolId": 2,
+    "idolName": "月村 手毬",
+    "title": "初声",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 43,
+    "idolId": 3,
+    "idolName": "藤田 ことね",
+    "title": "初声",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 44,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "日々、発見的ステップ！",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 45,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "初心",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 46,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "初心",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 47,
+    "idolId": 9,
+    "idolName": "姫崎 莉波",
+    "title": "初心",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 48,
+    "idolId": 9,
+    "idolName": "姫崎 莉波",
+    "title": "ようこそ初星温泉",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 49,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "ようこそ初星温泉",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 50,
+    "idolId": 4,
+    "idolName": "有村 麻央",
+    "title": "Feel Jewel Dream",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 51,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "仮装狂騒曲",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 52,
+    "idolId": 2,
+    "idolName": "月村 手毬",
+    "title": "仮装狂騒曲",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 53,
+    "idolId": 8,
+    "idolName": "篠澤 広",
+    "title": "仮装狂騒曲",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 54,
+    "idolId": 4,
+    "idolName": "有村 麻央",
+    "title": "初恋",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 55,
+    "idolId": 7,
+    "idolName": "紫雲 清夏",
+    "title": "初恋",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 56,
+    "idolId": 8,
+    "idolName": "篠澤 広",
+    "title": "初恋",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 57,
+    "idolId": 9,
+    "idolName": "姫崎 莉波",
+    "title": "L.U.V",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 58,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "古今東西ちょちょいのちょい",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 59,
+    "idolId": 11,
+    "idolName": "十王 星南",
+    "title": "学園生活",
+    "rarity": "R",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 60,
+    "idolId": 11,
+    "idolName": "十王 星南",
+    "title": "一番星",
+    "rarity": "SR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 61,
+    "idolId": 11,
+    "idolName": "十王 星南",
+    "title": "小さな野望",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 62,
+    "idolId": 3,
+    "idolName": "藤田 ことね",
+    "title": "White Night! White Wish!",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 63,
+    "idolId": 10,
+    "idolName": "花海 佑芽",
+    "title": "White Night! White Wish!",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 64,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "White Night! White Wish!",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 65,
+    "idolId": 7,
+    "idolName": "紫雲 清夏",
+    "title": "カクシタワタシ",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 66,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "Campus mode!!",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 67,
+    "idolId": 2,
+    "idolName": "月村 手毬",
+    "title": "Campus mode!!",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 68,
+    "idolId": 3,
+    "idolName": "藤田 ことね",
+    "title": "Campus mode!!",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 69,
+    "idolId": 4,
+    "idolName": "有村 麻央",
+    "title": "Campus mode!!",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 70,
+    "idolId": 11,
+    "idolName": "十王 星南",
+    "title": "Campus mode!!",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 71,
+    "idolId": 9,
+    "idolName": "姫崎 莉波",
+    "title": "Campus mode!!",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 72,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "Campus mode!!",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 73,
+    "idolId": 8,
+    "idolName": "篠澤 広",
+    "title": "Campus mode!!",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 74,
+    "idolId": 10,
+    "idolName": "花海 佑芽",
+    "title": "Campus mode!!",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 75,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "Campus mode!!",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 76,
+    "idolId": 7,
+    "idolName": "紫雲 清夏",
+    "title": "Campus mode!!",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 77,
+    "idolId": 8,
+    "idolName": "篠澤 広",
+    "title": "ハッピーミルフィーユ",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 78,
+    "idolId": 9,
+    "idolName": "姫崎 莉波",
+    "title": "ハッピーミルフィーユ",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 79,
+    "idolId": 11,
+    "idolName": "十王 星南",
+    "title": "ハッピーミルフィーユ",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 80,
+    "idolId": 2,
+    "idolName": "月村 手毬",
+    "title": "雪解けに",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 81,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "雪解けに",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 82,
+    "idolId": 4,
+    "idolName": "有村 麻央",
+    "title": "雪解けに",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 83,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "極光",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 84,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "桜フォトグラフ",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 85,
+    "idolId": 7,
+    "idolName": "紫雲 清夏",
+    "title": "桜フォトグラフ",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 86,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "桜フォトグラフ",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 87,
+    "idolId": 11,
+    "idolName": "十王 星南",
+    "title": "Our Chant",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 88,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "雨上がりのアイリス",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 89,
+    "idolId": 2,
+    "idolName": "月村 手毬",
+    "title": "雨上がりのアイリス",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 90,
+    "idolId": 3,
+    "idolName": "藤田 ことね",
+    "title": "雨上がりのアイリス",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 91,
+    "idolId": 12,
+    "idolName": "秦谷 美鈴",
+    "title": "学園生活",
+    "rarity": "R",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "preservation"
+  },
+  {
+    "id": 92,
+    "idolId": 12,
+    "idolName": "秦谷 美鈴",
+    "title": "ゆっくり、一歩ずつ",
+    "rarity": "SR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "preservation"
+  },
+  {
+    "id": 93,
+    "idolId": 12,
+    "idolName": "秦谷 美鈴",
+    "title": "ツキノカメ",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "preservation"
+  },
+  {
+    "id": 94,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "Howling over the World",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 95,
+    "idolId": 9,
+    "idolName": "姫崎 莉波",
+    "title": "Howling over the World",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 96,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "Howling over the World",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 97,
+    "idolId": 7,
+    "idolName": "紫雲 清夏",
+    "title": "Love & Joy",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 98,
+    "idolId": 12,
+    "idolName": "秦谷 美鈴",
+    "title": "Campus mode!!",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 99,
+    "idolId": 11,
+    "idolName": "十王 星南",
+    "title": "初陣",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 100,
+    "idolId": 12,
+    "idolName": "秦谷 美鈴",
+    "title": "初陣",
+    "rarity": "R",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 101,
+    "idolId": 10,
+    "idolName": "花海 佑芽",
+    "title": "初陣",
+    "rarity": "R",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 102,
+    "idolId": 8,
+    "idolName": "篠澤 広",
+    "title": "サンフェーデッド",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 103,
+    "idolId": 10,
+    "idolName": "花海 佑芽",
+    "title": "Star-mine",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 104,
+    "idolId": 12,
+    "idolName": "秦谷 美鈴",
+    "title": "Star-mine",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 105,
+    "idolId": 11,
+    "idolName": "十王 星南",
+    "title": "Star-mine",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 106,
+    "idolId": 3,
+    "idolName": "藤田 ことね",
+    "title": "自己肯定感爆上げ↑↑しゅきしゅきソング",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 107,
+    "idolId": 4,
+    "idolName": "有村 麻央",
+    "title": "ミラクルナナウ(ﾟ∀ﾟ)！",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 108,
+    "idolId": 7,
+    "idolName": "紫雲 清夏",
+    "title": "ミラクルナナウ(ﾟ∀ﾟ)！",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 109,
+    "idolId": 8,
+    "idolName": "篠澤 広",
+    "title": "ミラクルナナウ(ﾟ∀ﾟ)！",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 110,
+    "idolId": 9,
+    "idolName": "姫崎 莉波",
+    "title": "36℃ U・B・U",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 111,
+    "idolId": 3,
+    "idolName": "藤田 ことね",
+    "title": "がむしゃらに行こう！",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 112,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "がむしゃらに行こう！",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 113,
+    "idolId": 2,
+    "idolName": "月村 手毬",
+    "title": "がむしゃらに行こう！",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 114,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "空と約束",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 115,
+    "idolId": 4,
+    "idolName": "有村 麻央",
+    "title": "見て",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 116,
+    "idolId": 13,
+    "idolName": "雨夜 燕",
+    "title": "学園生活",
+    "rarity": "R",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 117,
+    "idolId": 13,
+    "idolName": "雨夜 燕",
+    "title": "初志貫徹",
+    "rarity": "SR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 118,
+    "idolId": 13,
+    "idolName": "雨夜 燕",
+    "title": "理論武装して",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 119,
+    "idolId": 10,
+    "idolName": "花海 佑芽",
+    "title": "グースーピー",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 120,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "Atmosphere",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 121,
+    "idolId": 13,
+    "idolName": "雨夜 燕",
+    "title": "Campus mode!!",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 122,
+    "idolId": 12,
+    "idolName": "秦谷 美鈴",
+    "title": "Superlative",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 123,
+    "idolId": 2,
+    "idolName": "月村 手毬",
+    "title": "一体いつから",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 124,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "みちなるひろがる",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 125,
+    "idolId": 8,
+    "idolName": "篠澤 広",
+    "title": "みちなるひろがる",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 126,
+    "idolId": 11,
+    "idolName": "十王 星南",
+    "title": "赤裸々",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 127,
+    "idolId": 10,
+    "idolName": "花海 佑芽",
+    "title": "ENDLESS DANCE",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 128,
+    "idolId": 12,
+    "idolName": "秦谷 美鈴",
+    "title": "ENDLESS DANCE",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 129,
+    "idolId": 11,
+    "idolName": "十王 星南",
+    "title": "ENDLESS DANCE",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 130,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "Wildest Flower",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 131,
+    "idolId": 14,
+    "idolName": "根緒 亜紗里",
+    "title": "",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 132,
+    "idolId": 14,
+    "idolName": "根緒 亜紗里",
+    "title": "",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 133,
+    "idolId": 14,
+    "idolName": "根緒 亜紗里",
+    "title": "",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 134,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "ときめきエモーション",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 135,
+    "idolId": 7,
+    "idolName": "紫雲 清夏",
+    "title": "ときめきエモーション",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 136,
+    "idolId": 10,
+    "idolName": "花海 佑芽",
+    "title": "真っ白いページと水彩の主人公",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 137,
+    "idolId": 12,
+    "idolName": "秦谷 美鈴",
+    "title": "VEIL",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 138,
+    "idolId": 2,
+    "idolName": "月村 手毬",
+    "title": "ガラクタロード",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 139,
+    "idolId": 9,
+    "idolName": "姫崎 莉波",
+    "title": "ガラクタロード",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 140,
+    "idolId": 8,
+    "idolName": "篠澤 広",
+    "title": "ガラクタロード",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 141,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "ガラクタロード",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 142,
+    "idolId": 4,
+    "idolName": "有村 麻央",
+    "title": "SUGAR FLAVOR",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 143,
+    "idolId": 9,
+    "idolName": "姫崎 莉波",
+    "title": "SUGAR FLAVOR",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 144,
+    "idolId": 3,
+    "idolName": "藤田 ことね",
+    "title": "GO MY WAY!!",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 145,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "GO MY WAY!!",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 146,
+    "idolId": 10,
+    "idolName": "花海 佑芽",
+    "title": "GO MY WAY!!",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 147,
+    "idolId": 13,
+    "idolName": "雨夜 燕",
+    "title": "クライアイ",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 148,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "ガラクタロード",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 149,
+    "idolId": 2,
+    "idolName": "月村 手毬",
+    "title": "「ねえ、言っちゃうよ。」",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 150,
+    "idolId": 11,
+    "idolName": "十王 星南",
+    "title": "「ねえ、言っちゃうよ。」",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 151,
+    "idolId": 12,
+    "idolName": "秦谷 美鈴",
+    "title": "「ねえ、言っちゃうよ。」",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 152,
+    "idolId": 4,
+    "idolName": "有村 麻央",
+    "title": "標",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 153,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "標",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 154,
+    "idolId": 7,
+    "idolName": "紫雲 清夏",
+    "title": "標",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 155,
+    "idolId": 11,
+    "idolName": "十王 星南",
+    "title": "ガラクタロード",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 156,
+    "idolId": 8,
+    "idolName": "篠澤 広",
+    "title": "め",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 157,
+    "idolId": 10,
+    "idolName": "花海 佑芽",
+    "title": "Agitato",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 158,
+    "idolId": 5,
+    "idolName": "葛城 リーリヤ",
+    "title": "Agitato",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  },
+  {
+    "id": 159,
+    "idolId": 1,
+    "idolName": "花海 咲季",
+    "title": "Agitato",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "motivation"
+  },
+  {
+    "id": 160,
+    "idolId": 11,
+    "idolName": "十王 星南",
+    "title": "Roar",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 161,
+    "idolId": 13,
+    "idolName": "雨夜 燕",
+    "title": "ガラクタロード",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "strength"
+  },
+  {
+    "id": 162,
+    "idolId": 6,
+    "idolName": "倉本 千奈",
+    "title": "ガラクタロード",
+    "rarity": "SSR",
+    "plan": "anomaly",
+    "planZh": "异常",
+    "recommendedEffect": "fullPower"
+  },
+  {
+    "id": 163,
+    "idolId": 12,
+    "idolName": "秦谷 美鈴",
+    "title": "ガラクタロード",
+    "rarity": "SSR",
+    "plan": "logic",
+    "planZh": "理性",
+    "recommendedEffect": "goodImpressionTurns"
+  },
+  {
+    "id": 164,
+    "idolId": 15,
+    "idolName": "氷渡 香名江",
+    "title": "メタモルフォーゼ",
+    "rarity": "SSR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "concentration"
+  },
+  {
+    "id": 165,
+    "idolId": 15,
+    "idolName": "氷渡 香名江",
+    "title": "憧れを抱いて一歩ずつ",
+    "rarity": "SR",
+    "plan": "sense",
+    "planZh": "感性",
+    "recommendedEffect": "goodConditionTurns"
+  }
+]
