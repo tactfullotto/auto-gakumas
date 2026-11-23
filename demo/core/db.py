@@ -146,3 +146,36 @@ class GakumasDB:
         cur.execute("SELECT * FROM p_idols WHERE id = ? LIMIT 1", (int(p_idol_id),))
         row = cur.fetchone()
         return dict(row) if row is not None else None
+
+    def get_all_customizations(self) -> List[Dict[str, Any]]:
+        """Returns all skill card customization definitions (`customizations` table)."""
+        cur = self.connection.cursor()
+        cur.execute(
+            """
+            SELECT
+                id, alias, name, type, prices_json, max_level,
+                force_initial_hand, limit_count, dsl_conditions,
+                dsl_cost, dsl_actions, dsl_effects, parsed_patches_json
+            FROM customizations
+            ORDER BY id ASC
+            """
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_customization_by_id(self, cust_id: int) -> Optional[Dict[str, Any]]:
+        """Fetches a single skill card customization definition by ID."""
+        cur = self.connection.cursor()
+        cur.execute(
+            """
+            SELECT
+                id, alias, name, type, prices_json, max_level,
+                force_initial_hand, limit_count, dsl_conditions,
+                dsl_cost, dsl_actions, dsl_effects, parsed_patches_json
+            FROM customizations
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (int(cust_id),),
+        )
+        row = cur.fetchone()
+        return dict(row) if row is not None else None

@@ -45,6 +45,7 @@ from demo.schemas import (
 )
 from demo.vision.mock_generator import MockFrameGenerator
 from demo.vision.recognizer import recognize_screen
+from demo.web.hif_session import HifWorkbenchSession
 
 logger = logging.getLogger(__name__)
 
@@ -240,9 +241,8 @@ class InstanceSession:
         return AgentConfig.from_env_or_xai()
 
     def _checkpoint_file(self) -> Optional[Path]:
-        if self.config.mode == "mock":
-            return None
-        return _PROJECT_ROOT / "demo" / "state" / f"web_checkpoint_{self.id}.json"
+        # Web UI runs keep state in-memory so demo/state/ is never created on disk.
+        return None
 
     def reset_controller(self, clear_checkpoint: bool = False) -> None:
         if self._controller is not None:
@@ -666,6 +666,7 @@ class WebSessionManager:
         }
         self.active_id: str = "default"
         self._next_custom_idx: int = 1
+        self.hif = HifWorkbenchSession(self.db, broadcast_fn=self.broadcast)
 
         if auto_preview:
             for inst in self.instances.values():
@@ -787,7 +788,7 @@ class WebSessionManager:
         valid_enums = {
             "mode": ("mock", "adb", "win32"),
             "plan": ("sense", "logic", "anomaly"),
-            "scenario_id": ("hajime_regular", "hajime_pro", "hajime_master", "nia_master"),
+            "scenario_id": ("hajime_regular", "hajime_pro", "hajime_master", "nia_master", "hif_honsen"),
             "scenario_preset": ("hajime_regular", "sequence", "battle_turn", "produce_schedule", "card_reward", "shop", "popup"),
             "llm_mode": ("auto_xai", "custom", "offline"),
         }
@@ -983,6 +984,7 @@ class WebSessionManager:
         return {"ok": True}
 
     def stop_all(self) -> None:
+        self.hif.stop()
         with self.lock:
             for inst in self.instances.values():
                 inst.stop_event.set()
@@ -1095,6 +1097,11 @@ class WebSessionManager:
                     continue
                 seen_ids.add(cid)
                 item = dict(row)
+                raw_avail = row.get("available_customization_ids_json")
+                try:
+                    item["available_customization_ids"] = [int(x) for x in json.loads(raw_avail or "[]")]
+                except Exception:
+                    item["available_customization_ids"] = []
                 item["icon_url"] = _to_asset_url(row.get("icon_path"))
                 item["details_url"] = _to_asset_url(row.get("details_path"))
                 results.append(item)
@@ -1119,6 +1126,11 @@ class WebSessionManager:
                     continue
                 seen_ids.add(did)
                 item = dict(row)
+                raw_avail = row.get("available_customization_ids_json")
+                try:
+                    item["available_customization_ids"] = [int(x) for x in json.loads(raw_avail or "[]")]
+                except Exception:
+                    item["available_customization_ids"] = []
                 item["icon_url"] = _to_asset_url(row.get("icon_path"))
                 item["details_url"] = _to_asset_url(row.get("details_path"))
                 results.append(item)
@@ -1271,7 +1283,7 @@ class GakumasWebHandler(BaseHTTPRequestHandler):
             category = qs.get("category", ["all"])[0]
             q = qs.get("q", [""])[0]
             try:
-                limit = max(1, min(500, int(qs.get("limit", ["120"])[0])))
+                limit = max(1, min(1500, int(qs.get("limit", ["120"])[0])))
             except ValueError:
                 self._send_json({"ok": False, "error": "Invalid limit parameter"}, status=HTTPStatus.BAD_REQUEST)
                 return
@@ -1287,6 +1299,22 @@ class GakumasWebHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "Invalid limit parameter"}, status=HTTPStatus.BAD_REQUEST)
                 return
             self._send_json(self.manager.query_library_drinks(plan=plan, query=q, limit=limit))
+            return
+
+        if path == "/api/hif/catalog":
+            self._send_json(self.manager.hif.build_catalog())
+            return
+
+        if path == "/api/hif/state":
+            self._send_json(self.manager.hif.get_state())
+            return
+
+        if path == "/api/hif/frame":
+            self._send_bytes(self.manager.hif.get_frame_png(), "image/png", cache_control="no-store")
+            return
+
+        if path == "/api/hif/export-library":
+            self._send_json(self.manager.hif.build_library_payload())
             return
 
         if path.startswith("/api/"):
@@ -1370,6 +1398,39 @@ class GakumasWebHandler(BaseHTTPRequestHandler):
             if path == "/api/test-llm":
                 self._send_json(self.manager.test_llm_connection(body.get("instance_id")))
                 return
+            if path == "/api/hif/select-idol":
+                self._send_json(self.manager.hif.select_idol(body))
+                return
+            if path == "/api/hif/config":
+                self._send_json(self.manager.hif.update_config(body))
+                return
+            if path == "/api/hif/loadout":
+                self._send_json(self.manager.hif.update_loadout(body))
+                return
+            if path == "/api/hif/memories":
+                self._send_json(self.manager.hif.update_memories(body))
+                return
+            if path == "/api/hif/preferences":
+                self._send_json(self.manager.hif.update_preferences(body))
+                return
+            if path == "/api/hif/import-library":
+                self._send_json(self.manager.hif.import_library(body))
+                return
+            if path == "/api/hif/preview":
+                self._send_json(self.manager.hif.capture_preview())
+                return
+            if path == "/api/hif/start":
+                self._send_json(self.manager.hif.start())
+                return
+            if path == "/api/hif/stop":
+                self._send_json(self.manager.hif.stop())
+                return
+            if path == "/api/hif/logs/clear":
+                self._send_json(self.manager.hif.clear_logs())
+                return
+        except PermissionError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.FORBIDDEN)
+            return
         except KeyError as exc:
             self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.NOT_FOUND)
             return

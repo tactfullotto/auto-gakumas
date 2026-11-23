@@ -9,14 +9,15 @@ import json
 import logging
 from pathlib import Path
 import sys
-from typing import Optional
+from typing import Any, Callable, Dict, Optional
 
 import cv2
 
 from demo.agent.local_agent import LocalHybridDecisionAgent
 from demo.core.db import GakumasDB
+from demo.core.hif_catalog import ProducePreferences
 from demo.maa_bridge.adb_controller import AdbConfig, AdbController
-from demo.maa_bridge.runner import GakumasRunner
+from demo.maa_bridge.runner import GakumasRunner, StepResult
 from demo.sim.live_battle_planner import LiveBattlePlannerConfig
 from demo.vision.loadout_scanner import HifLoadoutScanner
 
@@ -34,13 +35,19 @@ def build_local_hif_runner(
     adb_path: Optional[str] = None,
     plan: str = "logic",
     scenario_id: str = "hif_honsen",
+    p_idol_id: Optional[int] = None,
+    loadout_mode: str = "auto",  # 'auto' | 'manual' | 'hybrid'
     ppo_episodes: int = 2000,
     ismcts_sims: int = 64,
     initial_library: Optional[str] = None,
+    initial_loadout_dict: Optional[Dict[str, Any]] = None,
+    preferences: Optional[Dict[str, Any]] = None,
     library_out: Optional[str] = None,
     checkpoint_path: Optional[str] = None,
     debug_dir: Optional[str] = None,
     csv_out: Optional[str] = None,
+    on_step_callback: Optional[Callable[[StepResult], None]] = None,
+    on_frame_callback: Optional[Callable[[Any], None]] = None,
 ) -> GakumasRunner:
     """Construct a local zero-LLM GakumasRunner wired with HifLoadoutScanner and PPO+ISMCTS."""
     db = GakumasDB("gakumas_library.db")
@@ -56,7 +63,29 @@ def build_local_hif_runner(
             prefer_maa=True,
         )
     )
-    scanner = HifLoadoutScanner(db=db)
+    if on_frame_callback is not None:
+        orig_screencap = controller.screencap
+
+        def _wrapped_screencap():
+            frame = orig_screencap()
+            if frame is not None and frame.size > 0:
+                try:
+                    on_frame_callback(frame)
+                except Exception:
+                    pass
+            return frame
+
+        controller.screencap = _wrapped_screencap  # type: ignore[method-assign]
+
+    mode_l = (loadout_mode or "auto").strip().lower()
+    if mode_l not in ("auto", "manual", "hybrid"):
+        mode_l = "auto"
+
+    prefs_obj = ProducePreferences.from_dict(preferences)
+    scanner = None if mode_l == "manual" else HifLoadoutScanner(db=db)
+    if scanner is not None and hasattr(scanner.reco, "set_banned_drink_ids"):
+        scanner.reco.set_banned_drink_ids(prefs_obj.banned_drink_ids)
+
     agent = LocalHybridDecisionAgent(
         db=db,
         planner_cfg=LiveBattlePlannerConfig(
@@ -64,6 +93,7 @@ def build_local_hif_runner(
             ismcts_simulations=ismcts_sims,
         ),
         library_out_path=library_out,
+        preferences=prefs_obj,
     )
 
     dbg_path = Path(debug_dir) if debug_dir else None
@@ -183,51 +213,106 @@ def build_local_hif_runner(
                         cv2.imwrite(str(dbg_path / f"battle_{tag}_step{res.step_idx:03d}.png"), cv2.cvtColor(raw, cv2.COLOR_RGB2BGR))
                 except Exception:
                     pass
+        if on_step_callback is not None:
+            try:
+                on_step_callback(res)
+            except Exception:
+                pass
+
+    seed_data: Optional[Dict[str, Any]] = None
+    if initial_loadout_dict and isinstance(initial_loadout_dict, dict):
+        seed_data = dict(initial_loadout_dict)
+    elif initial_library and Path(initial_library).exists():
+        seed_data = json.loads(Path(initial_library).read_text(encoding="utf-8"))
+
+    hooks_raw = (seed_data.get("card_memory_hooks") or {}) if seed_data else {}
+    manual_hooks_int = {
+        int(k): dict(v)
+        for k, v in hooks_raw.items()
+        if isinstance(v, dict)
+    }
+    custs_raw = (seed_data.get("card_customizations") or {}) if seed_data else {}
+    manual_custs_int = {
+        int(k): dict(v)
+        for k, v in custs_raw.items()
+        if isinstance(v, dict)
+    }
+    manual_slots = list(seed_data.get("memory_slots") or []) if seed_data else []
+    manual_passives = list(seed_data.get("memory_passives") or []) if seed_data else []
+
+    init_pid_arg = (
+        int(seed_data["p_idol_id"])
+        if seed_data and seed_data.get("p_idol_id") is not None
+        else p_idol_id
+    )
+    init_plan_arg = str((seed_data.get("plan") if seed_data else None) or plan).lower()
 
     runner = GakumasRunner(
         mode="adb",
         controller=controller,
         agent=agent,
         db=db,
-        plan=plan,
+        plan=init_plan_arg,
         scenario_id=scenario_id,
+        p_idol_id=init_pid_arg,
         session_mode=False,
         checkpoint_path=checkpoint_path,
         loadout_scanner=scanner,
         loadout_library_path=library_out,
+        manual_memory_hooks=manual_hooks_int,
+        manual_card_customizations=manual_custs_int,
+        manual_memory_slots=manual_slots,
+        manual_memory_passives=manual_passives,
         idle_blank_tap_seconds=60.0,
         on_step_completed=_on_step,
     )
     runner._csv_file_handle = csv_fh
+    if hasattr(runner.scene_routing_reco, "set_banned_drink_ids"):
+        runner.scene_routing_reco.set_banned_drink_ids(prefs_obj.banned_drink_ids)
 
-    if initial_library and Path(initial_library).exists():
-        lib_data = json.loads(Path(initial_library).read_text(encoding="utf-8"))
-        hooks_raw = lib_data.get("card_memory_hooks") or {}
-        hooks_int = {int(k): dict(v) for k, v in hooks_raw.items() if isinstance(v, dict)}
-        init_plan = str(lib_data.get("plan") or plan).lower()
-        init_pid = lib_data.get("p_idol_id")
-        runner.tracker.set_initial_loadout(
-            p_idol_id=(int(init_pid) if init_pid is not None else None),
-            plan=init_plan,
-            recommended_effect=lib_data.get("recommended_effect"),
-            deck_ids=[int(cid) for cid in (lib_data.get("deck_ids") or []) if cid],
-            p_items=list(lib_data.get("p_items") or []),
-            card_memory_hooks=hooks_int,
-            db=db,
-        )
-        runner.plan = init_plan
-        reco_inner = getattr(runner.scene_routing_reco, "recognizer", None)
-        if reco_inner is not None and hasattr(reco_inner, "plan"):
-            reco_inner.plan = init_plan
-        saved_stats = lib_data.get("idol_stats")
-        if isinstance(saved_stats, dict) and max((int(v or 0) for v in saved_stats.values()), default=0) > 300:
-            clean_stats = {str(k): int(v or 0) for k, v in saved_stats.items()}
-            runner.tracker.idol_stats = dict(clean_stats)
-            if reco_inner is not None and hasattr(reco_inner, "_last_stats"):
-                reco_inner._last_stats = dict(clean_stats)
-        if init_pid is not None:
-            runner.p_idol_id = int(init_pid)
-        runner._flush_produce_library()
+    if seed_data is not None:
+        if mode_l == "manual" or (initial_library and Path(initial_library).exists()):
+            runner.tracker.set_initial_loadout(
+                p_idol_id=init_pid_arg,
+                plan=init_plan_arg,
+                recommended_effect=seed_data.get("recommended_effect"),
+                deck_ids=[int(cid) for cid in (seed_data.get("deck_ids") or []) if cid],
+                p_items=list(seed_data.get("p_items") or []),
+                card_memory_hooks=manual_hooks_int,
+                card_customizations=manual_custs_int,
+                memory_slots=manual_slots,
+                memory_passives=manual_passives,
+                db=db,
+            )
+            runner.plan = init_plan_arg
+            reco_inner = (
+                getattr(runner.scene_routing_reco, "_live_recognizer", None)
+                or getattr(runner.scene_routing_reco, "recognizer", None)
+            )
+            if reco_inner is not None and hasattr(reco_inner, "plan"):
+                reco_inner.plan = init_plan_arg
+            saved_stats = seed_data.get("idol_stats")
+            if isinstance(saved_stats, dict) and max((int(v or 0) for v in saved_stats.values()), default=0) > 300:
+                clean_stats = {str(k): int(v or 0) for k, v in saved_stats.items()}
+                runner.tracker.idol_stats = dict(clean_stats)
+                if reco_inner is not None and hasattr(reco_inner, "_last_stats"):
+                    reco_inner._last_stats = dict(clean_stats)
+            if init_pid_arg is not None:
+                runner.p_idol_id = int(init_pid_arg)
+            runner._flush_produce_library()
+        elif mode_l == "hybrid":
+            # Keep auto-scanner active at produce_setup, while seeding manual idol/memories/slots/passives/customizations
+            runner.tracker.memory_slots = [dict(s) for s in manual_slots if isinstance(s, dict)]
+            runner.tracker.memory_passives = [dict(p) for p in manual_passives if isinstance(p, dict)]
+            if manual_hooks_int or manual_custs_int:
+                runner.tracker.merge_manual_memory_hooks(
+                    hooks=manual_hooks_int,
+                    card_customizations=manual_custs_int,
+                )
+            saved_stats = seed_data.get("idol_stats")
+            if isinstance(saved_stats, dict) and max((int(v or 0) for v in saved_stats.values()), default=0) > 300:
+                clean_stats = {str(k): int(v or 0) for k, v in saved_stats.items()}
+                runner.tracker.idol_stats = dict(clean_stats)
 
     return runner
 

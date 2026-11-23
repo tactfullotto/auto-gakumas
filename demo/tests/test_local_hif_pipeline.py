@@ -5160,3 +5160,284 @@ def test_hatsuboshi_drink25_strict_active_only_gating_and_followup():
         assert cid_follow == 0
     finally:
         db.close()
+
+
+def test_produce_preferences_card_weights_and_custom_banned_drinks():
+    """Verify user card priorities/avoids/keeps, custom banned drinks, and shop/reroll toggles propagate end-to-end."""
+    from demo.core.hif_catalog import ProducePreferences
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        # 1. Agent picks user-prioritized #64 over default higher-scoring card #521, and avoids #711
+        prefs = ProducePreferences(
+            priority_card_ids=[64],
+            keep_card_ids=[1],
+            avoid_card_ids=[711],
+            card_score_overrides={68: 2600},
+            preferred_drink_ids=[2],
+            banned_drink_ids=[19, 1],  # ban 青汁 (#19) and 初星水 (#1)
+            spend_all_final_shop=False,
+            reroll_early_non_exhaust_mental=False,
+        )
+        agent = LocalHybridDecisionAgent(db=db, preferences=prefs)
+        tracker = GameStateTracker(plan="logic", p_idol_id=163, scenario_id="hif_honsen")
+        agent.bind_tracker(tracker)
+        box = BoundingBox(xmin=10, ymin=10, xmax=50, ymax=50)
+
+        # Prioritized #64 beats normal #711 (and #711 is avoided anyway)
+        obs_rew = ScreenObservation(scene_type="card_reward", plan="logic", scenario_id="hif_honsen", week=2, stamina=30, max_stamina=40)
+        acts_rew = [
+            LegalAction(choice_id=0, action_type="pick_option", description="スキルカード1", bbox=box, payload={"card_id": 521, "name": "夢色リップ+"}),
+            LegalAction(choice_id=1, action_type="pick_option", description="スキルカード2", bbox=box, payload={"card_id": 64, "name": "カード64"}),
+            LegalAction(choice_id=2, action_type="pick_option", description="再抽選", bbox=box, payload={"name": "再抽選"}),
+        ]
+        dec_rew = agent.decide("", acts_rew, obs=obs_rew)
+        assert dec_rew.choice_id == 1
+
+        # Protected keep_card_ids=[1] resists deletion compared to avoided #711
+        rem_score_kept = agent._score_skill_card(card_id=1, title="アピールの基本", desc="", target_effect="goodImpressionTurns", guide=None, plan="logic", for_removal=True)
+        rem_score_avoid = agent._score_skill_card(card_id=711, title="冒険心+", desc="", target_effect="goodImpressionTurns", guide=None, plan="logic", for_removal=True)
+        assert rem_score_avoid > rem_score_kept
+
+        # Early M-card reroll disabled via reroll_early_non_exhaust_mental=False -> accepts #68 instead of 再抽選
+        acts_early = [
+            LegalAction(choice_id=0, action_type="pick_option", description="励まし", bbox=box, payload={"card_id": 68, "name": "励まし"}),
+            LegalAction(choice_id=1, action_type="pick_option", description="再抽選", bbox=box, payload={"name": "再抽選"}),
+        ]
+        dec_early = agent.decide("", acts_early, obs=obs_rew)
+        assert dec_early.choice_id == 0
+
+        # Final shop refresh disabled via spend_all_final_shop=False -> exits instead of リフレッシュ
+        obs_shop = ScreenObservation(scene_type="shop", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=9, p_points=120, drinks=[])
+        acts_shop = [
+            LegalAction(choice_id=0, action_type="pick_option", description="リフレッシュ (10P)", bbox=box, payload={"name": "リフレッシュ", "shop_slot_key": "リフレッシュ", "price": 10}),
+            LegalAction(choice_id=1, action_type="pick_option", description="終了", bbox=box, payload={"name": "終了"}),
+        ]
+        dec_shop = agent.decide("", acts_shop, obs=obs_shop)
+        assert dec_shop.choice_id == 1
+
+        # Preferred drink #2 beats #5, while custom banned drink #1 初星水 is rejected & discarded
+        assert agent._score_drink(drink_id=2, title="烏龍茶", desc="", target_effect="goodImpressionTurns", plan="logic") > agent._score_drink(drink_id=5, title="ルイボスティー", desc="", target_effect="goodImpressionTurns", plan="logic")
+        assert agent._is_banned_drink(1, "初星水") is True
+        assert agent._score_drink(drink_id=1, title="初星水", desc="", target_effect="goodImpressionTurns", plan="logic") <= -100_000
+
+        # LiveScreenRecognizer generates 破棄候補_1 when drink #1 is banned via set_banned_drink_ids
+        reco = LiveScreenRecognizer(db=db, plan="logic", scenario_id="hif_honsen")
+        reco.set_banned_drink_ids([19, 1])
+        opts_disc: list[dict] = [{"choice_id": 0, "name": "終了", "bbox": box.model_dump()}]
+        LiveScreenRecognizer._append_banned_drink_discards(
+            opts_disc,
+            [RecognizedDrink(drink_id=1, name="初星水", playable=True, bbox=box, dsl_summary="パラメータ+10")],
+            banned_ids=reco.banned_drink_ids,
+            banned_names=reco._banned_drink_names,
+        )
+        assert any(o["name"] == "破棄候補_1" for o in opts_disc)
+        agent.battle_planner.set_banned_drink_ids([19, 1])
+        assert 1 in agent.battle_planner.banned_drink_ids
+    finally:
+        db.close()
+
+
+def test_manual_hif_memory_hooks_extra_use_limit_and_draw_in_battle_sim():
+    """Verify extra_use_limit=2, draw_on_play=1, memory_passives, and manual/hybrid build_local_hif_runner."""
+    from demo.run_hif_local import build_local_hif_runner
+    from demo.sim.battle_simulator import HeadlessBattleSimulator
+    from demo.sim.live_battle_planner import build_live_battle_config
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        # #89 ラブリーウインク+ (no built-in extra use) configured with extra_use_limit=2 & draw_on_play=1;
+        # #127 ファンシーチャーム+ explicitly set force_initial_hand=False
+        cfg = build_live_battle_config(
+            db=db,
+            deck_card_ids=[89, 127, 920, 922, 137, 171],
+            p_idol_id=163,
+            plan="logic",
+            buffs={},
+            card_memory_hooks={
+                "89": {"free_extra_use_first_play": True, "extra_use_limit": 2, "draw_on_play": 1},
+                "127": {"force_initial_hand": False},
+            },
+            memory_passives=[
+                {"key": "start_good_impression", "value": 3},
+                {"key": "start_motivation", "value": 4},
+                {"key": "start_genki", "value": 5},
+            ],
+        )
+        assert cfg.initial_good_impression >= 3
+        assert cfg.initial_motivation >= 4
+        assert cfg.initial_genki >= 5
+        c89_cfg = next(c for c in cfg.deck if c.card_id == 89)
+        c127_cfg = next(c for c in cfg.deck if c.card_id == 127)
+        assert c89_cfg.memory_extra_use_limit == 2
+        assert c89_cfg.memory_draw_on_play == 1
+        assert c127_cfg.force_initial_hand is False
+
+        sim = HeadlessBattleSimulator(cfg, db=db, seed=11, record_logs=True)
+        sim.buffs["motivation"] = 20
+        # Put #89 in hand and fillers in draw_pile so draw_on_play=1 is observable
+        sim.draw_pile = [c for c in list(sim.hand) + list(sim.draw_pile) if c.cfg.card_id != 89]
+        c89 = next(c for c in sim._all_instances.values() if c.cfg.card_id == 89)
+        sim.hand = [c89]
+        if c89 in sim.draw_pile:
+            sim.draw_pile.remove(c89)
+        sim.card_uses_remaining = 1
+
+        # Play 1 (free extra use 1/2 + draws 1 card)
+        sim.play_card(0)
+        assert sim.card_uses_remaining == 1
+        assert len(sim.hand) == 1
+        assert sim.memory_extra_use_counts.get(c89.cfg.base_id) == 1
+
+        # Move #89 back to hand and Play 2 (free extra use 2/2 + draws 1 card)
+        sim.discard_pile.remove(c89)
+        sim.hand.insert(0, c89)
+        hand_before_2 = len(sim.hand)
+        sim.play_card(0)
+        assert sim.card_uses_remaining == 1
+        assert len(sim.hand) == hand_before_2  # popped 1, drew 1
+        assert sim.memory_extra_use_counts.get(c89.cfg.base_id) == 2
+
+        # Move #89 back for Play 3 -> memory limit exhausted, consumes last card_uses_remaining -> end_turn
+        sim.discard_pile.remove(c89)
+        sim.hand.insert(0, c89)
+        turn_before_3 = sim.turn
+        sim.play_card(0)
+        assert sim.turn == turn_before_3 + 1
+
+        # Verify manual vs hybrid runner construction
+        r_manual = build_local_hif_runner(
+            plan="sense",
+            p_idol_id=158,
+            loadout_mode="manual",
+            initial_loadout_dict={"p_idol_id": 158, "plan": "sense", "deck_ids": [884, 83], "p_items": []},
+            preferences={"banned_drink_ids": [19, 3]},
+        )
+        try:
+            assert r_manual.loadout_scanner is None
+            assert r_manual.tracker.initial_loadout_captured is True
+            assert r_manual.tracker.produce_deck == [884, 83]
+            assert 3 in r_manual.agent.preferences.banned_drink_ids
+        finally:
+            r_manual.agent.close()
+            r_manual.db.close()
+
+        r_hybrid = build_local_hif_runner(
+            plan="logic",
+            p_idol_id=163,
+            loadout_mode="hybrid",
+            initial_loadout_dict={
+                "p_idol_id": 163,
+                "plan": "logic",
+                "card_memory_hooks": {"299": {"free_extra_use_first_play": True, "extra_use_limit": 2}},
+            },
+        )
+        try:
+            assert r_hybrid.loadout_scanner is not None
+            assert r_hybrid.manual_memory_hooks[299]["extra_use_limit"] == 2
+        finally:
+            r_hybrid.agent.close()
+            r_hybrid.loadout_scanner.close()
+            r_hybrid.db.close()
+    finally:
+        db.close()
+
+
+def test_card_customizations_applied_in_battle_simulator_and_tracker():
+    """Verify official カスタマイズ (#36/#29/#55/#34/#80/#37) & custom_modifiers in HeadlessBattleSimulator and Tracker."""
+    from demo.sim.battle_simulator import HeadlessBattleSimulator
+    from demo.sim.live_battle_planner import build_live_battle_config
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        # 1. #127 ファンシーチャーム+ (base cost=4, GI+=5, limit=1) customized with:
+        #    - #36 開始時手札に入る (force_initial_hand=True)
+        #    - #29 コスト値- (g.cost+=2 -> cost becomes 2)
+        #    - #55 好印象+ Lv2 (g.goodImpressionTurns+=4 -> GI becomes 9)
+        #    #299 オトメゴコロ+ (typed cost motivation-=3, GI+=5) customized with:
+        #    - #34 やる気コスト値- (g.typedCost+=1 -> motivation cost becomes 2)
+        #    - #80 好印象+ (g.goodImpressionTurns+=2 -> base GI becomes 7)
+        #    - modifiers.score_delta = 12 (adds direct score action!)
+        cfg = build_live_battle_config(
+            db=db,
+            deck_card_ids=[127, 299, 920, 922, 137, 171],
+            p_idol_id=163,
+            plan="logic",
+            buffs={},
+            card_memory_hooks={"127": {"force_initial_hand": False}},
+            card_customizations={
+                "127": {"levels": {"36": 1, "29": 1, "55": 2}},
+                "299": {"levels": {"34": 1, "80": 1}, "modifiers": {"score_delta": 12}},
+            },
+        )
+        c127_cfg = next(c for c in cfg.deck if c.card_id == 127)
+        c299_cfg = next(c for c in cfg.deck if c.card_id == 299)
+        assert c127_cfg.force_initial_hand is True  # #36 turns on force_initial_hand
+
+        sim = HeadlessBattleSimulator(cfg, db=db, seed=7, record_logs=True)
+        c127 = next(c for c in sim._all_instances.values() if c.cfg.card_id == 127)
+        c299 = next(c for c in sim._all_instances.values() if c.cfg.card_id == 299)
+
+        # #127 must start in initial hand due to #36, with effective cost 2 (down from 4)
+        assert c127 in sim.hand
+        assert sim._effective_cost(c127.cfg) == ("cost", 2)
+
+        sim.stamina = 30
+        sim.buffs["goodImpressionTurns"] = 0
+        sim.card_uses_remaining = 2
+        idx_127 = sim.hand.index(c127)
+        sim.play_card(idx_127)
+        assert sim.stamina == 28  # cost 2
+        assert sim.buffs["goodImpressionTurns"] == 9  # 5 + 4 (Lv2 of #55)
+        assert c127 in sim.exhaust_pile  # still limit=1 without #37
+
+        # Test #299: motivation cost 2 (down from 3), GI +7 (5+2), plus positive score from score_delta=12
+        sim.buffs["motivation"] = 5
+        sim.buffs["goodImpressionTurns"] = 0
+        score_before = sim.score
+        if c299 not in sim.hand:
+            if c299 in sim.draw_pile:
+                sim.draw_pile.remove(c299)
+            sim.hand.insert(0, c299)
+        assert sim._effective_cost(c299.cfg) == ("motivation", 2)
+        sim.play_card(sim.hand.index(c299))
+        assert sim.buffs["motivation"] == 3  # 5 - 2
+        assert sim.buffs["goodImpressionTurns"] >= 7
+        assert sim.score > score_before
+
+        # 2. #37 (レッスン中1回の制限削除) removes limit_count=1 in both Simulator and Tracker
+        cfg_nolim = build_live_battle_config(
+            db=db,
+            deck_card_ids=[127, 137, 299],
+            p_idol_id=163,
+            plan="logic",
+            card_customizations={"127": {"levels": {"37": 1}}},
+        )
+        c127_nl_cfg = next(c for c in cfg_nolim.deck if c.card_id == 127)
+        assert c127_nl_cfg.limit_count is None
+        sim_nl = HeadlessBattleSimulator(cfg_nolim, db=db, seed=3)
+        inst_127_nl = next(c for c in sim_nl._all_instances.values() if c.cfg.card_id == 127)
+        if inst_127_nl not in sim_nl.hand:
+            sim_nl.draw_pile.remove(inst_127_nl)
+            sim_nl.hand.insert(0, inst_127_nl)
+        sim_nl.card_uses_remaining = 2
+        sim_nl.play_card(sim_nl.hand.index(inst_127_nl))
+        assert inst_127_nl in sim_nl.discard_pile
+        assert inst_127_nl not in sim_nl.exhaust_pile
+
+        tracker = GameStateTracker(plan="logic", p_idol_id=163, scenario_id="hif_honsen")
+        tracker.set_initial_loadout(
+            deck_ids=[127, 299],
+            p_items=[],
+            card_customizations={127: {"levels": {"37": 1}}},
+            db=db,
+        )
+        tracker.in_battle = True
+        tracker.record_card_play(127, db=db)
+        assert 127 in tracker.battle_discard_pile
+        assert 127 not in tracker.battle_exhaust_pile
+    finally:
+        db.close()
+
+

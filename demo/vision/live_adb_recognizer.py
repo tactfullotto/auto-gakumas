@@ -104,6 +104,26 @@ class LiveScreenRecognizer:
         self._reward_visited_slots: Set[int] = set()
         self._drink_templates_cache: Optional[List[Tuple[int, str, np.ndarray, np.ndarray]]] = None
         self._last_buff_hud_occluded: bool = False
+        self.banned_drink_ids: Set[int] = {19}
+        self._banned_drink_names: Tuple[str, ...] = ("初星スペシャル青汁", "青汁")
+
+    def set_banned_drink_ids(self, drink_ids: Optional[Sequence[int]]) -> None:
+        """Configure banned P-drink IDs (triggers avoidance & auto-discard options)."""
+        ids = {int(x) for x in (drink_ids or ())}
+        self.banned_drink_ids = ids
+        names: List[str] = []
+        if 19 in ids:
+            names.extend(["初星スペシャル青汁", "青汁"])
+        for did in sorted(ids):
+            try:
+                row = self.db.get_drink_by_id(did)
+                if row and row.get("name"):
+                    nm = str(row["name"]).strip()
+                    if nm and nm not in names:
+                        names.append(nm)
+            except Exception:
+                pass
+        self._banned_drink_names = tuple(names)
 
     @classmethod
     def _has_left_buff_toast_in_lines(
@@ -292,18 +312,32 @@ class LiveScreenRecognizer:
         return matched
 
     @staticmethod
-    def _is_banned_drink(drink_id: Optional[int], name: str = "", desc: str = "") -> bool:
-        """Return True for #19 初星スペシャル青汁 (random SSR card generation banned from runs)."""
-        if drink_id is not None and int(drink_id) == 19:
+    def _is_banned_drink(
+        drink_id: Optional[int],
+        name: str = "",
+        desc: str = "",
+        banned_ids: Optional[Sequence[int]] = None,
+        banned_names: Optional[Sequence[str]] = None,
+    ) -> bool:
+        """Return True for banned P-drinks (default #19 初星スペシャル青汁)."""
+        eff_ids = {19} if banned_ids is None else {int(x) for x in banned_ids}
+        if drink_id is not None and int(drink_id) in eff_ids:
             return True
         combined = f"{name or ''} {desc or ''}"
-        return ("青汁" in combined) or ("ランダムな強化済みスキルカード" in combined)
+        if 19 in eff_ids and ("青汁" in combined or "ランダムな強化済みスキルカード" in combined):
+            return True
+        for bnm in banned_names or ():
+            if bnm and bnm in combined:
+                return True
+        return False
 
     @classmethod
     def _append_banned_drink_discards(
         cls,
         options: List[Dict[str, Any]],
         held_drinks: Sequence[RecognizedDrink],
+        banned_ids: Optional[Sequence[int]] = None,
+        banned_names: Optional[Sequence[str]] = None,
     ) -> None:
         """Append `破棄候補_<id>` options for any banned drink in `held_drinks` and re-index `choice_id`."""
         existing_discard_ids = {
@@ -313,7 +347,16 @@ class LiveScreenRecognizer:
         }
         added = False
         for di, d in enumerate(held_drinks or (), 1):
-            if cls._is_banned_drink(d.drink_id, d.name, d.dsl_summary) and d.drink_id not in existing_discard_ids:
+            if (
+                cls._is_banned_drink(
+                    d.drink_id,
+                    d.name,
+                    d.dsl_summary,
+                    banned_ids=banned_ids,
+                    banned_names=banned_names,
+                )
+                and d.drink_id not in existing_discard_ids
+            ):
                 options.append({
                     "choice_id": len(options),
                     "drink_id": d.drink_id,
@@ -1688,7 +1731,12 @@ class LiveScreenRecognizer:
 
         held_drinks = self._recognize_bottom_drinks(frame, plan)
         if scene == "produce_schedule" and held_drinks:
-            self._append_banned_drink_discards(options, held_drinks)
+            self._append_banned_drink_discards(
+                options,
+                held_drinks,
+                banned_ids=self.banned_drink_ids,
+                banned_names=self._banned_drink_names,
+            )
 
         ctx = compute_week_stats_and_stage_bonus(
             scenario_id=self.scenario_id,
@@ -3708,7 +3756,12 @@ class LiveScreenRecognizer:
         if not options:
             options = self._extract_bottom_and_list_options(lines, w, h, frame=frame)
         if held_drinks and not (dont_take_ln is not None and dont_take_checked):
-            self._append_banned_drink_discards(options, held_drinks)
+            self._append_banned_drink_discards(
+                options,
+                held_drinks,
+                banned_ids=self.banned_drink_ids,
+                banned_names=self._banned_drink_names,
+            )
 
         ctx = compute_week_stats_and_stage_bonus(scenario_id=self.scenario_id, week=meta["week"], plan=plan, override_stats=meta["stats"])
         return ScreenObservation(
@@ -4161,7 +4214,12 @@ class LiveScreenRecognizer:
                         })
 
         if held_drinks:
-            self._append_banned_drink_discards(options, held_drinks)
+            self._append_banned_drink_discards(
+                options,
+                held_drinks,
+                banned_ids=self.banned_drink_ids,
+                banned_names=self._banned_drink_names,
+            )
 
         # 4. Always provide Exit (✕ 終了); when nothing affordable/unvisited remains, offer ONLY Exit!
         exit_bbox = (

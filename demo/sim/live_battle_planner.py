@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 import logging
 import random
 import re
@@ -38,15 +39,24 @@ _KNOWN_STAGE_P_ITEMS: Dict[int, PItemConfig] = {
 _BANNED_DRINK_IDS = frozenset({19})  # #19 初星スペシャル青汁 (banned)
 
 
-def _is_banned_drink(drink_id: Optional[int], name: str = "", desc: str = "") -> bool:
-    if drink_id is not None and int(drink_id) in _BANNED_DRINK_IDS:
+def _is_banned_drink(
+    drink_id: Optional[int],
+    name: str = "",
+    desc: str = "",
+    banned_ids: Optional[Sequence[int]] = None,
+) -> bool:
+    eff_banned = _BANNED_DRINK_IDS if banned_ids is None else {int(x) for x in banned_ids}
+    if drink_id is not None and int(drink_id) in eff_banned:
         return True
-    combined = f"{name or ''} {desc or ''}"
-    return (
-        "青汁" in combined
-        or "ランダムな強化済みスキルカード" in combined
-        or "addrandomupgradedssrcardtohand" in combined.lower()
-    )
+    if 19 in eff_banned:
+        combined = f"{name or ''} {desc or ''}"
+        if (
+            "青汁" in combined
+            or "ランダムな強化済みスキルカード" in combined
+            or "addrandomupgradedssrcardtohand" in combined.lower()
+        ):
+            return True
+    return False
 
 _ATTR_NAME_TO_CODE: Dict[str, str] = {
     "ボーカル": "Vo",
@@ -161,7 +171,9 @@ def build_live_battle_config(
     p_idol_id: Optional[int] = None,
     idol_name: str = "[ガラクタロード] 秦谷 美鈴",
     plan: str = "logic",
-    card_memory_hooks: Optional[Dict[int, Dict[str, Any]]] = None,
+    card_memory_hooks: Optional[Dict[Any, Dict[str, Any]]] = None,
+    card_customizations: Optional[Dict[Any, Dict[str, Any]]] = None,
+    memory_passives: Optional[Sequence[Dict[str, Any]]] = None,
     stage_name: str = "H.I.F 本戦",
     scenario_id: str = "hif_honsen",
     initial_genki: int = 0,
@@ -177,7 +189,9 @@ def build_live_battle_config(
         if req_k not in stats or stats[req_k] <= 0:
             stats[req_k] = dflt
     hooks = card_memory_hooks or {}
+    custs = card_customizations or {}
 
+    use_misuzu_legacy = p_idol_id in (None, 163) and str(plan or "").lower() == "logic"
     deck_cfgs: List[CardConfig] = []
     for cid in deck_card_ids:
         row = db.get_card_by_id(int(cid))
@@ -186,17 +200,37 @@ def build_live_battle_config(
         cid_int = int(cid)
         base_id = int(row.get("base_id") or cid_int)
         h_meta = hooks.get(cid_int) or hooks.get(str(cid_int)) or hooks.get(base_id) or hooks.get(str(base_id)) or {}
-        force_init: Optional[bool] = True if h_meta.get("force_initial_hand") else None
-        if force_init is None and cid_int in (127, 129, 159):
+        if "force_initial_hand" in h_meta:
+            force_init: Optional[bool] = bool(h_meta.get("force_initial_hand"))
+        elif use_misuzu_legacy and cid_int in (127, 129, 159):
             force_init = True
+        else:
+            force_init = None
 
         # Only genuine trouble-exile memories trigger exiles_trouble_on_play (ignore #426/#427 キセキの魔法 condition text).
         # Stage-wide once per base_id is enforced dynamically in HeadlessBattleSimulator across duplicate copies.
-        exile_once = (
-            base_id != 426
-            and (bool(h_meta.get("exiles_trouble_on_play")) or base_id in (128, 296, 298))
-        )
-        extra_once = bool(h_meta.get("free_extra_use_first_play")) or (base_id == 136)
+        if base_id == 426:
+            exile_once = False
+        elif "exiles_trouble_on_play" in h_meta:
+            exile_once = bool(h_meta.get("exiles_trouble_on_play"))
+        else:
+            exile_once = bool(use_misuzu_legacy and base_id in (128, 296, 298))
+
+        if "free_extra_use_first_play" in h_meta:
+            extra_once = bool(h_meta.get("free_extra_use_first_play"))
+        elif "extra_use_limit" in h_meta:
+            extra_once = int(h_meta.get("extra_use_limit") or 0) > 0
+        else:
+            extra_once = bool(use_misuzu_legacy and base_id == 136)
+
+        extra_limit = int(h_meta.get("extra_use_limit") or (1 if extra_once else 0))
+        if extra_limit > 0:
+            extra_once = True
+        draw_on_play = max(0, int(h_meta.get("draw_on_play") or 0))
+
+        c_meta = custs.get(cid_int) or custs.get(str(cid_int)) or custs.get(base_id) or custs.get(str(base_id)) or {}
+        cust_levels = c_meta.get("levels") if isinstance(c_meta, dict) else None
+        cust_mods = c_meta.get("modifiers") if isinstance(c_meta, dict) else None
 
         deck_cfgs.append(
             _make_card_config(
@@ -205,6 +239,10 @@ def build_live_battle_config(
                 force_initial_hand_override=force_init,
                 exiles_trouble_on_play=exile_once,
                 free_extra_use_first_play=extra_once,
+                memory_extra_use_limit=extra_limit,
+                memory_draw_on_play=draw_on_play,
+                customizations=cust_levels,
+                custom_modifiers=cust_mods,
             )
         )
 
@@ -251,6 +289,35 @@ def build_live_battle_config(
     live_buffs = buffs or {}
     init_gi = max(0, int(live_buffs.get("goodImpressionTurns", 0) or 0))
     init_mot = max(0, int(live_buffs.get("motivation", 0) or 0))
+    init_gc = max(0, int(live_buffs.get("goodConditionTurns", 0) or 0))
+    init_conc = max(0, int(live_buffs.get("concentration", 0) or 0))
+    init_fpc = max(0, int(live_buffs.get("fullPowerCharge", 0) or 0))
+    eff_init_genki = max(0, int(initial_genki))
+
+    if memory_passives and not live_buffs:
+        for mp in memory_passives:
+            if not isinstance(mp, dict):
+                continue
+            key = str(mp.get("key") or "")
+            try:
+                val = max(0, int(mp.get("value") or 0))
+            except (TypeError, ValueError):
+                val = 0
+            if val <= 0:
+                continue
+            if key == "start_good_impression":
+                init_gi += val
+            elif key == "start_motivation":
+                init_mot += val
+            elif key == "start_genki":
+                eff_init_genki += val
+            elif key == "start_good_condition":
+                init_gc += val
+            elif key == "start_concentration":
+                init_conc += val
+            elif key == "start_full_power_charge":
+                init_fpc += val
+
     if scenario_id in ("hif_honsen", "hif") and any(
         int(it.get("item_id") or 0) == 436
         or "ポーチ" in str(it.get("canonical_name") or it.get("name") or "")
@@ -278,9 +345,12 @@ def build_live_battle_config(
         idol_stats=stats,
         initial_stamina=max(1, int(stamina)),
         max_stamina=max(1, int(max_stamina)),
-        initial_genki=max(0, int(initial_genki)),
+        initial_genki=eff_init_genki,
         initial_good_impression=init_gi,
         initial_motivation=init_mot,
+        initial_good_condition=init_gc,
+        initial_concentration=init_conc,
+        initial_full_power_charge=init_fpc,
         total_turns=t_total,
         turn_schedule=schedule,
         randomize_turn_schedule=(t_total >= 4),
@@ -332,6 +402,10 @@ class LiveBattlePlanner:
             Tuple[Any, ...],
             Tuple[GakumasActionCodec, GakumasFeatureEncoder, PolicyValueNet, Dict[str, Any]],
         ] = {}
+        self.banned_drink_ids: set[int] = set(_BANNED_DRINK_IDS)
+
+    def set_banned_drink_ids(self, drink_ids: Optional[Sequence[int]]) -> None:
+        self.banned_drink_ids = {int(x) for x in (drink_ids or ())}
 
     def close(self) -> None:
         if self._owns_db:
@@ -418,8 +492,12 @@ class LiveBattlePlanner:
                 getattr(d, "drink_id", None),
                 getattr(d, "name", ""),
                 getattr(d, "dsl_summary", ""),
+                banned_ids=self.banned_drink_ids,
             )
         ]
+        card_hooks = getattr(tracker, "card_memory_hooks", None)
+        card_custs = getattr(tracker, "card_customizations", None)
+        mem_passives = getattr(tracker, "memory_passives", None)
         self._battle_cfg = build_live_battle_config(
             db=self.db,
             deck_card_ids=deck_ids,
@@ -434,18 +512,28 @@ class LiveBattlePlanner:
             p_idol_id=p_idol_id,
             idol_name=idol_name,
             plan=obs.plan,
-            card_memory_hooks=getattr(tracker, "card_memory_hooks", None),
+            card_memory_hooks=card_hooks,
+            card_customizations=card_custs,
+            memory_passives=mem_passives,
             stage_name=obs.week_activity or f"Week {obs.week}",
             scenario_id=obs.scenario_id,
             initial_genki=obs.genki,
             live_top_multiplier=live_top_mult,
         )
 
+        hooks_sig = tuple(
+            sorted((str(k), tuple(sorted(v.items()))) for k, v in (card_hooks or {}).items())
+        )
+        custs_sig = tuple(
+            sorted((str(k), json.dumps(v, sort_keys=True)) for k, v in (card_custs or {}).items())
+        )
         cache_key = (
             obs.scenario_id,
             int(obs.week),
             total_turns,
             tuple(deck_ids),
+            hooks_sig,
+            custs_sig,
             tuple(d.drink_id for d in self._battle_cfg.drinks),
             tuple(sorted(self._battle_cfg.idol_stats.items())),
             int(self.cfg.ppo_episodes),
@@ -531,6 +619,10 @@ class LiveBattlePlanner:
                                 force_initial_hand_override=inst.cfg.force_initial_hand,
                                 exiles_trouble_on_play=inst.cfg.exiles_trouble_on_play,
                                 free_extra_use_first_play=inst.cfg.free_extra_use_first_play,
+                                memory_extra_use_limit=inst.cfg.memory_extra_use_limit,
+                                memory_draw_on_play=inst.cfg.memory_draw_on_play,
+                                customizations=inst.cfg.customizations,
+                                custom_modifiers=inst.cfg.custom_modifiers,
                             )
                         return inst
 
@@ -676,6 +768,7 @@ class LiveBattlePlanner:
                 getattr(d, "drink_id", None),
                 getattr(d, "name", ""),
                 getattr(d, "dsl_summary", ""),
+                banned_ids=self.banned_drink_ids,
             ):
                 continue
             did = int(d.drink_id)
@@ -707,6 +800,7 @@ class LiveBattlePlanner:
                     did,
                     str((act.payload or {}).get("name") or ""),
                     str(act.description or ""),
+                    banned_ids=self.banned_drink_ids,
                 ):
                     continue
                 aid = self._codec.drink_id_to_action.get(did)
@@ -890,6 +984,7 @@ class LiveBattlePlanner:
                         (a.payload or {}).get("drink_id"),
                         str((a.payload or {}).get("name") or ""),
                         str(a.description or ""),
+                        banned_ids=self.banned_drink_ids,
                     )
                 )
             ]

@@ -8,6 +8,7 @@ import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from demo.core.db import GakumasDB
+from demo.core.hif_catalog import ProducePreferences
 from demo.core.idol_guides import PIdolGuide, get_p_idol_guide, resolve_p_idol_id
 from demo.core.tracker import GameStateTracker
 from demo.schemas import DecisionResult, LegalAction, ScreenObservation
@@ -103,6 +104,7 @@ class LocalHybridDecisionAgent:
         db: Optional[GakumasDB] = None,
         planner_cfg: Optional[LiveBattlePlannerConfig] = None,
         library_out_path: Optional[Union[str, Path]] = None,
+        preferences: Optional[Union[ProducePreferences, Dict[str, Any]]] = None,
     ):
         self._owns_db = db is None
         self.db = db or GakumasDB("gakumas_library.db")
@@ -110,6 +112,17 @@ class LocalHybridDecisionAgent:
         self.tracker: Optional[GameStateTracker] = None
         self.library_out_path = Path(library_out_path) if library_out_path else None
         self.battle_planner = LiveBattlePlanner(db=self.db, cfg=planner_cfg)
+
+        self.preferences: ProducePreferences = ProducePreferences()
+        self._priority_card_ids: Set[int] = set()
+        self._priority_card_base_ids: Set[int] = set()
+        self._avoid_card_ids: Set[int] = set()
+        self._avoid_card_base_ids: Set[int] = set()
+        self._keep_card_ids: Set[int] = set()
+        self._keep_card_base_ids: Set[int] = set()
+        self._preferred_drink_ids: Set[int] = set()
+        self._banned_drink_ids: Set[int] = {19}
+        self._banned_drink_names: Tuple[str, ...] = ("初星スペシャル青汁", "青汁")
 
         self._has_entered_produce: bool = False
         self._has_seen_produce_setup: bool = False
@@ -142,6 +155,83 @@ class LocalHybridDecisionAgent:
         self._expecting_drink_discard: bool = False
         self._banned_drink_discard_attempts: int = 0
         self._banned_drink_discard_ctx: Optional[Tuple[str, int]] = None
+        self.set_preferences(preferences)
+
+    def _expand_card_ids_and_bases(self, card_ids: Sequence[int]) -> Tuple[Set[int], Set[int]]:
+        cids: Set[int] = set()
+        bases: Set[int] = set()
+        for raw_cid in card_ids or ():
+            try:
+                cid = int(raw_cid)
+            except (TypeError, ValueError):
+                continue
+            if cid <= 0:
+                continue
+            cids.add(cid)
+            row = self.db.get_card_by_id(cid)
+            if row:
+                base_id = int(row.get("base_id") or cid)
+                bases.add(base_id)
+                if row.get("upgraded_id"):
+                    cids.add(int(row["upgraded_id"]))
+            else:
+                bases.add(cid)
+        return cids, bases
+
+    def set_preferences(
+        self,
+        preferences: Optional[Union[ProducePreferences, Dict[str, Any]]],
+    ) -> None:
+        """Apply user card/drink preferences cleanly to agent & battle planner."""
+        prefs = (
+            preferences
+            if isinstance(preferences, ProducePreferences)
+            else ProducePreferences.from_dict(preferences)
+        )
+        self.preferences = prefs
+        self._priority_card_ids, self._priority_card_base_ids = self._expand_card_ids_and_bases(
+            prefs.priority_card_ids
+        )
+        self._avoid_card_ids, self._avoid_card_base_ids = self._expand_card_ids_and_bases(
+            prefs.avoid_card_ids
+        )
+        self._keep_card_ids, self._keep_card_base_ids = self._expand_card_ids_and_bases(
+            prefs.keep_card_ids
+        )
+        self._preferred_drink_ids = {int(d) for d in prefs.preferred_drink_ids}
+        self._banned_drink_ids = {int(d) for d in prefs.banned_drink_ids}
+        bnames: List[str] = []
+        if 19 in self._banned_drink_ids:
+            bnames.extend(["初星スペシャル青汁", "青汁"])
+        for did in sorted(self._banned_drink_ids):
+            try:
+                drow = self.db.get_drink_by_id(did)
+                if drow and drow.get("name"):
+                    nm = str(drow["name"]).strip()
+                    if nm and nm not in bnames:
+                        bnames.append(nm)
+            except Exception:
+                pass
+        self._banned_drink_names = tuple(bnames)
+        if hasattr(self.battle_planner, "set_banned_drink_ids"):
+            self.battle_planner.set_banned_drink_ids(prefs.banned_drink_ids)
+
+    def _is_priority_card(self, card_id: Optional[int], base_id: int = 0) -> bool:
+        cid_i = int(card_id or 0)
+        b_i = int(base_id or cid_i or 0)
+        if not b_i and cid_i:
+            row = self.db.get_card_by_id(cid_i)
+            b_i = int(row.get("base_id") or cid_i) if row else cid_i
+        return (cid_i > 0 and cid_i in self._priority_card_ids) or (
+            b_i > 0 and b_i in self._priority_card_base_ids
+        )
+
+    def _is_keep_card(self, card_id: Optional[int], base_id: int = 0) -> bool:
+        cid_i = int(card_id or 0)
+        b_i = int(base_id or cid_i or 0)
+        return (cid_i > 0 and cid_i in self._keep_card_ids) or (
+            b_i > 0 and b_i in self._keep_card_base_ids
+        )
 
     def close(self) -> None:
         self.battle_planner.close()
@@ -256,16 +346,18 @@ class LocalHybridDecisionAgent:
         p_idol_id: Optional[int] = None,
         guide: Optional[PIdolGuide] = None,
     ) -> bool:
+        cid_i = int(card_id) if card_id else 0
+        b_i = int(base_id or cid_i or 0)
+        if not b_i and cid_i:
+            row = self.db.get_card_by_id(cid_i)
+            b_i = int(row.get("base_id") or cid_i) if row else cid_i
+        if (cid_i > 0 and cid_i in self._avoid_card_ids) or (b_i > 0 and b_i in self._avoid_card_base_ids):
+            return True
         pid = self._effective_p_idol_id(p_idol_id=p_idol_id, guide=guide)
         if pid is None:
             return False
         forb_bases = _FORBIDDEN_BASE_IDS_BY_P_IDOL.get(pid)
         if forb_bases:
-            cid_i = int(card_id) if card_id else 0
-            b_i = int(base_id or cid_i or 0)
-            if not b_i and cid_i:
-                row = self.db.get_card_by_id(cid_i)
-                b_i = int(row.get("base_id") or cid_i) if row else cid_i
             if b_i in forb_bases or cid_i in forb_bases or (pid == 163 and cid_i in (152, 153, 426, 427)):
                 return True
         forb_names = _FORBIDDEN_NAME_TOKENS_BY_P_IDOL.get(pid, ())
@@ -422,6 +514,12 @@ class LocalHybridDecisionAgent:
         if is_extra_turn_card:
             if for_removal and not (is_same_change_target and has_removable_unwanted is False):
                 return -8_000
+
+        # User-configured avoided cards: hard penalize pickup and prioritize removal/swap
+        if (card_id and int(card_id) in self._avoid_card_ids) or (
+            base_id and int(base_id) in self._avoid_card_base_ids
+        ):
+            return 5_000 if for_removal else -20_000
 
         # Idol-specific forbidden cards (e.g., #152/#153 届いて！ and #426/#427 キセキの魔法 for p_idol_id=163)
         if self._is_forbidden_card(
@@ -584,45 +682,70 @@ class LocalHybridDecisionAgent:
         if is_core_keep:
             score += 2_000
 
+        # Apply user-configured card priorities, locks, and manual numeric score overrides
+        user_priority = self._is_priority_card(card_id, base_id=base_id)
+        user_keep = self._is_keep_card(card_id, base_id=base_id)
+        card_overrides = self.preferences.card_score_overrides or {}
+        override_delta = 0
+        if card_id and int(card_id) in card_overrides:
+            override_delta = int(card_overrides[int(card_id)])
+        elif base_id and int(base_id) in card_overrides:
+            override_delta = int(card_overrides[int(base_id)])
+
+        if user_priority:
+            score += 20_000
+        elif user_keep and for_removal:
+            score += 15_000
+        if override_delta:
+            score += override_delta
+
+        has_strong_user_protection = (
+            user_priority
+            or (for_removal and user_keep)
+            or (for_removal and override_delta >= 500)
+        )
+
         is_ordinary_unupgraded_active = (
             ctype == "active"
             and not upgraded
             and not is_elite_active
             and not is_core_keep
+            and not has_strong_user_protection
         )
         is_non_elite_active = (
             ctype == "active"
             and not is_elite_active
             and not is_core_keep
+            and not has_strong_user_protection
         )
 
         # Basic starter N cards & non-elite Active cards are top removal/swap candidates (ahead of M cards)
-        if rarity == "N" and not upgraded:
+        if rarity == "N" and not upgraded and not has_strong_user_protection:
             if for_removal:
-                return 1_500
+                return 1_500 - override_delta
             score -= 120
         elif is_ordinary_unupgraded_active and rarity in ("R", "SR"):
             if for_removal:
-                return 1_100 if rarity == "R" else 900
+                return (1_100 if rarity == "R" else 900) - override_delta
             score -= 350
         elif is_logic_gi_build and is_non_elite_active:
             if for_removal:
-                return 650 if not upgraded else 550
+                return (650 if not upgraded else 550) - override_delta
             if not upgraded:
                 score -= 350
-        elif not is_core_keep and (
+        elif (not is_core_keep and not has_strong_user_protection) and (
             (rarity == "R" and not upgraded) or (card_id in (68, 69, 94) and not upgraded)
         ):
             score -= 600
             if for_removal:
                 return max(450, -score)
-        elif rarity == "SR" and not upgraded and not is_core_keep and ctype != "mental":
+        elif rarity == "SR" and not upgraded and not is_core_keep and not has_strong_user_protection and ctype != "mental":
             if for_removal:
-                return 250
+                return 250 - override_delta
 
         # Same-card swap preference: on Page 2 of チェンジ, if Page 1 picked a family matching this card,
         # swapping X -> X preserves deck composition when no unwanted cards remain.
-        if is_same_change_target:
+        if is_same_change_target and not (user_priority or user_keep):
             if has_removable_unwanted is False:
                 return 500 if not upgraded else 300
             return -100
@@ -851,22 +974,27 @@ class LocalHybridDecisionAgent:
             source="local_hybrid",
         )
 
-    @staticmethod
     def _is_banned_drink(
+        self,
         drink_id: Optional[int],
         title: str = "",
         desc: str = "",
     ) -> bool:
-        """Return True for banned P-drinks (#19 初星スペシャル青汁)."""
-        if drink_id is not None and int(drink_id) in _BANNED_DRINK_IDS:
+        """Return True for user-banned P-drinks (default #19 初星スペシャル青汁)."""
+        if drink_id is not None and int(drink_id) in self._banned_drink_ids:
             return True
         combined = f"{title or ''} {desc or ''}"
         low = combined.lower()
-        return (
+        if 19 in self._banned_drink_ids and (
             "青汁" in combined
             or "ランダムな強化済みスキルカード" in combined
             or "addrandomupgradedssrcardtohand" in low
-        )
+        ):
+            return True
+        for bnm in self._banned_drink_names:
+            if bnm and bnm in combined:
+                return True
+        return False
 
     def _find_banned_drink_discard_action(
         self, legal_actions: Sequence[LegalAction]
@@ -955,6 +1083,11 @@ class LocalHybridDecisionAgent:
             score += 140
         rarity = str(row.get("rarity") or "").upper() if row else ""
         score += {"SSR": 140, "SR": 90, "R": 40}.get(rarity, 0)
+        if drink_id is not None:
+            did_i = int(drink_id)
+            if did_i in self._preferred_drink_ids:
+                score += 2_500
+            score += int((self.preferences.drink_score_overrides or {}).get(did_i, 0))
         return score
 
     @staticmethod
@@ -992,6 +1125,8 @@ class LocalHybridDecisionAgent:
         if row.get("limit_count") is not None or "レッスン中1回" in text_all:
             return False
         cid_i = int(card_id)
+        if self._is_priority_card(cid_i):
+            return False
         base_id = int(row.get("base_id") or cid_i)
         dsl = str(row.get("effect_dsl") or "").lower()
         if (
@@ -1211,7 +1346,8 @@ class LocalHybridDecisionAgent:
             None,
         )
         early_reroll_ok = bool(
-            reroll_act is not None
+            self.preferences.reroll_early_non_exhaust_mental
+            and reroll_act is not None
             and self._reward_reroll_attempts < 3
             and (not is_removal)
             and (not is_drink_flow)
@@ -1863,9 +1999,8 @@ class LocalHybridDecisionAgent:
             return True
         return False
 
-    @classmethod
-    def _is_shop_banned_drink_action(cls, act: LegalAction) -> bool:
-        """Return True if a shop preview or exchange option targets banned drink #19 (青汁)."""
+    def _is_shop_banned_drink_action(self, act: LegalAction) -> bool:
+        """Return True if a shop preview or exchange option targets any user-banned drink."""
         p = act.payload or {}
         nm = str(p.get("name") or "")
         if nm.startswith("破棄候補_"):
@@ -1879,7 +2014,7 @@ class LocalHybridDecisionAgent:
         )
         if not is_drink_shop_opt:
             return False
-        return cls._is_banned_drink(
+        return self._is_banned_drink(
             p.get("drink_id"),
             str(p.get("title") or nm),
             str(act.description or ""),
@@ -2030,7 +2165,8 @@ class LocalHybridDecisionAgent:
             if nm == "リフレッシュ" or slot_key == "リフレッシュ":
                 if is_final_shop:
                     if (
-                        self._shop_refresh_count < 8
+                        self.preferences.spend_all_final_shop
+                        and self._shop_refresh_count < 8
                         and price <= 200
                         and ((len(held_drinks) < cap_drinks and p_pts >= price + 60) or p_pts >= price + 70)
                     ):
@@ -2085,8 +2221,9 @@ class LocalHybridDecisionAgent:
         is_retire_or_quit = any(
             k in raw_l for k in ("リタイア", "中断", "あきらめる", "プロデュース終了", "プロデュースを", "データ削除")
         )
+        has_banned_name_in_raw = any(bnm and bnm in raw_l for bnm in self._banned_drink_names)
         if (not is_retire_or_quit) and (
-            self._expecting_drink_discard or ("青汁" in raw_l) or ("捨てますか" in raw_l)
+            self._expecting_drink_discard or has_banned_name_in_raw or ("捨てますか" in raw_l)
         ):
             discard_btn = next(
                 (a for a in safe_acts if str((a.payload or {}).get("name") or "") in ("捨てる", "破棄する", "破棄")),
@@ -2114,7 +2251,7 @@ class LocalHybridDecisionAgent:
                 str((a.payload or {}).get("name") or "") in ("使う", "使用する", "交換", "交換する")
                 for a in safe_acts
             )
-            if has_use_or_buy and (("青汁" in raw_l) or self._expecting_drink_discard):
+            if has_use_or_buy and (has_banned_name_in_raw or self._expecting_drink_discard):
                 close_or_cancel = next(
                     (
                         a for a in safe_acts

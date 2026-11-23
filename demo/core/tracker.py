@@ -24,6 +24,9 @@ class GameStateTracker:
         self.produce_deck: List[int] = []
         self.equipped_p_items: List[Dict[str, Any]] = []
         self.card_memory_hooks: Dict[int, Dict[str, Any]] = {}
+        self.card_customizations: Dict[int, Dict[str, Any]] = {}
+        self.memory_slots: List[Dict[str, Any]] = []
+        self.memory_passives: List[Dict[str, Any]] = []
         self.recommended_effect: Optional[str] = None
         self.initial_loadout_captured: bool = False
         self.produce_library_log: List[str] = []
@@ -130,6 +133,9 @@ class GameStateTracker:
         plan: Optional[str] = None,
         recommended_effect: Optional[str] = None,
         card_memory_hooks: Optional[Dict[int, Dict[str, Any]]] = None,
+        card_customizations: Optional[Dict[Any, Dict[str, Any]]] = None,
+        memory_slots: Optional[List[Dict[str, Any]]] = None,
+        memory_passives: Optional[List[Dict[str, Any]]] = None,
         db: Optional[Any] = None,
     ) -> None:
         """Persist scanned initial cards, P-items, and idol effect preferences for this produce run."""
@@ -142,6 +148,16 @@ class GameStateTracker:
         self.card_memory_hooks = {
             int(k): dict(v) for k, v in (card_memory_hooks or {}).items()
         }
+        if card_customizations is not None:
+            self.card_customizations = {
+                int(k): dict(v)
+                for k, v in card_customizations.items()
+                if isinstance(v, dict)
+            }
+        if memory_slots is not None:
+            self.memory_slots = [dict(s) for s in memory_slots if isinstance(s, dict)]
+        if memory_passives is not None:
+            self.memory_passives = [dict(p) for p in memory_passives if isinstance(p, dict)]
         resolved_rec = recommended_effect
         if resolved_rec is None and self.p_idol_id is not None and db is not None:
             try:
@@ -161,6 +177,39 @@ class GameStateTracker:
             f"rec={self.recommended_effect}, deck={len(self.produce_deck)}, p_items={len(self.equipped_p_items)}"
         )
 
+    def merge_manual_memory_hooks(
+        self,
+        hooks: Optional[Dict[Any, Dict[str, Any]]] = None,
+        memory_slots: Optional[List[Dict[str, Any]]] = None,
+        memory_passives: Optional[List[Dict[str, Any]]] = None,
+        card_customizations: Optional[Dict[Any, Dict[str, Any]]] = None,
+    ) -> None:
+        """Merge user-entered memory hooks, customizations, and passive slots onto scanned initial loadout."""
+        for k, v in (hooks or {}).items():
+            if not isinstance(v, dict):
+                continue
+            try:
+                cid = int(k)
+            except (TypeError, ValueError):
+                continue
+            merged = dict(self.card_memory_hooks.get(cid) or {})
+            merged.update(v)
+            self.card_memory_hooks[cid] = merged
+        for k, v in (card_customizations or {}).items():
+            if not isinstance(v, dict):
+                continue
+            try:
+                cid = int(k)
+            except (TypeError, ValueError):
+                continue
+            merged_c = dict(self.card_customizations.get(cid) or {})
+            merged_c.update(v)
+            self.card_customizations[cid] = merged_c
+        if memory_slots:
+            self.memory_slots = [dict(s) for s in memory_slots if isinstance(s, dict)]
+        if memory_passives:
+            self.memory_passives = [dict(p) for p in memory_passives if isinstance(p, dict)]
+
     def export_produce_library(self, db: Optional[Any] = None) -> Dict[str, Any]:
         """Return a structured snapshot of this run's initial + current cards, P-items, and idol metadata."""
         card_entries: List[Dict[str, Any]] = []
@@ -173,6 +222,7 @@ class GameStateTracker:
                 "rarity": str(row.get("rarity") or "") if row else "",
                 "upgraded": bool(row.get("upgraded")) if row else False,
                 "memory_hooks": dict(self.card_memory_hooks.get(int(cid), {})),
+                "customizations": dict(self.card_customizations.get(int(cid), {})),
             })
         return {
             "p_idol_id": self.p_idol_id,
@@ -187,6 +237,9 @@ class GameStateTracker:
             "cards": card_entries,
             "p_items": [dict(it) for it in self.equipped_p_items],
             "card_memory_hooks": {str(k): dict(v) for k, v in self.card_memory_hooks.items()},
+            "card_customizations": {str(k): dict(v) for k, v in self.card_customizations.items()},
+            "memory_slots": [dict(s) for s in self.memory_slots],
+            "memory_passives": [dict(p) for p in self.memory_passives],
             "log": list(self.produce_library_log),
         }
 
@@ -245,6 +298,8 @@ class GameStateTracker:
         for i, cid in enumerate(self.produce_deck):
             if cid == old_card_id:
                 self.produce_deck[i] = int(new_card_id)
+                if int(old_card_id) in self.card_customizations and int(new_card_id) not in self.card_customizations:
+                    self.card_customizations[int(new_card_id)] = dict(self.card_customizations[int(old_card_id)])
                 return True
         return False
 
@@ -742,6 +797,21 @@ class GameStateTracker:
             limit_count = row.get("limit_count")
         if base_id is None and row is not None:
             base_id = row.get("base_id")
+        cust_meta = self.card_customizations.get(int(card_id)) or (
+            self.card_customizations.get(int(base_id)) if base_id else None
+        )
+        if isinstance(cust_meta, dict):
+            mods = cust_meta.get("modifiers") if isinstance(cust_meta.get("modifiers"), dict) else cust_meta
+            lvls = cust_meta.get("levels") if isinstance(cust_meta.get("levels"), dict) else {}
+            if bool(mods.get("remove_limit")) or int(lvls.get("37", lvls.get(37, 0)) or 0) > 0:
+                limit_count = None
+            elif lvls and db is not None and hasattr(db, "get_customization_by_id"):
+                for ck, cv in lvls.items():
+                    if int(cv or 0) > 0:
+                        crow = db.get_customization_by_id(int(ck))
+                        if crow is not None and crow.get("limit_count") == 0:
+                            limit_count = None
+                            break
         if not dsl_actions and row is not None:
             dsl_actions = row.get("dsl_actions") or ""
         if dsl_cost is None and row is not None:
@@ -1267,6 +1337,9 @@ class GameStateTracker:
             "produce_deck": list(self.produce_deck),
             "equipped_p_items": [dict(it) for it in self.equipped_p_items],
             "card_memory_hooks": {str(k): dict(v) for k, v in self.card_memory_hooks.items()},
+            "card_customizations": {str(k): dict(v) for k, v in self.card_customizations.items()},
+            "memory_slots": [dict(s) for s in self.memory_slots],
+            "memory_passives": [dict(p) for p in self.memory_passives],
             "recommended_effect": self.recommended_effect,
             "initial_loadout_captured": self.initial_loadout_captured,
             "produce_library_log": list(self.produce_library_log),
@@ -1329,6 +1402,13 @@ class GameStateTracker:
         self.card_memory_hooks = {
             int(k): dict(v) for k, v in (data.get("card_memory_hooks") or {}).items()
         }
+        self.card_customizations = {
+            int(k): dict(v)
+            for k, v in (data.get("card_customizations") or {}).items()
+            if isinstance(v, dict)
+        }
+        self.memory_slots = [dict(s) for s in (data.get("memory_slots") or []) if isinstance(s, dict)]
+        self.memory_passives = [dict(p) for p in (data.get("memory_passives") or []) if isinstance(p, dict)]
         self.recommended_effect = (
             str(data["recommended_effect"]) if data.get("recommended_effect") is not None else None
         )
@@ -1393,6 +1473,9 @@ class GameStateTracker:
             self.produce_deck.clear()
             self.equipped_p_items.clear()
             self.card_memory_hooks.clear()
+            self.card_customizations.clear()
+            self.memory_slots.clear()
+            self.memory_passives.clear()
             self.recommended_effect = None
             self.initial_loadout_captured = False
             self.produce_library_log.clear()

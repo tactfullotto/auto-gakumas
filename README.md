@@ -41,13 +41,43 @@ LocalHybridDecisionAgent      ← rule engine + local ML
 
 | Path | Description |
 |---|---|
-| `demo/run_hif_local.py` | Main entry point |
+| `demo/run_hif_local.py` | Main entry point; supports `on_step_callback` / `on_frame_callback` hooks |
 | `demo/agent/local_agent.py` | `LocalHybridDecisionAgent` orchestrator |
 | `demo/maa_bridge/adb_controller.py` | ADB tap/swipe/screenshot |
-| `demo/vision/` | `LiveScreenRecognizer`, OCR helpers |
+| `demo/vision/live_adb_recognizer.py` | `LiveScreenRecognizer`, OCR helpers |
 | `demo/sim/` | `HeadlessBattleSimulator`, SO-ISMCTS planner |
 | `demo/core/rules.py` | Card/drink selection rules |
+| `demo/core/hif_catalog.py` | `ProducePreferences`, HIF memory ability templates, plan metadata |
+| `demo/core/tracker.py` | In-run state tracker (deck, hand, P-items, produce step) |
+| `demo/web/hif_session.py` | Web workbench session manager (SSE, loadout config, live ADB preview) |
+| `demo/web/static/hif_workbench.js` | 3-profession configurator + manual card/memory editor front-end |
 | `gakumas_library.db` | SQLite card & drink database (926 cards, 28 drinks) |
+
+---
+
+## H.I.F Workbench Web UI
+
+A local web interface for configuring and launching produce runs without touching the CLI.
+
+**Launch:**
+```bash
+python demo/app.py
+# Open http://localhost:5000
+```
+
+**Features:**
+
+- **3-profession selector** (Sense / Logic / Anomaly) with P-Idol catalog and stat preview
+- **Loadout modes:**
+  - `auto` — fully rely on the ADB scan to detect deck/P-items at run start
+  - `manual` — skip scan; inject a hand-crafted deck + P-item list directly into the simulator
+  - `hybrid` — ADB scan + manually specified H.I.F memory hooks merged at start
+- **Manual card/P-item editor** — build your deck card by card from the full DB
+- **H.I.F Memory editor** — 4-slot memory cards, passive bonuses, and wiki preset groups (exile-trouble, extra-use, draw triggers)
+- **Produce Preferences panel** — set priority/avoid/keep card lists, banned drink IDs, score delta thresholds
+- **Live ADB preview** — real-time screen mirror during a run
+- **Library JSON import/export** — save and reload full loadout configs
+- **SSE progress stream** — live step-by-step automation log in the browser
 
 ---
 
@@ -92,12 +122,18 @@ Also requires:
 
 ## Usage
 
+### CLI (headless)
 ```bash
-# Run a full H.I.F produce from the game's main menu
 python -m demo.run_hif_local \
     --adb 127.0.0.1:16384 \
     --idol sense \
     --log-prefix live8
+```
+
+### Web UI
+```bash
+python demo/app.py
+# Open http://localhost:5000  →  H.I.F Workbench tab
 ```
 
 Logs are written to `live<N>_run_log.csv`. Debug frames are saved under `debug_frames_live<N>/`.

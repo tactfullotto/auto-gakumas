@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from dataclasses import dataclass, field
 import json
 import math
@@ -86,6 +87,10 @@ class CardConfig:
     parsed_effects: Dict[str, Any] = field(default_factory=dict)
     exiles_trouble_on_play: bool = False
     free_extra_use_first_play: bool = False
+    memory_extra_use_limit: int = 0
+    memory_draw_on_play: int = 0
+    customizations: Dict[int, int] = field(default_factory=dict)
+    custom_modifiers: Dict[str, Any] = field(default_factory=dict)
     source_type: str = "produce"
 
 
@@ -190,6 +195,9 @@ class BattleConfig:
     initial_genki: int = 0
     initial_good_impression: int = 0
     initial_motivation: int = 0
+    initial_good_condition: int = 0
+    initial_concentration: int = 0
+    initial_full_power_charge: int = 0
     initial_score_buff: float = 0.0
     total_turns: int = 12
     turn_schedule: List[TurnMultiplierSpec] = field(default_factory=list)
@@ -287,6 +295,279 @@ class BattleResult:
     turn_schedule: List[str] = field(default_factory=list)
 
 
+_GROWTH_VAR_TO_ACTION_LHS: Dict[str, str] = {
+    "g.score": "score",
+    "g.genki": "genki",
+    "g.goodImpressionTurns": "goodImpressionTurns",
+    "g.motivation": "motivation",
+    "g.goodConditionTurns": "goodConditionTurns",
+    "g.perfectConditionTurns": "perfectConditionTurns",
+    "g.concentration": "concentration",
+    "g.fullPowerCharge": "fullPowerCharge",
+    "g.halfCostTurns": "halfCostTurns",
+}
+
+_SCALE_VAR_TO_NAME: Dict[str, str] = {
+    "g.scoreByGoodImpressionTurns": "goodImpressionTurns",
+    "g.scoreByMotivation": "motivation",
+    "g.scoreByGenki": "genki",
+}
+
+
+def _reduce_cost_ast(cost_clauses: List[Dict[str, Any]], delta: float, *, cost_only: Optional[bool]) -> None:
+    """Reduce matching card cost AST clause(s) in-place by `delta` (clamped >= 0)."""
+    if delta <= 0:
+        return
+    for clause in cost_clauses:
+        for act in clause.get("actions") or ():
+            if not isinstance(act, dict) or act.get("type") != "assignment":
+                continue
+            lhs = str(act.get("lhs") or "cost")
+            if cost_only is True and lhs != "cost":
+                continue
+            if cost_only is False and lhs == "cost":
+                continue
+            rhs = act.get("rhs")
+            if isinstance(rhs, dict) and rhs.get("type") == "number":
+                cur_val = float(rhs.get("value") or 0)
+                new_val = max(0, cur_val - float(delta))
+                rhs["value"] = int(new_val) if abs(new_val - round(new_val)) < 1e-9 else round(new_val, 4)
+                return
+
+
+def _bump_action_lhs_ast(action_clauses: List[Dict[str, Any]], target_lhs: str, delta: float) -> None:
+    """Increment an existing `target_lhs += ...` AST assignment or append a direct action block."""
+    if delta == 0:
+        return
+    candidates: List[Dict[str, Any]] = []
+    # Prefer unconditional immediate blocks first, then any block
+    for blk in action_clauses:
+        if isinstance(blk, dict) and not blk.get("phase") and not blk.get("conditions"):
+            candidates.append(blk)
+    for blk in action_clauses:
+        if isinstance(blk, dict) and blk not in candidates:
+            candidates.append(blk)
+
+    for blk in candidates:
+        for act in blk.get("actions") or ():
+            if not isinstance(act, dict) or act.get("type") != "assignment":
+                continue
+            if act.get("lhs") != target_lhs or act.get("op") != "+=":
+                continue
+            rhs = act.get("rhs")
+            if isinstance(rhs, dict) and rhs.get("type") == "number":
+                new_val = float(rhs.get("value") or 0) + float(delta)
+                rhs["value"] = int(new_val) if abs(new_val - round(new_val)) < 1e-9 else round(new_val, 4)
+                return
+
+    num_val = int(delta) if abs(delta - round(delta)) < 1e-9 else round(float(delta), 4)
+    action_clauses.append(
+        {
+            "actions": [
+                {
+                    "type": "assignment",
+                    "lhs": target_lhs,
+                    "op": "+=",
+                    "rhs": {"type": "number", "value": num_val},
+                }
+            ]
+        }
+    )
+
+
+def _bump_score_multiplier_ast(action_clauses: List[Dict[str, Any]], scale_var: str, delta: float) -> None:
+    """Increase `score += <scale_var> * K` multiplier constant by `delta` (or append one)."""
+    if delta == 0:
+        return
+    for blk in action_clauses:
+        if not isinstance(blk, dict):
+            continue
+        for act in blk.get("actions") or ():
+            if not isinstance(act, dict) or act.get("type") != "assignment" or act.get("lhs") != "score":
+                continue
+            rhs = act.get("rhs")
+            if not isinstance(rhs, dict):
+                continue
+            if rhs.get("type") == "identifier" and rhs.get("name") == scale_var:
+                act["rhs"] = {
+                    "type": "binary",
+                    "op": "*",
+                    "left": {"type": "identifier", "name": scale_var},
+                    "right": {"type": "number", "value": round(1.0 + float(delta), 4)},
+                }
+                return
+            if rhs.get("type") == "binary" and rhs.get("op") == "*":
+                left = rhs.get("left") or {}
+                right = rhs.get("right") or {}
+                if left.get("type") == "identifier" and left.get("name") == scale_var and right.get("type") == "number":
+                    right["value"] = round(float(right.get("value") or 0) + float(delta), 4)
+                    return
+                if right.get("type") == "identifier" and right.get("name") == scale_var and left.get("type") == "number":
+                    left["value"] = round(float(left.get("value") or 0) + float(delta), 4)
+                    return
+
+    action_clauses.append(
+        {
+            "actions": [
+                {
+                    "type": "assignment",
+                    "lhs": "score",
+                    "op": "+=",
+                    "rhs": {
+                        "type": "binary",
+                        "op": "*",
+                        "left": {"type": "identifier", "name": scale_var},
+                        "right": {"type": "number", "value": round(float(delta), 4)},
+                    },
+                }
+            ]
+        }
+    )
+
+
+def _bump_score_times_ast(action_clauses: List[Dict[str, Any]], extra_times: int) -> None:
+    """Duplicate primary `score += ...` action `extra_times` times to model `scoreTimes+=N`."""
+    if extra_times <= 0:
+        return
+    for blk in action_clauses:
+        if not isinstance(blk, dict):
+            continue
+        acts = blk.get("actions")
+        if not isinstance(acts, list):
+            continue
+        for idx, act in enumerate(acts):
+            if isinstance(act, dict) and act.get("type") == "assignment" and act.get("lhs") == "score":
+                for _ in range(extra_times):
+                    acts.insert(idx + 1, copy.deepcopy(act))
+                return
+
+
+def _apply_patch_entry(
+    parsed: Dict[str, Any],
+    sec: str,
+    entry: Dict[str, Any],
+    dsl_actions: str,
+) -> str:
+    """Apply a single customization condition/action/effect patch entry onto `parsed`."""
+    op = entry.get("op")
+    if op == "patch":
+        anchor = entry.get("anchor")
+        delta = entry.get("delta")
+        if anchor and isinstance(delta, dict):
+            for idx, existing in enumerate(parsed.get(sec) or ()):
+                if isinstance(existing, dict) and existing.get("anchor") == anchor:
+                    updated = copy.deepcopy(existing)
+                    updated.update(copy.deepcopy(delta))
+                    parsed[sec][idx] = updated
+                    break
+        return dsl_actions
+
+    if op != "append":
+        return dsl_actions
+    eff = entry.get("effect")
+    if not isinstance(eff, dict):
+        return dsl_actions
+
+    if sec == "effects" and eff.get("phase") == "prestage":
+        for act in eff.get("actions") or ():
+            if not isinstance(act, dict) or act.get("type") != "assignment":
+                continue
+            lhs = str(act.get("lhs") or "")
+            rhs = act.get("rhs")
+            if not (isinstance(rhs, dict) and rhs.get("type") == "number"):
+                continue
+            val = float(rhs.get("value") or 0)
+            if lhs == "g.cost":
+                _reduce_cost_ast(parsed.setdefault("cost", []), val, cost_only=True)
+            elif lhs == "g.typedCost":
+                _reduce_cost_ast(parsed.setdefault("cost", []), val, cost_only=False)
+            elif lhs in _GROWTH_VAR_TO_ACTION_LHS:
+                _bump_action_lhs_ast(parsed.setdefault("actions", []), _GROWTH_VAR_TO_ACTION_LHS[lhs], val)
+            elif lhs in _SCALE_VAR_TO_NAME:
+                _bump_score_multiplier_ast(parsed.setdefault("actions", []), _SCALE_VAR_TO_NAME[lhs], val)
+            elif lhs == "g.scoreTimes":
+                _bump_score_times_ast(parsed.setdefault("actions", []), int(round(val)))
+        return dsl_actions
+
+    parsed.setdefault(sec, []).append(copy.deepcopy(eff))
+    if sec == "actions":
+        for act in eff.get("actions") or ():
+            if isinstance(act, dict) and act.get("lhs") == "cardUsesRemaining" and "cardUsesRemaining+=" not in dsl_actions:
+                dsl_actions = f"{dsl_actions}; cardUsesRemaining+=1".strip("; ")
+    return dsl_actions
+
+
+def apply_card_customizations(
+    parsed_effects: Dict[str, Any],
+    *,
+    force_initial_hand: bool,
+    limit_count: Optional[int],
+    dsl_actions: str,
+    db: GakumasDB,
+    customization_levels: Optional[Dict[Any, Any]] = None,
+    custom_modifiers: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, Any], bool, Optional[int], str]:
+    """Apply official DB customizations and manual extra enhancements onto a card's cloned AST."""
+    parsed = copy.deepcopy(parsed_effects) if isinstance(parsed_effects, dict) else {}
+    fih = bool(force_initial_hand)
+    lim = limit_count
+    eff_dsl = str(dsl_actions or "")
+
+    for raw_cid, raw_lv in sorted((customization_levels or {}).items(), key=lambda kv: int(kv[0])):
+        try:
+            cust_id = int(raw_cid)
+            lv = int(raw_lv or 0)
+        except (TypeError, ValueError):
+            continue
+        if lv <= 0 or cust_id <= 0:
+            continue
+        crow = db.get_customization_by_id(cust_id) if hasattr(db, "get_customization_by_id") else None
+        if not crow:
+            continue
+        if crow.get("force_initial_hand") == 1:
+            fih = True
+        if crow.get("limit_count") == 0:
+            lim = None
+        if "cardUsesRemaining+=" in str(crow.get("dsl_actions") or "") and "cardUsesRemaining+=" not in eff_dsl:
+            eff_dsl = f"{eff_dsl}; cardUsesRemaining+=1".strip("; ")
+        try:
+            patches = json.loads(crow.get("parsed_patches_json") or "{}")
+        except Exception:
+            patches = {}
+        for sec in ("conditions", "cost", "actions", "effects"):
+            for entry in patches.get(sec) or ():
+                if not isinstance(entry, dict):
+                    continue
+                entry_lv = entry.get("level")
+                if entry_lv is not None and int(entry_lv) != lv:
+                    continue
+                eff_dsl = _apply_patch_entry(parsed, sec, entry, eff_dsl)
+
+    mods = custom_modifiers if isinstance(custom_modifiers, dict) else {}
+    if mods.get("force_initial_hand"):
+        fih = True
+    if mods.get("remove_limit"):
+        lim = None
+    cost_red = int(mods.get("cost_reduction") or 0)
+    if cost_red > 0:
+        _reduce_cost_ast(parsed.setdefault("cost", []), float(cost_red), cost_only=None)
+    mod_delta_map = (
+        ("score_delta", "score"),
+        ("good_impression_delta", "goodImpressionTurns"),
+        ("motivation_delta", "motivation"),
+        ("genki_delta", "genki"),
+        ("good_condition_delta", "goodConditionTurns"),
+        ("concentration_delta", "concentration"),
+        ("full_power_charge_delta", "fullPowerCharge"),
+    )
+    for mod_k, lhs_k in mod_delta_map:
+        dval = float(mods.get(mod_k) or 0)
+        if dval != 0:
+            _bump_action_lhs_ast(parsed.setdefault("actions", []), lhs_k, dval)
+
+    return parsed, fih, lim, eff_dsl
+
+
 def _make_card_config(
     db: GakumasDB,
     card_id: int,
@@ -294,11 +575,50 @@ def _make_card_config(
     force_initial_hand_override: Optional[bool] = None,
     exiles_trouble_on_play: bool = False,
     free_extra_use_first_play: bool = False,
+    memory_extra_use_limit: int = 0,
+    memory_draw_on_play: int = 0,
+    customizations: Optional[Dict[Any, Any]] = None,
+    custom_modifiers: Optional[Dict[str, Any]] = None,
 ) -> CardConfig:
     row = db.get_card_by_id(card_id)
     if row is None:
         raise ValueError(f"Unknown card_id in gakumas_library.db: {card_id}")
-    parsed = json.loads(row.get("parsed_effects_json") or "{}")
+    raw_parsed = json.loads(row.get("parsed_effects_json") or "{}")
+    base_fih = (
+        force_initial_hand_override
+        if force_initial_hand_override is not None
+        else bool(row.get("force_initial_hand"))
+    )
+    base_lim = int(row["limit_count"]) if row.get("limit_count") is not None else None
+    base_dsl = str(row.get("dsl_actions") or "")
+
+    clean_custs: Dict[int, int] = {}
+    for k, v in (customizations or {}).items():
+        try:
+            ik, iv = int(k), int(v or 0)
+            if ik > 0 and iv > 0:
+                clean_custs[ik] = iv
+        except (TypeError, ValueError):
+            continue
+    clean_mods: Dict[str, Any] = dict(custom_modifiers) if isinstance(custom_modifiers, dict) else {}
+
+    if clean_custs or clean_mods:
+        parsed, eff_fih, eff_lim, eff_dsl = apply_card_customizations(
+            raw_parsed,
+            force_initial_hand=base_fih,
+            limit_count=base_lim,
+            dsl_actions=base_dsl,
+            db=db,
+            customization_levels=clean_custs,
+            custom_modifiers=clean_mods,
+        )
+    else:
+        parsed, eff_fih, eff_lim, eff_dsl = raw_parsed, base_fih, base_lim, base_dsl
+
+    eff_extra_limit = int(memory_extra_use_limit or 0)
+    eff_free_extra = bool(free_extra_use_first_play or eff_extra_limit > 0)
+    if eff_free_extra and eff_extra_limit <= 0:
+        eff_extra_limit = 1
     return CardConfig(
         card_id=int(row["id"]),
         name=str(row["name"]),
@@ -307,21 +627,21 @@ def _make_card_config(
         card_type=str(row.get("type") or "active"),
         rarity=str(row.get("rarity") or "N"),
         upgraded=bool(row.get("upgraded")),
-        limit_count=int(row["limit_count"]) if row.get("limit_count") is not None else None,
-        force_initial_hand=(
-            force_initial_hand_override
-            if force_initial_hand_override is not None
-            else bool(row.get("force_initial_hand"))
-        ),
+        limit_count=eff_lim,
+        force_initial_hand=eff_fih,
         p_idol_id=int(row["p_idol_id"]) if row.get("p_idol_id") is not None else None,
         is_signature=bool(row.get("is_signature")),
         dsl_conditions=str(row.get("dsl_conditions") or ""),
         dsl_cost=str(row.get("dsl_cost") or ""),
-        dsl_actions=str(row.get("dsl_actions") or ""),
+        dsl_actions=eff_dsl,
         dsl_effects=str(row.get("dsl_effects") or ""),
         parsed_effects=parsed,
         exiles_trouble_on_play=exiles_trouble_on_play,
-        free_extra_use_first_play=free_extra_use_first_play,
+        free_extra_use_first_play=eff_free_extra,
+        memory_extra_use_limit=eff_extra_limit,
+        memory_draw_on_play=max(0, int(memory_draw_on_play or 0)),
+        customizations=clean_custs,
+        custom_modifiers=clean_mods,
         source_type=str(row.get("source_type") or ("pIdol" if row.get("is_signature") else "produce")),
     )
 
@@ -595,13 +915,13 @@ class HeadlessBattleSimulator:
         seed: int = 0,
         *,
         record_logs: bool = True,
-        card_cfg_cache: Optional[Dict[Tuple[int, Optional[bool], bool, bool], CardConfig]] = None,
+        card_cfg_cache: Optional[Dict[Tuple[Any, ...], CardConfig]] = None,
     ):
         self.config = config
         self._owns_db = db is None
         self.db = db or GakumasDB("gakumas_library.db")
         self._record_logs = record_logs
-        self._card_cfg_cache: Dict[Tuple[int, Optional[bool], bool, bool], CardConfig] = (
+        self._card_cfg_cache: Dict[Tuple[Any, ...], CardConfig] = (
             card_cfg_cache if card_cfg_cache is not None else {}
         )
         for cfg in config.deck:
@@ -610,6 +930,10 @@ class HeadlessBattleSimulator:
                 cfg.force_initial_hand,
                 cfg.exiles_trouble_on_play,
                 cfg.free_extra_use_first_play,
+                cfg.memory_extra_use_limit,
+                cfg.memory_draw_on_play,
+                tuple(sorted(cfg.customizations.items())),
+                tuple(sorted((str(k), v) for k, v in cfg.custom_modifiers.items())),
             )
             self._card_cfg_cache.setdefault(key, cfg)
         self.rng = random.Random(seed)
@@ -629,9 +953,11 @@ class HeadlessBattleSimulator:
             "halfCostTurns": 0,
             "doubleCostTurns": 0,
             "nullifyDebuff": 0,
-            "goodConditionTurns": 0,
-            "concentration": 0,
+            "goodConditionTurns": config.initial_good_condition,
+            "concentration": config.initial_concentration,
         }
+        if config.initial_full_power_charge > 0:
+            self.buffs["fullPowerCharge"] = int(config.initial_full_power_charge)
         self.perm_gi_effect_buff = 0.0
         self.perm_score_buff = config.initial_score_buff
         # Timed buffs store (amount, remaining_turns, fresh) matching BuffManager.js
@@ -659,6 +985,7 @@ class HeadlessBattleSimulator:
         self.memory_extra_used_uids: set[int] = set()
         self.memory_exile_used_uids: set[int] = set()
         self.memory_extra_used_base_ids: set[int] = set()
+        self.memory_extra_use_counts: Dict[int, int] = {}
         self.memory_exile_used_base_ids: set[int] = set()
         self.memory_triggers_log: List[str] = []
         self.card_effect_counters: Dict[int, int] = {}
@@ -704,8 +1031,21 @@ class HeadlessBattleSimulator:
         force_initial_hand_override: Optional[bool] = None,
         exiles_trouble_on_play: bool = False,
         free_extra_use_first_play: bool = False,
+        memory_extra_use_limit: int = 0,
+        memory_draw_on_play: int = 0,
+        customizations: Optional[Dict[int, int]] = None,
+        custom_modifiers: Optional[Dict[str, Any]] = None,
     ) -> CardConfig:
-        key = (card_id, force_initial_hand_override, exiles_trouble_on_play, free_extra_use_first_play)
+        key = (
+            card_id,
+            force_initial_hand_override,
+            exiles_trouble_on_play,
+            free_extra_use_first_play,
+            memory_extra_use_limit,
+            memory_draw_on_play,
+            tuple(sorted((customizations or {}).items())),
+            tuple(sorted((str(k), v) for k, v in (custom_modifiers or {}).items())),
+        )
         cfg = self._card_cfg_cache.get(key)
         if cfg is None:
             cfg = _make_card_config(
@@ -714,6 +1054,10 @@ class HeadlessBattleSimulator:
                 force_initial_hand_override=force_initial_hand_override,
                 exiles_trouble_on_play=exiles_trouble_on_play,
                 free_extra_use_first_play=free_extra_use_first_play,
+                memory_extra_use_limit=memory_extra_use_limit,
+                memory_draw_on_play=memory_draw_on_play,
+                customizations=customizations,
+                custom_modifiers=custom_modifiers,
             )
             self._card_cfg_cache[key] = cfg
         return cfg
@@ -987,11 +1331,15 @@ class HeadlessBattleSimulator:
         return int(self.buffs.get(cost_var, 0) or 0) >= eff_amt
 
     def has_unused_memory_extra_use(self, inst: CardInstance) -> bool:
-        return bool(
-            inst.cfg.free_extra_use_first_play
-            and inst.uid not in self.memory_extra_used_uids
-            and inst.cfg.base_id not in self.memory_extra_used_base_ids
+        effective_limit = int(
+            getattr(inst.cfg, "memory_extra_use_limit", 0)
+            or (1 if inst.cfg.free_extra_use_first_play else 0)
         )
+        if effective_limit <= 0:
+            return False
+        if inst.uid in self.memory_extra_used_uids or inst.cfg.base_id in self.memory_extra_used_base_ids:
+            return False
+        return self.memory_extra_use_counts.get(inst.cfg.base_id, 0) < effective_limit
 
     def has_unused_memory_exile(self, inst: CardInstance) -> bool:
         return bool(
@@ -1206,6 +1554,7 @@ class HeadlessBattleSimulator:
 
             skip_actions = False
             self._buff_cost_consumed = False
+            memory_draw_count = 0
             if using_free:
                 live_snap = self._snapshot_condition_state(card=inst, is_direct=False)
                 for cond_node in cfg.parsed_effects.get("conditions") or []:
@@ -1233,11 +1582,23 @@ class HeadlessBattleSimulator:
 
                 first_free = False
                 if self.has_unused_memory_extra_use(inst):
-                    self.memory_extra_used_uids.add(inst.uid)
-                    self.memory_extra_used_base_ids.add(inst.cfg.base_id)
+                    bid = inst.cfg.base_id
+                    new_cnt = self.memory_extra_use_counts.get(bid, 0) + 1
+                    self.memory_extra_use_counts[bid] = new_cnt
+                    effective_limit = int(
+                        getattr(inst.cfg, "memory_extra_use_limit", 0)
+                        or (1 if inst.cfg.free_extra_use_first_play else 0)
+                    )
+                    if new_cnt >= effective_limit:
+                        self.memory_extra_used_uids.add(inst.uid)
+                        self.memory_extra_used_base_ids.add(bid)
                     first_free = True
+                    memory_draw_count = int(getattr(inst.cfg, "memory_draw_on_play", 0) or 0)
                     if self._record_logs:
-                        self.memory_triggers_log.append(f"T{self.turn}:{cfg.name}[uid={inst.uid}]->再動+1使用数")
+                        draw_note = f"+抽{memory_draw_count}" if memory_draw_count > 0 else ""
+                        self.memory_triggers_log.append(
+                            f"T{self.turn}:{cfg.name}[uid={inst.uid}]->再動+1使用数{draw_note}({new_cnt}/{effective_limit})"
+                        )
                 if not first_free:
                     self.card_uses_remaining = max(0, self.card_uses_remaining - 1)
 
@@ -1282,6 +1643,9 @@ class HeadlessBattleSimulator:
                 self._fire_phase("cardRemoved", condition_snapshot=post_action_snap, is_direct=False)
             else:
                 self.discard_pile.append(inst)
+
+            if memory_draw_count > 0:
+                self.draw_cards(memory_draw_count)
 
             if self._buff_cost_consumed:
                 self._fire_phase("buffCostConsumed", condition_snapshot=pre_cost_snap, is_direct=False)
@@ -1791,6 +2155,10 @@ class HeadlessBattleSimulator:
                             force_initial_hand_override=inst.cfg.force_initial_hand,
                             exiles_trouble_on_play=inst.cfg.exiles_trouble_on_play,
                             free_extra_use_first_play=inst.cfg.free_extra_use_first_play,
+                            memory_extra_use_limit=inst.cfg.memory_extra_use_limit,
+                            memory_draw_on_play=inst.cfg.memory_draw_on_play,
+                            customizations=inst.cfg.customizations,
+                            custom_modifiers=inst.cfg.custom_modifiers,
                         )
 
     def _eval_target_ast(
@@ -2161,6 +2529,7 @@ class HeadlessBattleSimulator:
         cloned.memory_extra_used_uids = set(self.memory_extra_used_uids)
         cloned.memory_exile_used_uids = set(self.memory_exile_used_uids)
         cloned.memory_extra_used_base_ids = set(self.memory_extra_used_base_ids)
+        cloned.memory_extra_use_counts = dict(self.memory_extra_use_counts)
         cloned.memory_exile_used_base_ids = set(self.memory_exile_used_base_ids)
         cloned.memory_triggers_log = list(self.memory_triggers_log) if keep_logs else []
         cloned.card_effect_counters = dict(self.card_effect_counters)
@@ -2272,7 +2641,9 @@ def describe_loaded_config(cfg: BattleConfig) -> str:
         if c.exiles_trouble_on_play:
             tags.append("メモリー:免费除外眠気(限1次)")
         if c.free_extra_use_first_play:
-            tags.append("メモリー:首次+1使用数(限1次)")
+            lim = c.memory_extra_use_limit or 1
+            draw_s = f"+抽{c.memory_draw_on_play}" if c.memory_draw_on_play > 0 else ""
+            tags.append(f"メモリー:+1使用数{draw_s}(限{lim}次)")
         tag_txt = ", ".join(tags) if tags else "可重复"
         lines.append(
             f"  {i:2d}. [#{c.card_id:<3}] {c.name:<18} ({c.card_type}/{c.rarity}) | {c.dsl_cost or '0'} | {tag_txt} | DSL={c.dsl_actions}"

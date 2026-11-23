@@ -1,3 +1,5 @@
+import { initHifWorkbench, refreshHifState } from "./hif_workbench.js";
+
 const THEME_STORAGE_KEY = "gakumas-color-scheme";
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -21,10 +23,11 @@ const PIPELINE_ITEMS = [
 
 const state = {
   full: null,
-  activeView: "tasks",
+  activeView: "hif",
   lastFrameKey: "",
   showOverlay: true,
   refreshQueued: false,
+  hifRefreshQueued: false,
   libraryCache: new Map(),
 };
 
@@ -36,6 +39,7 @@ const els = {
   btnThemeToggle: document.getElementById("btn-theme-toggle"),
   navButtons: Array.from(document.querySelectorAll(".nav-rail .nav-item")),
   views: {
+    hif: document.getElementById("view-hif"),
     tasks: document.getElementById("view-tasks"),
     monitor: document.getElementById("view-monitor"),
     library: document.getElementById("view-library"),
@@ -227,7 +231,8 @@ window.addEventListener("storage", (e) => {
 
 /* ==================== Native Dialog Helpers ==================== */
 function setupDialogs() {
-  for (const dialog of [els.cardDetailDialog, els.frameZoomDialog]) {
+  const custDialog = document.getElementById("hif-card-cust-dialog");
+  for (const dialog of [els.cardDetailDialog, els.frameZoomDialog, custDialog].filter(Boolean)) {
     dialog.addEventListener("close", () => {
       dialog.returnValue = "";
     });
@@ -924,9 +929,9 @@ async function loadLibrary() {
     const endpoint =
       kind === "drinks"
         ? `/api/library/drinks?plan=${encodeURIComponent(plan)}&q=${encodeURIComponent(q)}&limit=100`
-        : `/api/library/cards?plan=${encodeURIComponent(plan)}&category=${encodeURIComponent(category)}&q=${encodeURIComponent(q)}&limit=100`;
+        : `/api/library/cards?plan=${encodeURIComponent(plan)}&category=${encodeURIComponent(category)}&q=${encodeURIComponent(q)}&limit=1200`;
     const data = await apiGet(endpoint);
-    els.libCountLabel.textContent = `共匹配 ${data.total} 项（当前展示前 ${data.items.length} 项）`;
+    els.libCountLabel.textContent = `共匹配 ${data.total} 项（已展示 ${data.items.length} 项）`;
     els.libraryGrid.replaceChildren();
 
     for (const item of data.items) {
@@ -1292,10 +1297,20 @@ function bindEvents() {
   });
 }
 
+function scheduleHifRefresh() {
+  if (state.hifRefreshQueued) return;
+  state.hifRefreshQueued = true;
+  window.setTimeout(async () => {
+    state.hifRefreshQueued = false;
+    await refreshHifState();
+  }, 80);
+}
+
 function startSse() {
   if (!("EventSource" in window)) return;
   const es = new EventSource("/api/events");
   es.addEventListener("state", scheduleRefresh);
+  es.addEventListener("hif_state", scheduleHifRefresh);
   es.addEventListener("connected", scheduleRefresh);
 }
 
@@ -1304,4 +1319,5 @@ setupDialogs();
 syncThemeControls();
 bindEvents();
 refreshState();
+initHifWorkbench({ showToast, openCardModal: openCardDetailModal, apiGet, apiPost });
 startSse();

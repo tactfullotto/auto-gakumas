@@ -237,3 +237,225 @@ def test_config_validation_and_sequence_progression(web_server):
     assert p_res["ok"] is True
     assert "default" in p_res["refreshed"]
 
+
+def test_hif_catalog_and_idol_selection(web_server):
+    base_url, _ = web_server
+
+    # Static JS workbench asset served cleanly
+    js_status, _, js_bytes = _get_bytes(f"{base_url}/static/hif_workbench.js")
+    assert js_status == 200
+    assert b"/api/hif/catalog" in js_bytes
+
+    # H.I.F catalog exposes 3 professions, 165 P-Idols, P-items, and memory catalog
+    c_status, _, c_raw = _get_bytes(f"{base_url}/api/hif/catalog")
+    assert c_status == 200
+    cat = json.loads(c_raw.decode("utf-8"))
+    assert set(cat["plans"].keys()) == {"sense", "logic", "anomaly"}
+    assert len(cat["p_idols"]) == 165
+    assert any(p["icon_url"] for p in cat["p_idols"])
+    assert len(cat["p_items"]) >= 8
+    mem_cat = cat["memory_catalog"]
+    assert "logic" in mem_cat["plans"]
+    assert len(mem_cat["plans"]["logic"]["extra_use_draw_1"]) > 5
+
+    # Default PNG placeholder served on /api/hif/frame
+    f_status, f_headers, f_bytes = _get_bytes(f"{base_url}/api/hif/frame")
+    assert f_status == 200
+    assert f_headers.get("Content-Type") == "image/png"
+    assert f_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+
+    # Select Misuzu (#163 logic) and auto-seed signature cards + unique P-item
+    s_status, s_res = _post_json(
+        f"{base_url}/api/hif/select-idol",
+        {"plan": "logic", "p_idol_id": 163, "auto_seed_signature": True},
+    )
+    assert s_status == 200
+    assert s_res["ok"] is True
+    st = s_res["state"]
+    assert st["selected_plan"] == "logic"
+    assert st["selected_p_idol_id"] == 163
+    assert any(cid in st["deck_ids"] for cid in (919, 920, 921, 922))
+    assert any(it.get("item_id") == 509 for it in st["p_items"])
+
+    # Switch to Sense idol (#158 Agitato 葛城リーリヤ)
+    s2_status, s2_res = _post_json(
+        f"{base_url}/api/hif/select-idol",
+        {"plan": "sense", "p_idol_id": 158, "auto_seed_signature": True},
+    )
+    assert s2_status == 200
+    assert s2_res["state"]["selected_plan"] == "sense"
+    assert 884 in s2_res["state"]["deck_ids"] or 883 in s2_res["state"]["deck_ids"]
+
+
+def test_hif_manual_loadout_memories_and_preferences_roundtrip(web_server):
+    base_url, _ = web_server
+
+    # Update run config + manual loadout mode
+    cfg_st, cfg_res = _post_json(
+        f"{base_url}/api/hif/config",
+        {
+            "loadout_mode": "manual",
+            "adb_host": "127.0.0.1",
+            "adb_port": 16384,
+            "scenario_id": "hif_honsen",
+            "max_steps": 300,
+        },
+    )
+    assert cfg_st == 200
+    assert cfg_res["state"]["loadout_mode"] == "manual"
+    assert cfg_res["state"]["run_config"]["adb_port"] == 16384
+
+    # Save manual skill cards, P-items, stats
+    lo_st, lo_res = _post_json(
+        f"{base_url}/api/hif/loadout",
+        {
+            "deck_ids": [920, 922, 137, 299],
+            "idol_stats": {"vocal": 2550, "dance": 1300, "visual": 2050},
+            "p_items": [
+                {
+                    "item_id": 509,
+                    "name": "星々を統べる輝き+",
+                    "canonical_name": "星々を統べる輝き+",
+                    "mode": "stage",
+                    "source_type": "pIdol",
+                    "rarity": "SSR",
+                }
+            ],
+        },
+    )
+    assert lo_st == 200
+    assert lo_res["state"]["deck_ids"] == [920, 922, 137, 299]
+    assert lo_res["state"]["idol_stats"]["vocal"] == 2550
+
+    # Save manual H.I.F card hooks + 4 memory slots
+    mem_st, mem_res = _post_json(
+        f"{base_url}/api/hif/memories",
+        {
+            "card_memory_hooks": {
+                "299": {"free_extra_use_first_play": True, "extra_use_limit": 2, "draw_on_play": 1}
+            },
+            "memory_slots": [
+                {
+                    "slot": 1,
+                    "label": "メモリー #1",
+                    "owner_name": "美鈴 S+ メモリー",
+                    "passives": [
+                        {"key": "start_good_impression", "label": "試験開始時 好印象+X", "value": 4},
+                    ],
+                },
+                {"slot": 2, "label": "メモリー #2", "owner_name": "", "passives": []},
+                {"slot": 3, "label": "メモリー #3", "owner_name": "", "passives": []},
+                {"slot": 4, "label": "メモリー #4", "owner_name": "", "passives": []},
+            ],
+        },
+    )
+    assert mem_st == 200
+    assert mem_res["state"]["card_memory_hooks"]["299"]["extra_use_limit"] == 2
+    assert mem_res["state"]["card_memory_hooks"]["299"]["draw_on_play"] == 1
+    assert mem_res["state"]["memory_passives"][0]["key"] == "start_good_impression"
+
+    # Save preferences (prioritize #171, avoid #152, ban #19 + #2, prefer #25)
+    pref_st, pref_res = _post_json(
+        f"{base_url}/api/hif/preferences",
+        {
+            "priority_card_ids": [171],
+            "keep_card_ids": [922],
+            "avoid_card_ids": [152],
+            "card_score_overrides": {"299": 750},
+            "preferred_drink_ids": [25],
+            "banned_drink_ids": [19, 2],
+            "spend_all_final_shop": True,
+            "reroll_early_non_exhaust_mental": False,
+        },
+    )
+    assert pref_st == 200
+    prefs = pref_res["state"]["preferences"]
+    assert prefs["priority_card_ids"] == [171]
+    assert prefs["banned_drink_ids"] == [19, 2]
+    assert prefs["reroll_early_non_exhaust_mental"] is False
+
+    # Export JSON and re-import via {data}
+    ex_st, _, ex_raw = _get_bytes(f"{base_url}/api/hif/export-library")
+    assert ex_st == 200
+    exported = json.loads(ex_raw.decode("utf-8"))
+    assert exported["deck_ids"] == [920, 922, 137, 299]
+    assert exported["preferences"]["preferred_drink_ids"] == [25]
+
+    imp_st, imp_res = _post_json(f"{base_url}/api/hif/import-library", {"data": exported})
+    assert imp_st == 200
+    assert imp_res["state"]["deck_ids"] == [920, 922, 137, 299]
+
+    # Security: path traversal in import filename must return HTTP 400/403
+    for bad_name in ("../manifest.json", "demo/schemas.py", "..\\gakumas_library.db"):
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            _post_json(f"{base_url}/api/hif/import-library", {"filename": bad_name})
+        assert exc_info.value.code in (400, 403)
+
+
+def test_full_library_card_pool_and_card_customizations_roundtrip(web_server):
+    base_url, _ = web_server
+
+    # 1. Full plan card pool without truncation (#299 オトメゴコロ+ must be returned when browsing logic)
+    st_logic, _, raw_logic = _get_bytes(f"{base_url}/api/library/cards?plan=logic&limit=1000")
+    assert st_logic == 200
+    logic_data = json.loads(raw_logic.decode("utf-8"))
+    assert logic_data["total"] >= 380
+    assert len(logic_data["items"]) == logic_data["total"]
+    card_299 = next((c for c in logic_data["items"] if c["id"] == 299), None)
+    assert card_299 is not None
+    assert "オトメゴコロ" in card_299["name"]
+    assert card_299["available_customization_ids"] == [34, 80]
+
+    # Full cross-plan library explorer query
+    st_all, _, raw_all = _get_bytes(f"{base_url}/api/library/cards?plan=all&limit=1200")
+    assert st_all == 200
+    all_data = json.loads(raw_all.decode("utf-8"))
+    assert all_data["total"] >= 900
+    assert len(all_data["items"]) == all_data["total"]
+
+    # 2. Catalog exposes all 111 official customizations
+    st_cat, _, raw_cat = _get_bytes(f"{base_url}/api/hif/catalog")
+    assert st_cat == 200
+    cat = json.loads(raw_cat.decode("utf-8"))
+    cust_cat = cat.get("customizations") or {}
+    assert len(cust_cat) == 111
+    assert cust_cat["36"]["force_initial_hand"] is True
+    assert cust_cat["55"]["max_level"] == 2
+
+    # 3. Save per-card official customizations + generic modifiers & roundtrip via export/import
+    lo_st, lo_res = _post_json(
+        f"{base_url}/api/hif/loadout",
+        {
+            "deck_ids": [127, 299, 920],
+            "card_customizations": {
+                "127": {"levels": {"36": 1, "55": 2}},
+                "299": {"levels": {"34": 1, "80": 1}, "modifiers": {"score_delta": 15}},
+                "920": {"modifiers": {"force_initial_hand": True, "good_impression_delta": 3}},
+            },
+        },
+    )
+    assert lo_st == 200
+    saved_custs = lo_res["state"]["card_customizations"]
+    assert saved_custs["127"]["levels"] == {"36": 1, "55": 2}
+    assert saved_custs["299"]["levels"] == {"34": 1, "80": 1}
+    assert saved_custs["299"]["modifiers"]["score_delta"] == 15
+    assert saved_custs["920"]["modifiers"]["force_initial_hand"] is True
+
+    deck_127 = next(c for c in lo_res["state"]["deck_cards"] if c["card_id"] == 127)
+    assert deck_127["available_customization_ids"] == [36, 29, 55]
+    assert deck_127["customizations"]["levels"] == {"36": 1, "55": 2}
+
+    ex_st, _, ex_raw = _get_bytes(f"{base_url}/api/hif/export-library")
+    assert ex_st == 200
+    exported = json.loads(ex_raw.decode("utf-8"))
+    assert exported["card_customizations"]["299"]["modifiers"]["score_delta"] == 15
+
+    # Clear then re-import
+    _post_json(f"{base_url}/api/hif/loadout", {"card_customizations": {}})
+    imp_st, imp_res = _post_json(f"{base_url}/api/hif/import-library", {"data": exported})
+    assert imp_st == 200
+    assert imp_res["state"]["card_customizations"]["127"]["levels"] == {"36": 1, "55": 2}
+    assert imp_res["state"]["card_customizations"]["299"]["modifiers"]["score_delta"] == 15
+
+
+

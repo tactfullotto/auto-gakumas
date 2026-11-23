@@ -79,6 +79,10 @@ class GakumasRunner:
         idle_blank_tap_seconds: float = 30.0,
         loadout_scanner: Optional[Any] = None,
         loadout_library_path: Optional[Union[str, Path]] = None,
+        manual_memory_hooks: Optional[Dict[Any, Dict[str, Any]]] = None,
+        manual_card_customizations: Optional[Dict[Any, Dict[str, Any]]] = None,
+        manual_memory_slots: Optional[List[Dict[str, Any]]] = None,
+        manual_memory_passives: Optional[List[Dict[str, Any]]] = None,
         # Rich TUI Event Hooks
         on_observation: Optional[Callable[[ScreenObservation], None]] = None,
         on_prompt_built: Optional[Callable[[str, List[LegalAction]], None]] = None,
@@ -115,6 +119,18 @@ class GakumasRunner:
             self.agent.bind_tracker(self.tracker)
         self.loadout_scanner = loadout_scanner
         self.loadout_library_path: Optional[Path] = Path(loadout_library_path) if loadout_library_path else None
+        self.manual_memory_hooks: Dict[int, Dict[str, Any]] = {
+            int(k): dict(v) for k, v in (manual_memory_hooks or {}).items() if isinstance(v, dict)
+        }
+        self.manual_card_customizations: Dict[int, Dict[str, Any]] = {
+            int(k): dict(v) for k, v in (manual_card_customizations or {}).items() if isinstance(v, dict)
+        }
+        self.manual_memory_slots: List[Dict[str, Any]] = [
+            dict(s) for s in (manual_memory_slots or []) if isinstance(s, dict)
+        ]
+        self.manual_memory_passives: List[Dict[str, Any]] = [
+            dict(p) for p in (manual_memory_passives or []) if isinstance(p, dict)
+        ]
         self._has_entered_produce: bool = False
         self._has_seen_produce_setup: bool = False
         self._produce_event_seen_count: int = 0
@@ -127,6 +143,9 @@ class GakumasRunner:
             plan=self.plan,
             scenario_id=self.scenario_id,
         )
+        agent_prefs = getattr(self.agent, "preferences", None)
+        if agent_prefs is not None and hasattr(self.scene_routing_reco, "set_banned_drink_ids"):
+            self.scene_routing_reco.set_banned_drink_ids(agent_prefs.banned_drink_ids)
 
         default_pipeline = Path(__file__).parent / "pipeline.json"
         self.pipeline_path = Path(pipeline_path) if pipeline_path else default_pipeline
@@ -553,11 +572,23 @@ class GakumasRunner:
                                     deck_ids=scan_res.deck_card_ids,
                                     p_items=scan_res.p_items,
                                     card_memory_hooks=scan_res.card_memory_hooks,
+                                    memory_slots=self.manual_memory_slots or None,
+                                    memory_passives=self.manual_memory_passives or None,
                                     db=self.db,
                                 )
+                                if self.manual_memory_hooks or self.manual_card_customizations:
+                                    self.tracker.merge_manual_memory_hooks(
+                                        hooks=self.manual_memory_hooks,
+                                        memory_slots=self.manual_memory_slots or None,
+                                        memory_passives=self.manual_memory_passives or None,
+                                        card_customizations=self.manual_card_customizations,
+                                    )
                                 if scan_res.plan:
                                     self.plan = scan_res.plan
-                                    reco_inner = getattr(self.scene_routing_reco, "recognizer", None)
+                                    reco_inner = (
+                                        getattr(self.scene_routing_reco, "_live_recognizer", None)
+                                        or getattr(self.scene_routing_reco, "recognizer", None)
+                                    )
                                     if reco_inner is not None and hasattr(reco_inner, "plan"):
                                         reco_inner.plan = scan_res.plan
                                 if scan_res.p_idol_id is not None:

@@ -46,7 +46,13 @@
   <div class="app-shell">
     <!-- Left Navigation Rail (MFAAvalonia SideMenu) -->
     <nav class="nav-rail" aria-label="主导航">
-      <button type="button" class="nav-item" data-view="tasks" aria-current="page">
+      <button type="button" class="nav-item" data-view="hif" aria-current="page">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.2 6.8 19l1-5.8L3.6 9.1l5.8-.8z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>
+        </svg>
+        <span class="nav-label">H.I.F 培育台</span>
+      </button>
+      <button type="button" class="nav-item" data-view="tasks">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 6h16M4 12h16M4 18h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
@@ -79,8 +85,525 @@
 
     <!-- Main Workspace -->
     <main id="main-content" class="app-main" tabindex="-1">
+      <!-- View 0: H.I.F 本戦 3-Profession Configurator & Launcher -->
+      <section id="view-hif" class="page-view">
+        <!-- Stage 1: Profession & Character Roster -->
+        <div id="hif-stage-roster">
+          <div class="view-header-row view-header-row--split">
+            <div>
+              <h1 class="view-title">H.I.F 本戦 · 职业与 P 偶像配置台</h1>
+              <p class="view-subtitle">先选择职业流派（感性 / 理性 / 异常）与培养角色，再配置自动/手动技能卡、固有道具、回忆效果及选卡/饮料偏好并一键启动</p>
+            </div>
+            <div class="hif-roster-quick-actions">
+              <select id="hif-import-select" class="hif-select-compact" aria-label="选择已有的培育档案 JSON">
+                <option value="">选择本地 produce_library*.json 导入...</option>
+              </select>
+              <button id="btn-hif-import-roster" type="button" class="btn-secondary">一键导入档案进入</button>
+              <button id="btn-hif-skip-idol" type="button" class="btn-secondary">按当前职业直接配置 →</button>
+            </div>
+          </div>
+
+          <div id="hif-profession-grid" class="hif-profession-grid" role="tablist" aria-label="三大培育职业流派">
+            <button type="button" class="glass-card hif-prof-card hif-prof-card--sense" data-plan="sense" role="tab" aria-selected="false">
+              <div class="hif-prof-head">
+                <span class="hif-prof-pill hif-prof-pill--sense">SENSE</span>
+                <span id="hif-count-sense" class="muted-note">0 角色</span>
+              </div>
+              <h2 class="hif-prof-title">感性 · センス</h2>
+              <p class="hif-prof-axis">核心轴：好調 / 絶好調 / 集中</p>
+              <p class="hif-prof-desc">依靠叠层集中与好调倍率，搭配连段与主动爆分技能打出极限舞台得分。</p>
+            </button>
+
+            <button type="button" class="glass-card hif-prof-card hif-prof-card--logic" data-plan="logic" role="tab" aria-selected="true">
+              <div class="hif-prof-head">
+                <span class="hif-prof-pill hif-prof-pill--logic">LOGIC</span>
+                <span id="hif-count-logic" class="muted-note">0 角色</span>
+              </div>
+              <h2 class="hif-prof-title">理性 · ロジック</h2>
+              <p class="hif-prof-axis">核心轴：好印象 / やる気 / 元気</p>
+              <p class="hif-prof-desc">通过高倍率好印象追加结算或干劲元气盾转化爆发（支持除外压缩循环）。</p>
+            </button>
+
+            <button type="button" class="glass-card hif-prof-card hif-prof-card--anomaly" data-plan="anomaly" role="tab" aria-selected="false">
+              <div class="hif-prof-head">
+                <span class="hif-prof-pill hif-prof-pill--anomaly">ANOMALY</span>
+                <span id="hif-count-anomaly" class="muted-note">0 角色</span>
+              </div>
+              <h2 class="hif-prof-title">异常 · アノマリー</h2>
+              <p class="hif-prof-axis">核心轴：強気 / 温存 / 全力値</p>
+              <p class="hif-prof-desc">在温存蓄能与強気爆发之间切换指针，积攒全力值触发全力回合收割。</p>
+            </button>
+          </div>
+
+          <section class="glass-card hif-roster-toolbar">
+            <div class="toolbar-field toolbar-field--grow">
+              <label for="hif-roster-search">检索角色（姓名 / 卡面标题 / P偶像 ID / 推荐轴）</label>
+              <input id="hif-roster-search" type="search" placeholder="例如：美鈴、ガラクタロード、星南、赤裸々、咲季...">
+            </div>
+            <div class="toolbar-field">
+              <label for="hif-roster-rarity">稀有度筛选</label>
+              <select id="hif-roster-rarity">
+                <option value="all">全部稀有度</option>
+                <option value="SSR">SSR</option>
+                <option value="SR">SR</option>
+                <option value="R">R</option>
+              </select>
+            </div>
+            <label class="check-pill">
+              <input id="hif-roster-guide-only" type="checkbox">
+              <span>仅显示含深度攻略 P 卡</span>
+            </label>
+          </section>
+
+          <div id="hif-roster-grid" class="hif-roster-grid" aria-label="当前职业可用 P 偶像列表"></div>
+        </div>
+
+        <!-- Stage 2: Character-Specific Workbench -->
+        <div id="hif-stage-workbench" hidden>
+          <!-- Sticky Character Banner & Global Launcher -->
+          <section class="glass-card hif-wb-header">
+            <div class="hif-wb-identity">
+              <button id="btn-hif-back-roster" type="button" class="btn-secondary">← 切换职业 / 角色</button>
+              <div class="hif-wb-avatar-wrap">
+                <img id="hif-wb-avatar" src="" alt="角色固有卡封面" width="60" height="60" hidden>
+                <span id="hif-wb-avatar-fallback" class="hif-avatar-fallback">P</span>
+              </div>
+              <div class="hif-wb-title-col">
+                <div class="hif-wb-name-row">
+                  <h1 id="hif-wb-idol-name" class="hif-wb-title">未指定角色</h1>
+                  <span id="hif-wb-plan-pill" class="hif-prof-pill hif-prof-pill--logic">LOGIC</span>
+                  <span id="hif-wb-eff-pill" class="badge-mini">recommended</span>
+                  <span id="hif-wb-status-pill" class="panel-badge">IDLE</span>
+                </div>
+                <p id="hif-wb-idol-sub" class="hif-wb-sub">选择或手动录入卡牌、道具与回忆后点击右侧启动</p>
+              </div>
+            </div>
+
+            <div class="hif-wb-actions">
+              <button id="btn-hif-export-json" type="button" class="btn-secondary">导出 JSON</button>
+              <label class="btn-secondary hif-upload-label">
+                <span>导入文件</span>
+                <input id="hif-import-file-input" type="file" accept=".json,application/json" hidden>
+              </label>
+              <button id="btn-hif-launch" type="button" class="btn-primary-shimmer">
+                <span id="hif-launch-label" class="btn-run-label">▶ 启动 H.I.F 自动化</span>
+              </button>
+            </div>
+          </section>
+
+          <!-- Sub-Tabs Navigation -->
+          <div class="hif-subtabs" role="tablist" aria-label="H.I.F 配置分页">
+            <button type="button" class="hif-subtab is-active" data-hif-tab="run" role="tab" aria-selected="true">1. 运行配置与启动</button>
+            <button type="button" class="hif-subtab" data-hif-tab="loadout" role="tab" aria-selected="false">2. 技能卡与（固有）道具</button>
+            <button type="button" class="hif-subtab" data-hif-tab="memory" role="tab" aria-selected="false">3. H.I.F 回忆手动录入</button>
+            <button type="button" class="hif-subtab" data-hif-tab="prefs" role="tab" aria-selected="false">4. 培育偏好微调（选卡 / 饮料）</button>
+          </div>
+
+          <!-- Tab 1: Run Config & Live Control -->
+          <div id="hif-tab-run" class="hif-tab-panel">
+            <div class="hif-two-col-grid">
+              <section class="glass-card panel-card">
+                <div class="panel-header">
+                  <h2 class="panel-title">运行与连接参数</h2>
+                  <span id="hif-mode-chip" class="panel-badge">HYBRID</span>
+                </div>
+
+                <div class="form-stack">
+                  <div class="hif-mode-picker">
+                    <span class="hif-field-label">开局卡组 / 道具 / 回忆录入模式</span>
+                    <div class="hif-radio-cards">
+                      <label class="hif-mode-card">
+                        <input type="radio" name="hif-loadout-mode" value="hybrid" checked>
+                        <div>
+                          <strong>混合模式 · 自动扫卡 + 手动回忆（推荐）</strong>
+                          <span>进入本戦时自动扫描初始牌组与P道具，并叠加融合第3页手动录入的H.I.F回忆效果。</span>
+                        </div>
+                      </label>
+                      <label class="hif-mode-card">
+                        <input type="radio" name="hif-loadout-mode" value="auto">
+                        <div>
+                          <strong>全自动扫描 (Auto Scan)</strong>
+                          <span>完全通过长按识图扫描器识别角色、卡组、P道具与部分内置回忆，零手动录入。</span>
+                        </div>
+                      </label>
+                      <label class="hif-mode-card">
+                        <input type="radio" name="hif-loadout-mode" value="manual">
+                        <div>
+                          <strong>纯手动录入 (Manual Override)</strong>
+                          <span>跳过长按扫牌，直接使用第2~3页手动填写的技能卡组、P道具与回忆配置进入运行。</span>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="form-two-col">
+                    <div class="form-row">
+                      <label for="hif-adb-host">ADB 主机 IP</label>
+                      <input id="hif-adb-host" type="text" value="127.0.0.1">
+                    </div>
+                    <div class="form-row">
+                      <label for="hif-adb-port">ADB 端口 (MuMu 默认 16384)</label>
+                      <input id="hif-adb-port" type="number" min="1" max="65535" value="16384">
+                    </div>
+                  </div>
+
+                  <div class="form-two-col">
+                    <div class="form-row">
+                      <label for="hif-scenario-id">剧本场景</label>
+                      <select id="hif-scenario-id">
+                        <option value="hif_honsen">H.I.F 本戦 (hif_honsen)</option>
+                        <option value="hajime_regular">定期公演『初』· 常规</option>
+                        <option value="hajime_pro">定期公演『初』· 进阶</option>
+                        <option value="hajime_master">定期公演『初』· 大师</option>
+                        <option value="nia_master">N.I.A (nia_master)</option>
+                      </select>
+                    </div>
+                    <div class="form-row">
+                      <label for="hif-max-steps">最大执行步数</label>
+                      <input id="hif-max-steps" type="number" min="1" max="2000" value="450">
+                    </div>
+                  </div>
+
+                  <div class="form-three-col">
+                    <div class="form-row">
+                      <label for="hif-delay">步间延迟 (秒)</label>
+                      <input id="hif-delay" type="number" min="0" max="10" step="0.1" value="0.5">
+                    </div>
+                    <div class="form-row">
+                      <label for="hif-ppo-episodes">PPO 训练轮数</label>
+                      <input id="hif-ppo-episodes" type="number" min="100" max="10000" step="100" value="2000">
+                    </div>
+                    <div class="form-row">
+                      <label for="hif-ismcts-sims">ISMCTS 模拟次数</label>
+                      <input id="hif-ismcts-sims" type="number" min="8" max="512" step="8" value="64">
+                    </div>
+                  </div>
+
+                  <details class="sim-details">
+                    <summary>可选调试输出文件（留空则不写入磁盘）</summary>
+                    <div class="sim-details-body">
+                      <div class="form-row">
+                        <label for="hif-library-out">卡库快照导出路径 (--library-out)</label>
+                        <input id="hif-library-out" type="text" placeholder="例如：produce_library_live8.json（留空不保存）">
+                      </div>
+                      <div class="form-two-col">
+                        <div class="form-row">
+                          <label for="hif-csv-out">逐帧决策日志 (--csv-out)</label>
+                          <input id="hif-csv-out" type="text" placeholder="例如：live8_run_log.csv">
+                        </div>
+                        <div class="form-row">
+                          <label for="hif-debug-dir">战斗截图目录 (--debug-dir)</label>
+                          <input id="hif-debug-dir" type="text" placeholder="例如：debug_frames_live8">
+                        </div>
+                      </div>
+                    </div>
+                  </details>
+
+                  <label class="check-pill">
+                    <input id="hif-stop-home" type="checkbox" checked>
+                    <span>培育完成返回主界面后自动停止</span>
+                  </label>
+
+                  <div class="hif-run-btn-bar">
+                    <button id="btn-hif-save-config" type="button" class="btn-secondary">保存运行配置</button>
+                    <button id="btn-hif-preview-adb" type="button" class="btn-secondary">抓取实机画面预览</button>
+                    <button id="btn-hif-launch-main" type="button" class="btn-primary-shimmer">
+                      <span id="hif-launch-main-label" class="btn-run-label">▶ 启动 H.I.F 自动化</span>
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="glass-card panel-card">
+                <div class="panel-header">
+                  <h2 class="panel-title">实机实时画面与执行监控</h2>
+                  <span id="hif-step-badge" class="panel-badge">STEP 0</span>
+                </div>
+
+                <div class="kpi-grid">
+                  <div class="kpi-tile"><span class="kpi-k">当前场景</span><strong id="hif-kpi-scene" class="kpi-v">idle</strong></div>
+                  <div class="kpi-tile"><span class="kpi-k">周目/回合</span><strong id="hif-kpi-turn" class="kpi-v">—</strong></div>
+                  <div class="kpi-tile"><span class="kpi-k">体力 / 元气</span><strong id="hif-kpi-hp" class="kpi-v">—</strong></div>
+                  <div class="kpi-tile"><span class="kpi-k">当前分数</span><strong id="hif-kpi-score" class="kpi-v">0</strong></div>
+                  <div class="kpi-tile"><span class="kpi-k">持有 P 点</span><strong id="hif-kpi-ppts" class="kpi-v">0 P</strong></div>
+                  <div class="kpi-tile"><span class="kpi-k">配置摘要</span><strong id="hif-kpi-summary" class="kpi-v">0卡 / 0回忆</strong></div>
+                </div>
+
+                <div class="hif-monitor-split">
+                  <div class="hif-frame-box">
+                    <img id="hif-live-img" src="/api/hif/frame" alt="H.I.F 实机画面预览" width="540" height="960">
+                    <span id="hif-frame-source" class="muted-note">idle</span>
+                  </div>
+                  <div class="hif-log-col">
+                    <div class="sub-section-header">
+                      <h3>实时执行日志</h3>
+                      <button id="btn-hif-clear-logs" type="button" class="btn-secondary btn-compact">清空日志</button>
+                    </div>
+                    <div id="hif-logs-container" class="logs-console hif-logs-box" tabindex="0"></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <!-- Tab 2: Skill Cards & Unique/Equip P-Items -->
+          <div id="hif-tab-loadout" class="hif-tab-panel" hidden>
+            <section class="glass-card hif-banner-note">
+              <div class="hif-loadout-top-bar">
+                <div>
+                  <strong>录入模式：<span id="hif-loadout-mode-label">混合模式</span></strong>
+                  <p id="hif-loadout-mode-desc" class="muted-note">「全自动」时此页卡组作为参考预览；切换至「纯手动」时将直接使用下方手填的技能卡与P道具跳过开局扫牌。</p>
+                </div>
+                <div class="hif-loadout-top-btns">
+                  <button id="btn-hif-seed-sig" type="button" class="btn-secondary">载入角色固有卡与固有道具</button>
+                  <button id="btn-hif-clear-deck" type="button" class="btn-secondary">清空卡组</button>
+                  <button id="btn-hif-save-loadout" type="button" class="btn-secondary btn-accent-outline">保存卡组与道具</button>
+                </div>
+              </div>
+              <div class="hif-stats-bar">
+                <label class="hif-stat-input"><span>Vo (ボーカル)</span><input id="hif-stat-vo" type="number" min="0" max="5000" value="2400"></label>
+                <label class="hif-stat-input"><span>Da (ダンス)</span><input id="hif-stat-da" type="number" min="0" max="5000" value="1400"></label>
+                <label class="hif-stat-input"><span>Vi (ビジュアル)</span><input id="hif-stat-vi" type="number" min="0" max="5000" value="1800"></label>
+                <select id="hif-loadout-import-select" class="hif-select-compact" aria-label="快速导入已有卡库">
+                  <option value="">从已有 produce_library*.json 载入...</option>
+                </select>
+                <button id="btn-hif-loadout-import" type="button" class="btn-secondary">载入文件</button>
+              </div>
+            </section>
+
+            <div class="hif-two-col-grid">
+              <!-- Left: Current Deck + P-Items -->
+              <div class="col-stack">
+                <section class="glass-card panel-card">
+                  <div class="panel-header">
+                    <h2 class="panel-title">当前已录入技能卡组 (<span id="hif-deck-count">0</span> 张)</h2>
+                    <span class="muted-note">支持重复加入与点按看大图</span>
+                  </div>
+                  <div id="hif-deck-list" class="hif-deck-list"></div>
+                </section>
+
+                <section class="glass-card panel-card">
+                  <div class="panel-header">
+                    <h2 class="panel-title">已装备（固有）P 道具 (<span id="hif-pitem-count">0</span> 件)</h2>
+                    <span class="muted-note">含角色固有、支援与 H.I.F 剧本道具</span>
+                  </div>
+                  <div id="hif-pitem-presets" class="hif-chip-pool" aria-label="常见 P 道具一键添加"></div>
+                  <div id="hif-pitem-list" class="hif-pitem-list"></div>
+                  <div class="hif-custom-pitem-form">
+                    <input id="hif-new-pitem-name" type="text" placeholder="自定义 P 道具名称（如：最初の鳥）">
+                    <select id="hif-new-pitem-mode">
+                      <option value="stage">战中触发 (stage)</option>
+                      <option value="produce">培育期/入场前 (produce)</option>
+                    </select>
+                    <select id="hif-new-pitem-source">
+                      <option value="pIdol">角色固有 (pIdol)</option>
+                      <option value="support">支援卡 (support)</option>
+                      <option value="produce">剧本/共通 (produce)</option>
+                    </select>
+                    <input id="hif-new-pitem-desc" type="text" placeholder="效果描述（可选）">
+                    <button id="btn-hif-add-custom-pitem" type="button" class="btn-secondary">添加道具</button>
+                  </div>
+                </section>
+              </div>
+
+              <!-- Right: Plan Card Pool Picker -->
+              <section class="glass-card panel-card">
+                <div class="panel-header">
+                  <h2 class="panel-title">从当前职业图鉴添加技能卡</h2>
+                  <span id="hif-card-picker-count" class="muted-note">加载中...</span>
+                </div>
+                <div class="hif-picker-filters">
+                  <input id="hif-card-picker-q" type="search" placeholder="搜索卡名 / 效果关键字 / ID...">
+                  <select id="hif-card-picker-type">
+                    <option value="all">全部类型</option>
+                    <option value="active">主动 (A)</option>
+                    <option value="mental">精神 (M)</option>
+                    <option value="trouble">干扰 (T)</option>
+                  </select>
+                  <select id="hif-card-picker-cat">
+                    <option value="usable" selected>本角色固有 + 流派通用</option>
+                    <option value="normal">仅通用 / 流派</option>
+                    <option value="signature">仅角色固有（全角色）</option>
+                    <option value="all">全卡池（含他角色固有）</option>
+                  </select>
+                  <select id="hif-card-picker-rarity">
+                    <option value="all">全部稀有度</option>
+                    <option value="L">Legend (L)</option>
+                    <option value="SSR">SSR</option>
+                    <option value="SR">SR</option>
+                    <option value="R">R</option>
+                    <option value="N">N / 基础</option>
+                  </select>
+                  <select id="hif-card-picker-up">
+                    <option value="all">强化 +/- 全部</option>
+                    <option value="upgraded">仅看 + 版</option>
+                    <option value="base">仅看未强化</option>
+                  </select>
+                  <select id="hif-card-picker-sort">
+                    <option value="rarity_desc" selected>按稀有度排序</option>
+                    <option value="id_asc">按序号升序 (#1→)</option>
+                    <option value="id_desc">按序号降序 (→#1)</option>
+                  </select>
+                </div>
+                <div id="hif-card-picker-grid" class="hif-card-picker-grid"></div>
+              </section>
+            </div>
+          </div>
+
+          <!-- Tab 3: Manual H.I.F Memory Editor + Wiki Quick Reference -->
+          <div id="hif-tab-memory" class="hif-tab-panel" hidden>
+            <section class="glass-card hif-banner-note hif-banner-note--info">
+              <strong>H.I.F 回忆手动录入（自动扫描回忆暂未开启）</strong>
+              <p id="hif-memory-rule-note" class="muted-note">请根据游戏内 4 张编成回忆截图在此手动填写。填写内容会在混合/手动模式下直接注入 PPO+ISMCTS 战斗引擎及培育决策。</p>
+            </section>
+
+            <div class="hif-two-col-grid">
+              <!-- Left: Card-specific Memory Hooks -->
+              <section class="glass-card panel-card">
+                <div class="panel-header">
+                  <h2 class="panel-title">A. 指定技能卡的 H.I.F 回忆追加效果</h2>
+                  <button id="btn-hif-save-memories" type="button" class="btn-secondary btn-accent-outline">保存回忆配置</button>
+                </div>
+
+                <div class="hif-hook-editor">
+                  <div class="form-row">
+                    <label for="hif-hook-card-select">1. 选择目标技能卡（优先列出当前卡组）</label>
+                    <select id="hif-hook-card-select"></select>
+                  </div>
+
+                  <div class="hif-hook-checks">
+                    <label class="check-pill">
+                      <input id="hif-hook-force-init" type="checkbox">
+                      <span>開始時手札に入る（开局固定进入初始手牌）</span>
+                    </label>
+                    <label class="check-pill">
+                      <input id="hif-hook-exile" type="checkbox">
+                      <span>使用後、山札/捨札の《眠気》を除外（每场1次免费除外1张眠气）</span>
+                    </label>
+                    <div class="hif-hook-extra-row">
+                      <label class="check-pill">
+                        <input id="hif-hook-extra-use" type="checkbox">
+                        <span>使用後、スキルカード使用数追加+1（不耗行动点）</span>
+                      </label>
+                      <select id="hif-hook-extra-limit" aria-label="每场触发次数上限">
+                        <option value="1">试验中 1 回まで</option>
+                        <option value="2">试验中 2 回まで</option>
+                      </select>
+                      <label class="check-pill">
+                        <input id="hif-hook-draw" type="checkbox">
+                        <span>＋ スキルカードを引く（同抽 1 张牌）</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="hif-hook-btn-row">
+                    <button id="btn-hif-apply-hook" type="button" class="btn-secondary">添加 / 更新该卡回忆效果</button>
+                  </div>
+                </div>
+
+                <div class="sub-section-header">
+                  <h3>已生效的技能卡回忆钩子 (<span id="hif-hook-count">0</span>)</h3>
+                </div>
+                <div id="hif-active-hooks-list" class="hif-active-hooks-list"></div>
+              </section>
+
+              <!-- Right: Strategy Wiki Preset Quick Reference -->
+              <section class="glass-card panel-card">
+                <div class="panel-header">
+                  <h2 class="panel-title">攻略站 H.I.F 专属アビリティ速查（点击一键绑定）</h2>
+                  <span id="hif-wiki-plan-tag" class="panel-badge">LOGIC</span>
+                </div>
+                <p class="muted-note hif-wiki-hint">数据源：学園アイドルマスターコンテスト Wiki*「HIF/メモリーアビリティ」。注：所有 SSR（虹）卡及自带眠气的开关 SR 卡无 H.I.F 专属アビリティ。</p>
+                <div id="hif-wiki-presets-container" class="hif-wiki-presets"></div>
+              </section>
+            </div>
+
+            <!-- Part B: 4 Memory Slots & Start-of-Stage Passive Traits -->
+            <section class="glass-card panel-card hif-slots-section">
+              <div class="panel-header">
+                <h2 class="panel-title">B. 4 枚编成回忆槽位与通用开局词条</h2>
+                <button id="btn-hif-save-slots" type="button" class="btn-secondary btn-accent-outline">保存 4 槽位设置</button>
+              </div>
+              <div id="hif-memory-slots-grid" class="hif-memory-slots-grid"></div>
+            </section>
+          </div>
+
+          <!-- Tab 4: Produce Preferences (Cards + Drinks) -->
+          <div id="hif-tab-prefs" class="hif-tab-panel" hidden>
+            <section class="glass-card hif-banner-note">
+              <div class="hif-loadout-top-bar">
+                <div>
+                  <strong>培育阶段策略偏好微调</strong>
+                  <p class="muted-note">实时控制选卡奖励 / お出かけ / 换卡 / 商店购买 / 饮料丢弃规则；保存后直接作用于本地智能体与战斗规划层。</p>
+                </div>
+                <div class="hif-loadout-top-btns">
+                  <button id="btn-hif-reset-prefs" type="button" class="btn-secondary">恢复默认偏好（禁青汁）</button>
+                  <button id="btn-hif-save-prefs" type="button" class="btn-secondary btn-accent-outline">保存全部偏好设置</button>
+                </div>
+              </div>
+              <div class="hif-prefs-toggles">
+                <label class="check-pill">
+                  <input id="hif-pref-spend-all" type="checkbox" checked>
+                  <span>最后一次商店允许花钱点『リフレッシュ』刷新并尽量花光 P 点</span>
+                </label>
+                <label class="check-pill">
+                  <input id="hif-pref-reroll-m" type="checkbox" checked>
+                  <span>前期换牌 / 选卡遇到不可除外普通 M 卡时点击『再抽選』刷新</span>
+                </label>
+              </div>
+            </section>
+
+            <div class="hif-two-col-grid">
+              <!-- Card Preference Editor -->
+              <section class="glass-card panel-card">
+                <div class="panel-header">
+                  <h2 class="panel-title">1. 卡牌选取优先级 / 禁选 / 权重微调</h2>
+                </div>
+
+                <div class="hif-pref-buckets">
+                  <div class="hif-pref-bucket">
+                    <h3>★ 高优先必选卡 (<span id="hif-pref-pri-cnt">0</span>)</h3>
+                    <div id="hif-pref-priority-list" class="hif-pref-pills"></div>
+                  </div>
+                  <div class="hif-pref-bucket">
+                    <h3>🔒 锁卡保护（不删不换出）(<span id="hif-pref-keep-cnt">0</span>)</h3>
+                    <div id="hif-pref-keep-list" class="hif-pref-pills"></div>
+                  </div>
+                  <div class="hif-pref-bucket">
+                    <h3>🚫 避坑禁选卡（优先换删）(<span id="hif-pref-avoid-cnt">0</span>)</h3>
+                    <div id="hif-pref-avoid-list" class="hif-pref-pills"></div>
+                  </div>
+                  <div class="hif-pref-bucket">
+                    <h3>⚖️ 单卡微调权重列表（支持手动 ± 分数）</h3>
+                    <div id="hif-pref-card-weights-list" class="hif-weights-list"></div>
+                  </div>
+                </div>
+
+                <div class="sub-section-header">
+                  <h3>搜索当前职业卡牌加入偏好</h3>
+                </div>
+                <div class="hif-picker-filters">
+                  <input id="hif-pref-card-q" type="search" placeholder="搜索想优先抓取或避坑的技能卡（如：私がスター、夢色リップ...）">
+                </div>
+                <div id="hif-pref-card-results" class="hif-pref-card-results"></div>
+              </section>
+
+              <!-- Drink Preference / Ban Matrix -->
+              <section class="glass-card panel-card">
+                <div class="panel-header">
+                  <h2 class="panel-title">2. P 饮料选择与禁用丢弃清单</h2>
+                  <span class="muted-note">共 16 种当前职业可用饮料</span>
+                </div>
+                <p class="muted-note hif-wiki-hint">设为「🚫 禁用并丢弃」的饮料（默认含 #19 青汁）绝不会被选用或购买，且若随机发到手中将自动点开详情『捨てる』丢弃，战中禁止使用。</p>
+                <div id="hif-pref-drinks-grid" class="hif-pref-drinks-grid"></div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- View 1: Task Queue (MFAAvalonia 3-Column Workbench) -->
-      <section id="view-tasks" class="page-view">
+      <section id="view-tasks" class="page-view" hidden>
         <div class="view-header-row">
           <h1 class="view-title">任务队列与实时决策台</h1>
           <p class="view-subtitle">图像识别 → 知识库校验 → 紧凑文本 Prompt → LLM 决策 → MaaFw 点击闭环</p>
@@ -530,6 +1053,55 @@
         <div id="zoom-canvas-wrap" class="frame-canvas-wrap frame-canvas-wrap--zoom">
           <img id="zoom-frame-img" src="/api/frame" alt="放大后的实时游戏截图" width="1080" height="1920">
           <svg id="zoom-overlay-svg" class="frame-overlay-svg" viewBox="0 0 1080 1920" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Native Modal Dialog 3: Per-Card Customization & Extra Enhancement Editor -->
+  <dialog id="hif-card-cust-dialog" closedby="any" aria-labelledby="hif-cust-dialog-title">
+    <div class="dialog-shell">
+      <div class="dialog-header">
+        <h1 id="hif-cust-dialog-title" class="dialog-title">技能卡额外强化 (カスタマイズ)</h1>
+        <form method="dialog">
+          <button type="submit" value="close" class="dialog-close-btn" aria-label="关闭卡牌强化弹窗">✕</button>
+        </form>
+      </div>
+      <div class="dialog-body hif-cust-dialog-body">
+        <p id="hif-cust-card-meta" class="muted-note"></p>
+
+        <div class="hif-cust-section">
+          <h2 class="hif-cust-sec-title">1. 官方自定义强化（カスタマイズ · 来自卡牌库）</h2>
+          <div id="hif-cust-official-wrap" class="hif-cust-official-list"></div>
+        </div>
+
+        <div class="hif-cust-section">
+          <h2 class="hif-cust-sec-title">2. 通用额外强化与数值微调（支持任意固有卡 / 突破回忆加成）</h2>
+          <div class="hif-cust-checks">
+            <label class="checkbox-inline">
+              <input id="hif-cust-mod-fih" type="checkbox">
+              <span>開始時手札に入る（开局固定上手）</span>
+            </label>
+            <label class="checkbox-inline">
+              <input id="hif-cust-mod-nolimit" type="checkbox">
+              <span>レッスン中1回の制限削除（解除本场限1消耗）</span>
+            </label>
+          </div>
+          <div class="hif-cust-mods-grid">
+            <label class="hif-stat-input"><span>消費コスト減少 (-X)</span><input id="hif-cust-mod-cost" type="number" min="0" max="20" value="0"></label>
+            <label class="hif-stat-input"><span>パラメータ (+X)</span><input id="hif-cust-mod-score" type="number" min="-50" max="200" value="0"></label>
+            <label class="hif-stat-input"><span>好印象 (+X)</span><input id="hif-cust-mod-gi" type="number" min="-20" max="100" value="0"></label>
+            <label class="hif-stat-input"><span>やる気 (+X)</span><input id="hif-cust-mod-mot" type="number" min="-20" max="100" value="0"></label>
+            <label class="hif-stat-input"><span>元気 (+X)</span><input id="hif-cust-mod-genki" type="number" min="-20" max="100" value="0"></label>
+            <label class="hif-stat-input"><span>好調 (+X)</span><input id="hif-cust-mod-gc" type="number" min="-20" max="100" value="0"></label>
+            <label class="hif-stat-input"><span>集中 (+X)</span><input id="hif-cust-mod-conc" type="number" min="-20" max="100" value="0"></label>
+            <label class="hif-stat-input"><span>全力値 (+X)</span><input id="hif-cust-mod-fp" type="number" min="-20" max="100" value="0"></label>
+          </div>
+        </div>
+
+        <div class="hif-cust-footer">
+          <button id="btn-hif-cust-clear" type="button" class="btn-secondary hif-btn-danger">清除该卡强化</button>
+          <button id="btn-hif-cust-save" type="button" class="btn-primary">保存卡牌强化</button>
         </div>
       </div>
     </div>
