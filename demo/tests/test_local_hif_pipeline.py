@@ -2009,14 +2009,28 @@ def test_w8_interval_shop_and_upgrade_customize_real_screenshots():
             LegalAction(choice_id=4, action_type="pick_option", description="リフレッシュ (10P)", bbox=BoundingBox(xmin=24, ymin=1204, xmax=207, ymax=1304), payload={"name": "リフレッシュ", "shop_slot_key": "リフレッシュ", "price": 10}),
             LegalAction(choice_id=5, action_type="pick_option", description="終了", bbox=BoundingBox(xmin=563, ymin=1208, xmax=715, ymax=1280), payload={"name": "終了"}),
         ]
-        # 強化 beats Pドリンク beats カスタマイズ beats リフレッシュ beats 終了; スキルカード never chosen
-        assert agent.decide("", acts_refresh_vs_drink_upg, obs=w8_obs_rich).choice_id == 2
+        # Post-Battle-1 W8 final shop: fill all 4 drinks FIRST (Pドリンク 2400 > リフレッシュ 2100); no カスタマイズ until 4 drinks full!
+        assert agent.decide("", acts_refresh_vs_drink_upg, obs=w8_obs_rich).choice_id == 1
         agent._shop_clicked_slots.clear()
-        acts_no_upg = [a for a in acts_refresh_vs_drink_upg if a.choice_id != 2]
-        assert agent.decide("", acts_no_upg, obs=w8_obs_rich).choice_id == 1
+        agent._shop_noop_features.clear()
+        # Once all 4 drinks are filled, カスタマイズ (2250) beats リフレッシュ (1350) and 強化 (950)
+        four_drinks = [
+            RecognizedDrink(drink_id=22, name="初星黒酢", bbox=BoundingBox(xmin=0, ymin=0, xmax=10, ymax=10)),
+            RecognizedDrink(drink_id=18, name="プロテイン", bbox=BoundingBox(xmin=0, ymin=0, xmax=10, ymax=10)),
+            RecognizedDrink(drink_id=14, name="センブリソーダ", bbox=BoundingBox(xmin=0, ymin=0, xmax=10, ymax=10)),
+            RecognizedDrink(drink_id=12, name="ブーストエキス", bbox=BoundingBox(xmin=0, ymin=0, xmax=10, ymax=10)),
+        ]
+        w8_obs_full4 = w8_obs_rich.model_copy(update={"drinks": four_drinks})
+        assert agent.decide("", acts_refresh_vs_drink_upg, obs=w8_obs_full4).choice_id == 3
         agent._shop_clicked_slots.clear()
+        agent._shop_noop_features.clear()
+        acts_no_cust = [a for a in acts_refresh_vs_drink_upg if a.choice_id != 3]
+        assert agent.decide("", acts_no_cust, obs=w8_obs_rich).choice_id == 1
+        agent._shop_clicked_slots.clear()
+        agent._shop_noop_features.clear()
+        acts_upg_vs_exit = [acts_refresh_vs_drink_upg[0], acts_refresh_vs_drink_upg[2], acts_refresh_vs_drink_upg[5]]
+        assert agent.decide("", acts_upg_vs_exit, obs=w8_obs_rich).choice_id == 2
         acts_cust_only = [a for a in acts_refresh_vs_drink_upg if a.choice_id not in (1, 2)]
-        assert agent.decide("", acts_cust_only, obs=w8_obs_rich).choice_id == 3
 
         # With <70P, カスタマイズ is skipped and 終了 beats リフレッシュ (too few P points)
         w8_obs_poor = w8_obs_rich.model_copy(update={"p_points": 60})
@@ -3641,14 +3655,15 @@ def test_w3_unswitchable_reward_slot_breaks_loop_and_w8_shop_skips_upgraded_deck
             db=db,
             planner_cfg=LiveBattlePlannerConfig(ppo_hidden_dim=64, ppo_episodes=16, ismcts_simulations=4),
         )
-        d1 = agent_no_tr.decide("", shop_acts, obs=w8_obs)
+        w6_obs = w8_obs.model_copy(update={"week": 6})
+        d1 = agent_no_tr.decide("", shop_acts, obs=w6_obs)
         assert d1.choice_id == 0
         # Still in shop at same p_points=250 -> 強化 marked no-op, picks カスタマイズ
-        d2 = agent_no_tr.decide("", shop_acts, obs=w8_obs)
+        d2 = agent_no_tr.decide("", shop_acts, obs=w6_obs)
         assert d2.choice_id == 1
         # Simulate P-point change after buying a drink -> _shop_clicked_slots clears, yet 強化 stays blocked!
-        w8_obs_spent = w8_obs.model_copy(update={"p_points": 150})
-        d3 = agent_no_tr.decide("", [shop_acts[0], shop_acts[2]], obs=w8_obs_spent)
+        w6_obs_spent = w6_obs.model_copy(update={"p_points": 150})
+        d3 = agent_no_tr.decide("", [shop_acts[0], shop_acts[2]], obs=w6_obs_spent)
         assert d3.choice_id == 2
     finally:
         db.close()
@@ -7056,6 +7071,797 @@ def test_live_planner_hand_cap_5_and_exile_nemuki_over_skip():
         if hasattr(agent, "close"):
             agent.close()
         db.close()
+
+
+def test_change_and_delete_grid_not_hijacked_by_upgrade_preview_button_and_first_shop_probe(monkeypatch, tmp_path):
+    """Regression test:
+    1) After 1st click in チェンジ/削除, preview box displays '強化確認'/'カスタマイズ確認'.
+       Must NOT flip is_upgrade_flow=True and must expose all 18-24 slots (not truncated at 16).
+    2) First shop (W6 相談) always probes 削除 once even if tracker.produce_deck didn't record #23 眠気 yet,
+       and scans past non-trouble cards to find #23 眠気.
+    3) build_local_hif_runner(initial_library=web_config_json) loads preferences + memory hooks and keeps
+       loadout_scanner active (hybrid) when initial_loadout_captured is False.
+    4) Per-idol stat specialty (Misuzu Vo>Vi>Da, Rinami Vi>Da>Vo) and #22 blocked at 5-card hand cap.
+    """
+    import json
+    import numpy as np
+    from demo.core.db import GakumasDB
+    from demo.core.idol_guides import get_idol_stat_order
+    from demo.core.tracker import GameStateTracker
+    from demo.agent.local_agent import LocalHybridDecisionAgent
+    from demo.run_hif_local import build_local_hif_runner
+    from demo.schemas import BoundingBox, LegalAction, RecognizedCard, RecognizedDrink, ScreenObservation
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    rec = LiveScreenRecognizer()
+    try:
+        h, w = 1600, 720
+        frame = np.full((h, w, 3), 24, dtype=np.uint8)
+        frame[int(h * 0.145) : int(h * 0.345), int(w * 0.02) : int(w * 0.98)] = 240
+        cols = ((0.112, 0.278), (0.322, 0.488), (0.532, 0.698), (0.742, 0.908))
+        rows = (
+            (0.402, 0.476),
+            (0.496, 0.568),
+            (0.589, 0.662),
+            (0.684, 0.756),
+            (0.776, 0.849),
+        )
+        for r_i, (y1f, y2f) in enumerate(rows):
+            for c_i, (x1f, x2f) in enumerate(cols):
+                if r_i == 4 and c_i >= 2:
+                    frame[int(h * y1f) : int(h * y2f), int(w * x1f) : int(w * x2f)] = 88
+                else:
+                    frame[int(h * y1f) : int(h * y2f), int(w * x1f) : int(w * x2f)] = [215, 195, 225]
+        frame[int(h * 0.91) : int(h * 0.96), int(w * 0.52) : int(w * 0.90)] = [245, 145, 45]
+
+        def _fake_ocr(arr):
+            if arr.shape[0] == h and arr.shape[1] == w:
+                return {
+                    "text": "チェンジ\n天賦の才+\nランダムな山札か捨札にあるスキルカードを山札の一番上に移動\n強化確認\nカスタマイズ確認\nチェンジするスキルカードを選択してください\nキャンセル\nチェンジ",
+                    "lines": [
+                        {"text": "チェンジ", "bbox": [55, 26, 210, 62]},
+                        {"text": "天賦の才+", "bbox": [195, 265, 440, 305]},
+                        {"text": "ランダムな山札か捨札にあるスキルカードを山札の一番上に移動", "bbox": [195, 360, 660, 405]},
+                        {"text": "強化確認", "bbox": [45, 430, 165, 462]},
+                        {"text": "カスタマイズ確認", "bbox": [45, 488, 175, 518]},
+                        {"text": "チェンジするスキルカードを選択してください", "bbox": [110, 585, 610, 620]},
+                        {"text": "キャンセル", "bbox": [110, 1468, 290, 1510]},
+                        {"text": "チェンジ", "bbox": [455, 1468, 610, 1510]},
+                    ],
+                }
+            return {
+                "text": "鳴り止まない拍手\n集中+4\n好調2ターン",
+                "lines": [
+                    {"text": "鳴り止まない拍手", "bbox": [195, 40, 440, 75]},
+                    {"text": "集中+4", "bbox": [210, 95, 340, 125]},
+                ],
+            }
+
+        monkeypatch.setattr(rec.ocr, "recognize_array", _fake_ocr)
+        obs = rec.recognize(frame, plan="sense")
+        assert obs.scene_type == "card_reward"
+        assert obs.options[0]["name"] == "チェンジする", f"Expected チェンジする, got {obs.options[0]}"
+        grid_slots = [o for o in obs.options if str(o.get("name", "")).startswith("预览第")]
+        assert len(grid_slots) == 18, f"Expected all 18 selectable slots (not truncated at 16), got {len(grid_slots)}"
+        row0_col3 = [o for o in grid_slots if o["bbox"]["ymin"] < int(h * 0.45) and o["bbox"]["xmin"] > int(w * 0.70)]
+        assert row0_col3, "Missing top-right slot with corrected X/Y coordinates"
+    finally:
+        rec.db.close()
+
+    db = GakumasDB("gakumas_library.db")
+    agent = LocalHybridDecisionAgent(db=db)
+    try:
+        assert get_idol_stat_order(163, db=db) == ("vocal", "visual", "dance")
+        assert get_idol_stat_order(139, db=db) == ("visual", "dance", "vocal")
+
+        tr = GameStateTracker(plan="sense")
+        tr.p_idol_id = 139
+        tr.produce_deck = [814, 161, 159, 75, 105]
+        agent.bind_tracker(tr)
+        _b = BoundingBox(xmin=0, ymin=0, xmax=100, ymax=100)
+        shop_obs = ScreenObservation(
+            scene_type="shop",
+            week=6,
+            p_points=260,
+            raw_text="相談 強化 100 削除 125 終了",
+        )
+        shop_acts = [
+            LegalAction(choice_id=0, action_type="pick_option", description="強化", bbox=_b, payload={"name": "強化", "shop_slot_key": "強化", "price": 100}),
+            LegalAction(choice_id=1, action_type="pick_option", description="削除", bbox=_b, payload={"name": "削除", "shop_slot_key": "削除", "price": 125}),
+            LegalAction(choice_id=2, action_type="pick_option", description="終了", bbox=_b, payload={"name": "終了", "shop_slot_key": "終了"}),
+        ]
+        d_shop = agent.decide("", shop_acts, obs=shop_obs)
+        assert d_shop.choice_id == 1, f"First shop must probe 削除 once even without tracked #23, got {d_shop}"
+
+        del_obs = ScreenObservation(
+            scene_type="card_reward",
+            week=6,
+            raw_text="削除\n表現の基本\n強化確認\nカスタマイズ確認",
+        )
+        del_acts = [
+            LegalAction(choice_id=0, action_type="pick_option", description="削除する 表現の基本", bbox=_b, payload={"name": "削除する", "card_id": 44, "slot_idx": 0, "title": "表現の基本"}),
+            LegalAction(choice_id=1, action_type="pick_option", description="预览第2张待选卡", bbox=_b, payload={"name": "预览第2张待选卡", "slot_idx": 1, "title": "暗灰卡"}),
+            LegalAction(choice_id=2, action_type="pick_option", description="キャンセル", bbox=_b, payload={"name": "キャンセル"}),
+        ]
+        d_del = agent.decide("", del_acts, obs=del_obs)
+        assert d_del.choice_id == 1, f"Should scan slot 1 for untracked T card before deleting #44, got {d_del}"
+
+        # 5-card hand cap hard guard on drink #22 even when only 4 cards OCR'd
+        obs_5slots = ScreenObservation(
+            scene_type="battle_turn",
+            week=7,
+            turn=2,
+            turns_remaining=10,
+            stamina=40,
+            max_stamina=50,
+            hand_slot_count=5,
+            cards=[
+                RecognizedCard(card_id=86, name="シュプレヒコール", playable=True, bbox=_b),
+                RecognizedCard(card_id=814, name="自然体の魅力+", playable=True, bbox=_b),
+                RecognizedCard(card_id=162, name="国民的アイドル", playable=True, bbox=_b),
+                RecognizedCard(card_id=294, name="スポットライト", playable=True, bbox=_b),
+            ],
+            drinks=[RecognizedDrink(drink_id=22, name="初星黒酢", playable=True, bbox=_b)],
+        )
+        acts_5slots = [
+            LegalAction(choice_id=0, action_type="play_card", description="シュプレヒコール", bbox=_b, payload={"card_id": 86, "name": "シュプレヒコール"}),
+            LegalAction(choice_id=1, action_type="play_card", description="自然体の魅力+", bbox=_b, payload={"card_id": 814, "name": "自然体の魅力+"}),
+            LegalAction(choice_id=2, action_type="play_card", description="国民的アイドル", bbox=_b, payload={"card_id": 162, "name": "国民的アイドル"}),
+            LegalAction(choice_id=3, action_type="play_card", description="スポットライト", bbox=_b, payload={"card_id": 294, "name": "スポットライト"}),
+            LegalAction(choice_id=4, action_type="use_drink", description="使用饮料: 初星黒酢", bbox=_b, payload={"drink_id": 22, "name": "初星黒酢"}),
+            LegalAction(choice_id=5, action_type="end_turn", description="SKIP", bbox=_b, payload={"name": "SKIP"}),
+        ]
+        cid_5, r_5, _ = agent.battle_planner.decide_battle_action(obs_5slots, acts_5slots, tracker=tr)
+        assert cid_5 != 4, f"Must NEVER drink #22 when hand_slot_count==5, got {cid_5} ({r_5})"
+    finally:
+        agent.close()
+        db.close()
+
+    cfg_file = tmp_path / "web_cfg.json"
+    cfg_file.write_text(
+        json.dumps(
+            {
+                "initial_loadout_captured": False,
+                "p_idol_id": 139,
+                "plan": "sense",
+                "deck_ids": [812, 814],
+                "card_memory_hooks": {"75": {"extra_use_limit": 2}, "593": {"exiles_trouble_on_play": True}},
+                "preferences": {
+                    "priority_card_ids": [161, 159, 75],
+                    "avoid_card_ids": [169, 115],
+                    "keep_card_ids": [147, 159, 161],
+                    "banned_drink_ids": [19, 1, 2],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    r = build_local_hif_runner(initial_library=str(cfg_file))
+    try:
+        assert r.plan == "sense"
+        assert r.p_idol_id == 139
+        assert r.loadout_scanner is not None
+        assert r.tracker.initial_loadout_captured is False
+        assert 75 in r.tracker.card_memory_hooks and 593 in r.tracker.card_memory_hooks
+        assert r.agent.preferences.priority_card_ids == [161, 159, 75]
+        assert r.agent.preferences.banned_drink_ids == [19, 1, 2]
+    finally:
+        r.agent.close()
+        if r.loadout_scanner is not None:
+            r.loadout_scanner.close()
+        r.db.close()
+
+
+def test_w6_shop_tooltip_does_not_hijack_upgrade_delete_and_sense_orange_cards_detected(monkeypatch):
+    """Real-ADB regression tests discovered during live8 run on 127.0.0.1:16384:
+    1) W6 相談 white tooltip '持っているスキルカードの強化や削除ができます。' at y=1040..1073 must NOT
+       hijack 強化/削除 click bboxes; visual fallback must target the vivid pink 強化 & blue 削除
+       buttons at y=1088..1168 (center y~1128) and parse price from noisy OCR like '′⑨125'.
+    2) Sense 3-card reward icons with orange silhouettes on white backgrounds must NOT be erased by
+       is_orange_halo or falsely marked selected when no exterior orange bracket exists.
+    """
+    import numpy as np
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    rec = LiveScreenRecognizer()
+    try:
+        # 1. W6 相談 frame with white tooltip banner at y=1040..1073 + pink 強化 & blue 削除 buttons at y=1090..1168
+        h, w = 1600, 720
+        shop_frame = np.full((h, w, 3), 215, dtype=np.uint8)
+        # White tooltip pill
+        shop_frame[1035:1078, 90:630] = [235, 230, 222]
+        # Vivid pink-orange 強化 button (left)
+        shop_frame[1090:1168, 50:353] = [245, 175, 150]
+        # Vivid purple-blue 削除 button (right)
+        shop_frame[1090:1168, 366:670] = [160, 195, 238]
+
+        shop_lines = [
+            {"text": "相談", "bbox": [70, 35, 150, 70]},
+            {"text": "持っているスキルカードの強化や削除が0ます。", "bbox": [118, 1040, 590, 1073]},
+            {"text": "′⑨125", "bbox": [188, 1120, 293, 1140]},
+            {"text": "′⑨125", "bbox": [520, 1120, 625, 1140]},
+            {"text": "交換する", "bbox": [327, 1232, 435, 1258]},
+            {"text": "終了", "bbox": [585, 1230, 680, 1264]},
+        ]
+        meta_shop = {
+            "week": 6,
+            "total_weeks": 9,
+            "week_label": "6日目",
+            "stats": {"vocal": 1400, "dance": 1800, "visual": 2400},
+            "p_points": 300,
+            "stamina": 36,
+            "max_stamina": 44,
+            "drinks": [],
+        }
+        monkeypatch.setattr(rec.ocr, "recognize_array", lambda _arr: {"text": "", "lines": []})
+        monkeypatch.setattr(rec.en_ocr, "recognize_array", lambda _arr: {"text": "", "lines": []})
+        obs_shop = rec._parse_shop_screen(shop_frame, shop_lines, "sense", meta_shop)
+        assert obs_shop.scene_type == "shop"
+        by_name = {o["name"]: o for o in obs_shop.options}
+        assert "強化" in by_name and "削除" in by_name
+        upg_cy = (by_name["強化"]["bbox"]["ymin"] + by_name["強化"]["bbox"]["ymax"]) // 2
+        del_cy = (by_name["削除"]["bbox"]["ymin"] + by_name["削除"]["bbox"]["ymax"]) // 2
+        assert 1090 <= upg_cy <= 1168, f"強化 center y={upg_cy} missed real pink button (1090..1168)!"
+        assert 1090 <= del_cy <= 1168, f"削除 center y={del_cy} missed real blue button (1090..1168)!"
+        assert by_name["強化"].get("price") == 125
+        assert by_name["削除"].get("price") == 125
+
+        # 2. Sense 3-card reward modal with orange artwork on white cards and NO selection bracket
+        rew_frame = np.full((h, w, 3), 255, dtype=np.uint8)
+        for x1, x2 in ((157, 285), (296, 424), (435, 563)):
+            # Thin border + pure orange interior artwork (R=245, G=150, B=55)
+            rew_frame[1005:1140, x1:x2] = [252, 252, 252]
+            rew_frame[1020:1120, x1 + 20 : x2 - 20] = [245, 150, 55]
+        slots = rec._scan_reward_slot_band(rew_frame, w, h, int(h * 0.625), int(h * 0.718))
+        assert len(slots) == 3, f"Expected all 3 Sense orange-artwork slots, got {slots}"
+        assert not any(s[4] for s in slots), f"No slot should be marked selected without exterior brackets: {slots}"
+    finally:
+        rec.db.close()
+
+
+def test_shop_red_price_clamps_stale_p_points_and_refresh_noop_prevents_loop(monkeypatch):
+    """Regression test for shop stall at low P-points (e.g. 155 -> 5P):
+    1) Red unaffordable prices on the grid or リフレッシュ pill clamp stale p_pts (< price) and hide disabled リフレッシュ.
+    2) If clicking リフレッシュ does not reduce p_pts on the next shop frame, LocalHybridDecisionAgent marks リフレッシュ
+       as no-op instead of resetting _shop_noop_features/_customize_done_count into an infinite loop.
+    """
+    import numpy as np
+    from demo.core.db import GakumasDB
+    from demo.agent.local_agent import LocalHybridDecisionAgent
+    from demo.schemas import BoundingBox, LegalAction, ScreenObservation
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    rec = LiveScreenRecognizer()
+    try:
+        h, w = 1600, 720
+        frame = np.full((h, w, 3), 235, dtype=np.uint8)
+        # Grayed-out リフレッシュ pill at y=0.754..0.779 + red '20' price digits right underneath it
+        frame[int(h * 0.754) : int(h * 0.779), int(w * 0.026) : int(w * 0.276)] = [190, 190, 190]
+        frame[int(h * 0.782) : int(h * 0.802), int(w * 0.12) : int(w * 0.22)] = [235, 60, 65]
+        lines = [
+            {"text": "インターバル", "bbox": [45, 30, 190, 65]},
+            {"text": "リフレッシュ", "bbox": [35, 1212, 185, 1242]},
+            {"text": "20", "bbox": [110, 1255, 165, 1280]},
+            {"text": "カスタマイズ", "bbox": [350, 1065, 520, 1105]},
+            {"text": "終了", "bbox": [585, 1225, 680, 1265]},
+        ]
+        meta_stale = {
+            "week": 8,
+            "total_weeks": 9,
+            "week_label": "8日目",
+            "stats": {"vocal": 1400, "dance": 1800, "visual": 2400},
+            "p_points": 155,  # stale pre-spend P-points
+            "stamina": 44,
+            "max_stamina": 44,
+            "drinks": [],
+        }
+        monkeypatch.setattr(rec.ocr, "recognize_array", lambda _arr: {"text": "", "lines": []})
+        monkeypatch.setattr(rec.en_ocr, "recognize_array", lambda _arr: {"text": "", "lines": []})
+        obs = rec._parse_shop_screen(frame, lines, "sense", meta_stale)
+        assert obs.p_points <= 19, f"Red 20P refresh price must clamp stale 155P to <=19, got {obs.p_points}"
+        assert "リフレッシュ" not in [o.get("name") for o in obs.options]
+    finally:
+        rec.db.close()
+
+    db = GakumasDB("gakumas_library.db")
+    agent = LocalHybridDecisionAgent(db=db)
+    try:
+        _b = BoundingBox(xmin=0, ymin=0, xmax=100, ymax=100)
+        shop_obs = ScreenObservation(
+            scene_type="shop",
+            week=8,
+            total_weeks=9,
+            scenario_id="hif_honsen",
+            p_points=155,
+            raw_text="インターバル リフレッシュ 20 終了",
+        )
+        acts = [
+            LegalAction(choice_id=0, action_type="pick_option", description="リフレッシュ 20P", bbox=_b, payload={"name": "リフレッシュ", "shop_slot_key": "リフレッシュ", "price": 20}),
+            LegalAction(choice_id=1, action_type="pick_option", description="終了", bbox=_b, payload={"name": "終了", "shop_slot_key": "終了"}),
+        ]
+        d1 = agent.decide("", acts, obs=shop_obs)
+        assert d1.choice_id == 0
+        # Repeated unchanged-p_points refresh frames => disabled/no-op refresh is blocked and exits!
+        _ = agent.decide("", acts, obs=shop_obs)
+        _ = agent.decide("", acts, obs=shop_obs)
+        d4 = agent.decide("", acts, obs=shop_obs)
+        assert d4.choice_id == 1, f"Must exit after repeated no-op refresh instead of looping, got {d4}"
+        assert "リフレッシュ" in agent._shop_noop_features
+    finally:
+        agent.close()
+        db.close()
+
+
+def test_free_action_card_protected_and_avoid_scan_and_battle_unconfirmed_play_guard(monkeypatch):
+    """Regression tests for:
+    1) Free-action Active card #87 シュプレヒコール+ (スキルカード使用数追加+1) is protected during チェンジ
+       (never treated as ordinary throwaway Active card).
+    2) During チェンジ when user avoid_card_ids (#81 祝福+) is in deck, agent keeps scanning past weak cards
+       until it locates the avoided card (+5000).
+    3) Post-Battle-1 W8 shop prioritizes カスタマイズ & Pドリンク over 強化.
+    4) If a live battle play_card tap is swallowed by an animation (hand pixels unchanged even after retry),
+       GakumasRunner does NOT call tracker.record_card_play() so limit_count=1 cards aren't falsely exhausted.
+    """
+    import numpy as np
+    from demo.core.db import GakumasDB
+    from demo.core.hif_catalog import ProducePreferences
+    from demo.core.tracker import GameStateTracker
+    from demo.agent.local_agent import LocalHybridDecisionAgent
+    from demo.maa_bridge.adb_controller import AdbController
+    from demo.maa_bridge.runner import GakumasRunner
+    from demo.schemas import BoundingBox, DecisionResult, LegalAction, RecognizedCard, ScreenObservation
+
+    db = GakumasDB("gakumas_library.db")
+    prefs = ProducePreferences(
+        avoid_card_ids=[81],
+        keep_card_ids=[147, 159, 161, 812, 814],
+    )
+    agent = LocalHybridDecisionAgent(db=db, preferences=prefs)
+    try:
+        tr = GameStateTracker(plan="sense", p_idol_id=139, scenario_id="hif_honsen")
+        tr.produce_deck = [812, 814, 87, 81, 68]
+        agent.bind_tracker(tr)
+
+        # 1. #87 シュプレヒコール+ must have strongly negative removal score during チェンジ
+        s87 = agent._score_skill_card(
+            card_id=87,
+            title="シュプレヒコール+",
+            desc="集中消費2 / パラメータ+6 / 好調3ターン / スキルカード使用数追加+1 / 重複不可",
+            target_effect="goodConditionTurns",
+            guide=None,
+            plan="sense",
+            for_removal=True,
+            p_idol_id=139,
+            ignore_upgrade=True,
+        )
+        assert s87 < -1_000, f"#87 シュプレヒコール+ (free extra action) must be protected, got {s87}"
+
+        # 2. During チェンジ with #81 (avoid_card_ids) in deck, seeing weak #68 (+1100) must NOT confirm yet;
+        #    must scan slot 1 to find #81 (+5000)!
+        _b = BoundingBox(xmin=0, ymin=0, xmax=100, ymax=100)
+        chg_obs = ScreenObservation(scene_type="card_reward", plan="sense", week=1, raw_text="チェンジするスキルカードを選択してください")
+        chg_acts = [
+            LegalAction(choice_id=0, action_type="pick_option", description="チェンジする #68", bbox=_b, payload={"name": "チェンジする", "card_id": 68, "slot_idx": 0, "title": "トークタイム"}),
+            LegalAction(choice_id=1, action_type="pick_option", description="预览第2张待选卡", bbox=_b, payload={"name": "预览第2张待选卡", "slot_idx": 1}),
+            LegalAction(choice_id=2, action_type="pick_option", description="キャンセル", bbox=_b, payload={"name": "キャンセル"}),
+        ]
+        d_chg = agent.decide("", chg_acts, obs=chg_obs)
+        assert d_chg.choice_id == 1, f"Must keep scanning for avoid_card_ids #81 instead of stopping on #68, got {d_chg}"
+
+        # 3. W8 final shop fills all 4 drinks FIRST before allowing カスタマイズ; once 4/4 drinks full, カスタマイズ > 強化
+        w8_obs = ScreenObservation(scene_type="shop", plan="sense", scenario_id="hif_honsen", week=8, p_points=300, drinks=[])
+        w8_acts = [
+            LegalAction(choice_id=0, action_type="pick_option", description="強化 100P", bbox=_b, payload={"name": "強化", "shop_slot_key": "強化", "price": 100}),
+            LegalAction(choice_id=1, action_type="pick_option", description="Pドリンク1 75P", bbox=_b, payload={"name": "Pドリンク1", "shop_slot_key": "Pドリンク:0", "price": 75}),
+            LegalAction(choice_id=2, action_type="pick_option", description="カスタマイズ", bbox=_b, payload={"name": "カスタマイズ", "shop_slot_key": "カスタマイズ"}),
+            LegalAction(choice_id=3, action_type="pick_option", description="終了", bbox=_b, payload={"name": "終了"}),
+        ]
+        assert agent.decide("", w8_acts, obs=w8_obs).choice_id == 1
+        agent._shop_clicked_slots.clear()
+        agent._shop_noop_features.clear()
+        w8_obs_4 = w8_obs.model_copy(
+            update={
+                "drinks": [
+                    RecognizedDrink(drink_id=22, name="初星黒酢", bbox=_b),
+                    RecognizedDrink(drink_id=18, name="プロテイン", bbox=_b),
+                    RecognizedDrink(drink_id=14, name="センブリソーダ", bbox=_b),
+                    RecognizedDrink(drink_id=12, name="ブーストエキス", bbox=_b),
+                ]
+            }
+        )
+        assert agent.decide("", w8_acts, obs=w8_obs_4).choice_id == 2
+        agent._shop_clicked_slots.clear()
+        agent._shop_noop_features.clear()
+        assert agent.decide("", [w8_acts[0], w8_acts[1], w8_acts[3]], obs=w8_obs).choice_id == 1
+    finally:
+        agent.close()
+
+    # 4. Swallowed battle play_card tap (identical hand pixels before & after tap) must NOT exhaust limit_count=1 card
+    static_frame = np.full((1600, 720, 3), 200, dtype=np.uint8)
+
+    class _StaticAdbCtrl(AdbController):
+        def __init__(self):
+            super().__init__()
+            self._connected = True
+            self.clicks = []
+
+        def connect(self):
+            return True
+
+        def disconnect(self):
+            return None
+
+        def screencap(self):
+            return static_frame.copy()
+
+        def click(self, x: int, y: int) -> bool:
+            self.clicks.append((x, y))
+            return True
+
+    class _StubReco:
+        def recognize(self, _frame):
+            return ScreenObservation(
+                scene_type="battle_turn",
+                plan="sense",
+                week=7,
+                turn=4,
+                turns_remaining=6,
+                stamina=30,
+                max_stamina=44,
+                cards=[
+                    RecognizedCard(
+                        card_id=113,
+                        name="始まりの合図+",
+                        playable=True,
+                        visual_playable=True,
+                        bbox=BoundingBox(xmin=150, ymin=1240, xmax=260, ymax=1400),
+                    )
+                ],
+                options=[{"choice_id": 0, "name": "SKIP", "bbox": {"xmin": 580, "ymin": 1460, "xmax": 700, "ymax": 1540}}],
+            )
+
+    class _StubAgent:
+        def bind_tracker(self, _t):
+            pass
+
+        def decide(self, **_kw):
+            return DecisionResult(choice_id=0, reason="play #113", source="test")
+
+        def notify_battle_action(self, act):
+            notified.append(act)
+
+    notified = []
+    monkeypatch.setattr("demo.maa_bridge.runner.time.sleep", lambda *_a, **_kw: None)
+    ctrl = _StaticAdbCtrl()
+    runner = GakumasRunner(
+        mode="adb",
+        controller=ctrl,
+        agent=_StubAgent(),
+        db=db,
+        plan="sense",
+        scenario_id="hif_honsen",
+        p_idol_id=139,
+    )
+    runner.scene_routing_reco = _StubReco()
+    runner.tracker.produce_deck = [113]
+    try:
+        res = runner.run_once()
+        assert res.success
+        assert 113 not in runner.tracker.used_limit_cards, "Unconfirmed/swallowed card tap must NOT mark #113 exhausted!"
+        assert len(notified) == 0, "Unconfirmed/swallowed card tap must NOT advance battle simulator!"
+        assert len(ctrl.clicks) >= 3, f"Expected initial double-tap + animation retry click, got {len(ctrl.clicks)}"
+    finally:
+        db.close()
+
+
+def test_reward_antistall_cancels_instead_of_sacrificing_signature_card_and_scanner_no_bounce_dup(monkeypatch):
+    """Regression test for live10 W4 Step 97:
+    1) On チェンジ/削除 screens, GakumasRunner's reward anti-stall cap (now >=30 steps) must force キャンセル,
+       NEVER blindly click チェンジする on a protected signature card (#812 お姉さんの感覚+).
+    2) HifLoadoutScanner must not add +520px when bottom-of-list elastic bounce returns dy < 0 with high corr.
+    """
+    import numpy as np
+    from demo.core.db import GakumasDB
+    from demo.maa_bridge.mock_controller import MockController
+    from demo.maa_bridge.runner import GakumasRunner
+    from demo.schemas import BoundingBox, DecisionResult, ScreenObservation
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        class _ChangeStubReco:
+            def recognize(self, _frame):
+                return ScreenObservation(
+                    scene_type="card_reward",
+                    plan="sense",
+                    week=4,
+                    raw_text="チェンジするスキルカードを選択してください\nお姉さんの感覚+",
+                    options=[
+                        {"choice_id": 0, "name": "チェンジする", "card_id": 812, "title": "确认换出: お姉さんの感覚+", "bbox": {"xmin": 400, "ymin": 1440, "xmax": 620, "ymax": 1520}},
+                        {"choice_id": 1, "name": "预览第2张待选卡", "slot_idx": 1, "title": "预览第2张待选卡", "bbox": {"xmin": 240, "ymin": 640, "xmax": 350, "ymax": 760}},
+                        {"choice_id": 2, "name": "キャンセル", "title": "キャンセル", "bbox": {"xmin": 100, "ymin": 1440, "xmax": 300, "ymax": 1520}},
+                    ],
+                )
+
+        class _ScanAgent:
+            def bind_tracker(self, _t):
+                pass
+
+            def decide(self, **_kw):
+                return DecisionResult(choice_id=1, reason="keep scanning", source="test")
+
+        runner = GakumasRunner(
+            mode="mock",
+            controller=MockController(),
+            agent=_ScanAgent(),
+            db=db,
+            plan="sense",
+            scenario_id="hif_honsen",
+            p_idol_id=139,
+        )
+        runner.scene_routing_reco = _ChangeStubReco()
+        # At step 21 (< 30), anti-stall must NOT trigger yet
+        runner._reward_step_count = 20
+        r21 = runner.run_once()
+        assert r21.action_taken is not None
+        assert r21.action_taken.payload.get("name") == "预览第2张待选卡"
+
+        # At step 31 (>= 30), anti-stall MUST choose キャンセル (NEVER チェンジする on #812!)
+        runner._reward_step_count = 30
+        r31 = runner.run_once()
+        assert r31.action_taken is not None
+        assert r31.action_taken.payload.get("name") == "キャンセル", f"Expected キャンセル on anti-stall, got {r31.action_taken}"
+    finally:
+        db.close()
+
+
+def test_live11_six_fixes_shop_custom_seishintouitsu_combo163_814_memory_free():
+    """Regression suite for all 6 live11 fixes:
+    1. W6 相談 prioritized over 休む when trouble in deck / >=125P
+    2. Customized card (is_customized=True) hard-protected from チェンジ even on same-card swap
+    3. W8 インターバル blocks カスタマイズ/強化 while held drinks < 4 and drinks or refresh available
+    4. #751 精神統一 (if:goodConditionTurns<=15) penalized on pickup & removable on 好調 idol (#139) + 授業 prefers 好調 over 集中
+    5. Mid-battle #22 移動 modal does NOT reset battle planner + #163->#814 forced combo on rem<=2
+    6. Configured free_extra_use_first_play memory hook card is prioritized over non-free cards
+    """
+    from demo.core.tracker import GameStateTracker
+    db = GakumasDB("gakumas_library.db")
+    _b = BoundingBox(xmin=0, ymin=0, xmax=100, ymax=100)
+    try:
+        tracker = GameStateTracker(p_idol_id=139, plan="sense", scenario_id="hif_honsen")
+        tracker.produce_deck = [812, 814, 163, 295, 75, 23]
+        tracker.card_memory_hooks = {
+            75: {"free_extra_use_first_play": True, "extra_use_limit": 2, "draw_on_play": 0},
+        }
+        agent = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=8, ismcts_simulations=4),
+        )
+        agent.tracker = tracker
+        try:
+            # 1. W6 schedule chooses 相談 over 休む when trouble is in deck (HP=18/44)
+            w6_obs = ScreenObservation(
+                scene_type="produce_schedule",
+                plan="sense",
+                scenario_id="hif_honsen",
+                week=6,
+                stamina=18,
+                max_stamina=44,
+                p_points=380,
+            )
+            w6_acts = [
+                LegalAction(choice_id=0, action_type="pick_option", description="相談", bbox=_b, payload={"name": "相談"}),
+                LegalAction(choice_id=1, action_type="pick_option", description="おでかけ", bbox=_b, payload={"name": "おでかけ"}),
+                LegalAction(choice_id=2, action_type="pick_option", description="休む", bbox=_b, payload={"name": "休む"}),
+            ]
+            assert agent.decide("", w6_acts, obs=w6_obs).choice_id == 0
+
+            # 2. Customized #295 スポットライト+ MUST NOT be swapped even on same-card チェンジ
+            agent._came_from_change_pickup = True
+            agent._pending_change_gain_card_id = 294
+            agent._pending_change_gain_base_id = 294
+            s295_cust = agent._score_skill_card(
+                card_id=295,
+                title="スポットライト+",
+                desc="好調9ターン 【已加点强化(カスタマイズ済)】",
+                target_effect="goodConditionTurns",
+                guide=None,
+                plan="sense",
+                for_removal=True,
+                p_idol_id=139,
+                has_removable_unwanted=False,
+                check_same_card=True,
+                ignore_upgrade=True,
+                is_customized=True,
+            )
+            assert s295_cust <= -15_000, f"Customized card must be hard-protected from swap, got {s295_cust}"
+            agent._came_from_change_pickup = False
+            agent._pending_change_gain_card_id = None
+            agent._pending_change_gain_base_id = None
+
+            # 3. W8 インターバル blocks カスタマイズ & refreshes for drinks when <4 drinks & no drink on shelf
+            w8_no_drink_obs = ScreenObservation(
+                scene_type="shop",
+                plan="sense",
+                scenario_id="hif_honsen",
+                week=8,
+                p_points=300,
+                drinks=[RecognizedDrink(drink_id=22, name="初星黒酢", bbox=_b)],
+            )
+            w8_acts_ref = [
+                LegalAction(choice_id=0, action_type="pick_option", description="カスタマイズ", bbox=_b, payload={"name": "カスタマイズ", "shop_slot_key": "カスタマイズ"}),
+                LegalAction(choice_id=1, action_type="pick_option", description="リフレッシュ (10P)", bbox=_b, payload={"name": "リフレッシュ", "shop_slot_key": "リフレッシュ", "price": 10}),
+                LegalAction(choice_id=2, action_type="pick_option", description="強化 (100P)", bbox=_b, payload={"name": "強化", "shop_slot_key": "強化", "price": 100}),
+                LegalAction(choice_id=3, action_type="pick_option", description="終了", bbox=_b, payload={"name": "終了"}),
+            ]
+            assert agent.decide("", w8_acts_ref, obs=w8_no_drink_obs).choice_id == 1
+
+            # 4. #751 精神統一 is penalized on pickup and removable on 好調 idol (#139); 授業 event prefers 好調 over 集中
+            s751_pick = agent._score_skill_card(
+                card_id=751,
+                title="精神統一",
+                desc="集中+5 / 好調が15ターン以下の場合、集中強化20%",
+                target_effect="goodConditionTurns",
+                guide=None,
+                plan="sense",
+                for_removal=False,
+                p_idol_id=139,
+            )
+            s751_rem = agent._score_skill_card(
+                card_id=751,
+                title="精神統一",
+                desc="集中+5 / 好調が15ターン以下の場合、集中強化20%",
+                target_effect="goodConditionTurns",
+                guide=None,
+                plan="sense",
+                for_removal=True,
+                p_idol_id=139,
+            )
+            assert s751_pick < 0, f"#751 精神統一 should be penalized on 好調 idol, got {s751_pick}"
+            assert s751_rem > 0, f"#751 精神統一 should be removable on 好調 idol, got {s751_rem}"
+
+            ev_obs = ScreenObservation(scene_type="produce_event", plan="sense", week=1, week_activity="授業")
+            ev_acts = [
+                LegalAction(choice_id=0, action_type="pick_option", description="集中効果のスキルカードを獲得", bbox=_b, payload={"name": "集中"}),
+                LegalAction(choice_id=1, action_type="pick_option", description="好調効果のスキルカードを獲得", bbox=_b, payload={"name": "好調"}),
+            ]
+            assert agent.decide("", ev_acts, obs=ev_obs, p_idol_id=139).choice_id == 1
+
+            # 5. Mid-battle #22 移動 modal must NOT reset battle_planner, and #163->#814 fires on rem=2 even with #776 in hand
+            b_obs_rem2 = ScreenObservation(
+                scene_type="battle_turn",
+                plan="sense",
+                scenario_id="hif_honsen",
+                week=9,
+                turn=11,
+                turns_remaining=2,
+                stamina=41,
+                max_stamina=44,
+                score=104198,
+                buffs={"goodConditionTurns": 82, "concentration": 24, "perfectConditionTurns": 10},
+                cards=[
+                    RecognizedCard(card_id=776, name="話題沸騰+", playable=True, visual_playable=True, bbox=_b),
+                    RecognizedCard(card_id=814, name="自然体の魅力+", playable=True, visual_playable=True, bbox=_b),
+                    RecognizedCard(card_id=163, name="国民的アイドル+", playable=True, visual_playable=True, bbox=_b),
+                ],
+                drinks=[],
+            )
+            b_acts_rem2 = [
+                LegalAction(choice_id=0, action_type="play_card", description="打出卡牌: 話題沸騰+", bbox=_b, payload={"card_id": 776, "name": "話題沸騰+"}),
+                LegalAction(choice_id=1, action_type="play_card", description="打出卡牌: 自然体の魅力+", bbox=_b, payload={"card_id": 814, "name": "自然体の魅力+"}),
+                LegalAction(choice_id=2, action_type="play_card", description="打出卡牌: 国民的アイドル+ [⚡免费+1使用次数(不耗行动点)]", bbox=_b, payload={"card_id": 163, "name": "国民的アイドル+"}),
+                LegalAction(choice_id=3, action_type="end_turn", description="SKIP", bbox=_b, payload={}),
+            ]
+            d_combo = agent.decide("", b_acts_rem2, obs=b_obs_rem2, p_idol_id=139)
+            assert d_combo.choice_id == 2, f"Expected #163 before #814 at rem=2, got {d_combo}"
+            assert agent.battle_planner._sim is not None
+            # Mid-battle #22 移動 modal must preserve active battle_planner._sim!
+            move_obs = ScreenObservation(scene_type="card_reward", plan="sense", week=9, raw_text="移動 スキルカードが選択されていません")
+            move_acts = [
+                LegalAction(choice_id=0, action_type="pick_option", description="点击预览并选中该卡库技能卡加入手牌", bbox=_b, payload={"name": "待选卡1", "slot_idx": 0}),
+            ]
+            agent.decide("", move_acts, obs=move_obs, p_idol_id=139)
+            assert agent.battle_planner._sim is not None, "Mid-battle #22 移動 modal must NOT reset battle_planner!"
+
+            # 6. Configured memory free_extra_use_first_play (#75 アドリブ+) must be played over non-free cards
+            b_obs_mem = ScreenObservation(
+                scene_type="battle_turn",
+                plan="sense",
+                scenario_id="hif_honsen",
+                week=9,
+                turn=5,
+                turns_remaining=6,
+                stamina=40,
+                max_stamina=44,
+                score=10000,
+                buffs={"goodConditionTurns": 20, "concentration": 10},
+                cards=[
+                    RecognizedCard(card_id=75, name="アドリブ+", playable=True, visual_playable=True, bbox=_b),
+                    RecognizedCard(card_id=295, name="スポットライト+", playable=True, visual_playable=True, bbox=_b),
+                ],
+                drinks=[],
+            )
+            b_acts_mem = [
+                LegalAction(choice_id=0, action_type="play_card", description="打出卡牌: アドリブ+", bbox=_b, payload={"card_id": 75, "name": "アドリブ+"}),
+                LegalAction(choice_id=1, action_type="play_card", description="打出卡牌: スポットライト+", bbox=_b, payload={"card_id": 295, "name": "スポットライト+"}),
+                LegalAction(choice_id=2, action_type="end_turn", description="SKIP", bbox=_b, payload={}),
+            ]
+            d_mem = agent.decide("", b_acts_mem, obs=b_obs_mem, p_idol_id=139)
+            assert d_mem.choice_id == 0, f"Expected memory free-action #75 アドリブ+ first, got {d_mem}"
+        finally:
+            agent.close()
+    finally:
+        db.close()
+
+
+def test_shop_buys_unowned_priority_card_above_drinks_and_skips_if_owned():
+    """User `priority_card_ids` on shop shelf must be bought ABOVE drinks unless deck already owns a copy."""
+    from demo.core.hif_catalog import ProducePreferences
+    from demo.core.tracker import GameStateTracker
+
+    db = GakumasDB("gakumas_library.db")
+    _b = BoundingBox(xmin=0, ymin=0, xmax=100, ymax=100)
+    try:
+        tracker = GameStateTracker(p_idol_id=139, plan="sense", scenario_id="hif_honsen")
+        tracker.produce_deck = [812, 814, 163, 295]
+        prefs = ProducePreferences(priority_card_ids=[105, 75])  # #105 大声援+ -> base #104
+        agent = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=8, ismcts_simulations=4),
+            preferences=prefs,
+        )
+        agent.tracker = tracker
+        try:
+            # 1. W8 shop with 0/4 drinks AND #104 大声援 (priority, unowned) + #80 祝福 (non-priority) + #22 初星黒酢
+            #    -> MUST select #104 大声援 BEFORE #22 初星黒酢!
+            w8_obs = ScreenObservation(
+                scene_type="shop",
+                plan="sense",
+                scenario_id="hif_honsen",
+                week=8,
+                p_points=580,
+                drinks=[],
+            )
+            shop_acts = [
+                LegalAction(choice_id=0, action_type="pick_option", description="スキルカード2 《祝福》 50P", bbox=_b, payload={"name": "スキルカード2", "shop_slot_key": "スキルカード:1", "card_id": 80, "price": 50}),
+                LegalAction(choice_id=1, action_type="pick_option", description="スキルカード3 《大声援》 50P", bbox=_b, payload={"name": "スキルカード3", "shop_slot_key": "スキルカード:2", "card_id": 104, "price": 50}),
+                LegalAction(choice_id=2, action_type="pick_option", description="Pドリンク3 《初星黒酢》 100P", bbox=_b, payload={"name": "Pドリンク3", "shop_slot_key": "Pドリンク:2", "drink_id": 22, "price": 100}),
+                LegalAction(choice_id=3, action_type="pick_option", description="カスタマイズ", bbox=_b, payload={"name": "カスタマイズ", "shop_slot_key": "カスタマイズ"}),
+                LegalAction(choice_id=4, action_type="pick_option", description="終了", bbox=_b, payload={"name": "終了"}),
+            ]
+            d1 = agent.decide("", shop_acts, obs=w8_obs)
+            assert d1.choice_id == 1, f"Expected priority card #104 above drink #22, got {d1}"
+
+            # 2. Active `交換する` for #104 -> MUST confirm exchange immediately!
+            ex_acts = [
+                LegalAction(choice_id=0, action_type="pick_option", description="交換する 《大声援》 (-50P)", bbox=_b, payload={"name": "交換する", "card_id": 104, "price": 50}),
+                LegalAction(choice_id=1, action_type="pick_option", description="Pドリンク3 《初星黒酢》 100P", bbox=_b, payload={"name": "Pドリンク3", "shop_slot_key": "Pドリンク:2", "drink_id": 22, "price": 100}),
+                LegalAction(choice_id=2, action_type="pick_option", description="終了", bbox=_b, payload={"name": "終了"}),
+            ]
+            d2 = agent.decide("", ex_acts, obs=w8_obs)
+            assert d2.choice_id == 0, f"Expected 交換する for #104, got {d2}"
+
+            # 3. Purchase confirmation popup -> MUST click 交換 (NOT キャンセル!) and record #104 in deck
+            pop_obs = ScreenObservation(scene_type="popup", plan="sense", week=8, raw_text="交換確認 50Pを消費して交換しますか？")
+            pop_acts = [
+                LegalAction(choice_id=0, action_type="pick_option", description="キャンセル", bbox=_b, payload={"name": "キャンセル"}),
+                LegalAction(choice_id=1, action_type="pick_option", description="交換", bbox=_b, payload={"name": "交換"}),
+            ]
+            d3 = agent.decide("", pop_acts, obs=pop_obs)
+            assert d3.choice_id == 1, f"Expected popup 交換 confirmation for priority card, got {d3}"
+            assert 104 in tracker.produce_deck
+
+            # 4. Once #104 is already in produce_deck, seeing #104/#105 again in shop MUST skip it and buy drink #22!
+            agent._shop_clicked_slots.clear()
+            agent._shop_attempted_card_ids.clear()
+            d4 = agent.decide("", shop_acts, obs=w8_obs.model_copy(update={"p_points": 530}))
+            assert d4.choice_id == 2, f"Once #104 is owned, must skip it and buy drink #22, got {d4}"
+        finally:
+            agent.close()
+    finally:
+        db.close()
+
+
 
 
 

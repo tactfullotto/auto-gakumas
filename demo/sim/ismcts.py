@@ -342,12 +342,28 @@ class ISMCTSAgent:
                             root_mask[a] = True
                         handled_armed_active = True
 
-            if not handled_armed_active and sim.card_uses_remaining == 1 and len(root_legal) > 1:
-                dom_aids = {
-                    a for a in root_legal
-                    if root_map.get(a, ("", -1))[0] == "card"
-                    and sim.is_safe_dominating_free_card(sim.hand[root_map[a][1]])
-                }
+            if not handled_armed_active and len(root_legal) > 1:
+                if sim.card_uses_remaining == 1:
+                    dom_aids = {
+                        a for a in root_legal
+                        if root_map.get(a, ("", -1))[0] == "card"
+                        and sim.is_safe_dominating_free_card(sim.hand[root_map[a][1]])
+                    }
+                else:
+                    # Even when card_uses_remaining > 1, never ignore an unused free memory extra-use card!
+                    dom_aids = {
+                        a for a in root_legal
+                        if root_map.get(a, ("", -1))[0] == "card"
+                        and sim.has_unused_memory_extra_use(sim.hand[root_map[a][1]])
+                        and sim.is_safe_dominating_free_card(sim.hand[root_map[a][1]])
+                    }
+                    if dom_aids:
+                        # Allow choosing among all safe dominating free cards (including memory extra-use) & drinks
+                        dom_aids |= {
+                            a for a in root_legal
+                            if root_map.get(a, ("", -1))[0] == "card"
+                            and sim.is_safe_dominating_free_card(sim.hand[root_map[a][1]])
+                        }
                 if dom_aids:
                     pruned_legal = [
                         a for a in root_legal

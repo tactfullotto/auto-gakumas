@@ -31,7 +31,12 @@ from demo.core.hif_catalog import (
     ProducePreferences,
     build_hif_memory_catalog,
 )
-from demo.core.idol_guides import P_IDOL_GUIDE_REGISTRY, get_p_idol_guide
+from demo.core.idol_guides import (
+    P_IDOL_GUIDE_REGISTRY,
+    get_default_idol_stats,
+    get_idol_stat_order,
+    get_p_idol_guide,
+)
 from demo.core.scenarios import SCENARIO_REGISTRY
 from demo.maa_bridge.adb_controller import AdbConfig, AdbController
 from demo.maa_bridge.runner import StepResult
@@ -329,6 +334,7 @@ class HifWorkbenchSession:
                 item = dict(p_row)
                 item["icon_url"] = to_asset_url(icon_row.get("icon_path")) if icon_row else None
                 item["signature_card_ids"] = [int(s["id"]) for s in sigs]
+                item["stat_order"] = list(get_idol_stat_order(pid, db=self.db))
                 item["has_guide"] = guide is not None
                 item["guide_summary"] = (
                     list(guide.core_mechanics[:2]) if guide is not None else []
@@ -461,6 +467,7 @@ class HifWorkbenchSession:
         }
 
     def _seed_idol_defaults(self, pid: int) -> None:
+        self.idol_stats = get_default_idol_stats(pid, db=self.db)
         sig_rows = self._signature_card_rows(pid)
         non_l = [r for r in sig_rows if str(r.get("rarity") or "").upper() != "L"]
         by_base: Dict[int, Dict[str, Any]] = {}
@@ -1023,13 +1030,23 @@ class HifWorkbenchSession:
             loadout_dict = self.build_library_payload()
             prefs_dict = self.preferences.to_dict()
 
+            ts_tag = time.strftime("%Y%m%d_%H%M%S")
+            pid_tag = str(p_idol_id or "auto")
+            if not str(cfg.get("csv_out") or "").strip():
+                cfg["csv_out"] = str(PROJECT_ROOT / f"hif_run_{plan}_{pid_tag}_{ts_tag}.csv")
+            if not str(cfg.get("library_out") or "").strip():
+                cfg["library_out"] = str(PROJECT_ROOT / f"produce_library_{plan}_{pid_tag}_{ts_tag}.json")
+
             self.running = True
             self._stop_event.clear()
             self.last_error = ""
             self.step_count = 0
             self.add_log(
                 "info",
-                f"启动 H.I.F 自动化: plan={plan}, p_idol={p_idol_id}, mode={loadout_mode}, adb={cfg['adb_host']}:{cfg['adb_port']}",
+                f"启动 H.I.F 自动化: plan={plan}, p_idol={p_idol_id}, mode={loadout_mode}, "
+                f"adb={cfg['adb_host']}:{cfg['adb_port']} | 回忆钩子 {len(self.card_memory_hooks)} 条, "
+                f"单卡强化 {len(self.card_customizations)} 张, 三维 Vo={self.idol_stats.get('vocal')}/Da={self.idol_stats.get('dance')}/Vi={self.idol_stats.get('visual')} | "
+                f"日志: {Path(cfg['csv_out']).name}",
             )
 
         def _worker() -> None:

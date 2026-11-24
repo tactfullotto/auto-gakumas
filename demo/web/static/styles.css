@@ -2254,15 +2254,33 @@
     margin-block-end: 12px;
   }
 
+  .hif-pref-bucket-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-block-end: 5px;
+  }
+
   .hif-pref-bucket h3 {
-    margin: 0 0 5px;
+    margin: 0;
     font-size: 12.5px;
+  }
+
+  .hif-pref-results-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   .hif-pref-pills {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+    max-block-size: 165px;
+    overflow-y: auto;
+    padding-inline-end: 4px;
   }
 
   .hif-pref-pill {

@@ -446,12 +446,16 @@ class HifLoadoutScanner:
             vp = frame[y_top:y_bot, :]
             if prev_vp is not None:
                 dy, corr = self._estimate_scroll_delta(prev_vp, vp)
-                if corr >= 0.72 and dy >= 0:
-                    cum_scroll += dy
+                if corr >= 0.72:
+                    if dy > 0:
+                        cum_scroll += dy
                 elif dy > 0 and corr >= 0.50:
                     cum_scroll += dy
                 else:
-                    cum_scroll += 520
+                    # Only fall back to +520 when viewport genuinely changed (never duplicate bottom-of-list bounce frames)
+                    diff_vp = float(np.mean(np.abs(vp.astype(np.float32) - prev_vp.astype(np.float32))))
+                    if diff_vp > 12.0:
+                        cum_scroll += 520
             prev_vp = vp
 
             res = self.ocr.recognize_array(vp)

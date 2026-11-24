@@ -148,12 +148,19 @@ class LocalHybridDecisionAgent:
         self._customize_done_count: int = 0
         self._shop_card_popup_guard: bool = False
         self._shop_expecting_drink_confirm: bool = False
+        self._shop_expecting_priority_card_confirm: Optional[int] = None
         self._shop_attempted_drink_ids: Set[int] = set()
+        self._shop_attempted_card_ids: Set[int] = set()
         self._shop_clicked_slots: Set[str] = set()
         self._shop_noop_features: Set[str] = set()
         self._shop_last_clicked_feature: Optional[str] = None
         self._shop_last_points: Optional[int] = None
         self._shop_refresh_count: int = 0
+        self._shop_refresh_noop_streak: int = 0
+        self._shop_last_week: Optional[int] = None
+        self._shop_visit_count: int = 0
+        self._in_shop_visit: bool = False
+        self._first_shop_delete_done: bool = False
         self._expecting_drink_discard: bool = False
         self._banned_drink_discard_attempts: int = 0
         self._banned_drink_discard_ctx: Optional[Tuple[str, int]] = None
@@ -267,12 +274,18 @@ class LocalHybridDecisionAgent:
         self._customize_done_count = 0
         self._shop_card_popup_guard = False
         self._shop_expecting_drink_confirm = False
+        self._shop_expecting_priority_card_confirm = None
         self._shop_attempted_drink_ids.clear()
+        self._shop_attempted_card_ids.clear()
         self._shop_clicked_slots.clear()
         self._shop_noop_features.clear()
         self._shop_last_clicked_feature = None
         self._shop_last_points = None
         self._shop_refresh_count = 0
+        self._shop_refresh_noop_streak = 0
+        self._shop_visit_count = 0
+        self._in_shop_visit = False
+        self._first_shop_delete_done = False
         self._expecting_drink_discard = False
         self._banned_drink_discard_attempts = 0
         self._banned_drink_discard_ctx = None
@@ -366,6 +379,24 @@ class LocalHybridDecisionAgent:
         nm_chk = f"{cname} {title}"
         return any(tok in nm_chk for tok in forb_names)
 
+    def _is_trouble_card_id(self, card_id: Optional[int]) -> bool:
+        if not card_id:
+            return False
+        cid_i = int(card_id)
+        if cid_i == 23:
+            return True
+        row = self.db.get_card_by_id(cid_i)
+        if not row:
+            return False
+        return (
+            str(row.get("type") or "").lower() == "trouble"
+            or str(row.get("rarity") or "").upper() == "T"
+        )
+
+    def _deck_has_trouble_card(self) -> bool:
+        deck_ids = list(getattr(self.tracker, "produce_deck", []) or []) if self.tracker is not None else []
+        return any(self._is_trouble_card_id(cid_d) for cid_d in deck_ids)
+
     def _deck_has_removable_unwanted_card(
         self,
         *,
@@ -373,6 +404,7 @@ class LocalHybridDecisionAgent:
         guide: Optional[PIdolGuide],
         plan: str,
         p_idol_id: Optional[int] = None,
+        ignore_upgrade: bool = False,
     ) -> Optional[bool]:
         """Return True if any non-trouble card in produce_deck scores as unwanted for swap/removal."""
         deck_ids = list(getattr(self.tracker, "produce_deck", []) or []) if self.tracker is not None else []
@@ -394,26 +426,46 @@ class LocalHybridDecisionAgent:
                 for_removal=True,
                 p_idol_id=p_idol_id,
                 check_same_card=False,
+                ignore_upgrade=ignore_upgrade,
             )
             if rem_score >= 100:
                 return True
         return False
 
     @staticmethod
-    def _stat_values(obs: Optional[ScreenObservation]) -> Dict[str, int]:
-        stats = (obs.idol_stats if obs and obs.idol_stats else None) or {"vocal": 2400, "dance": 1400, "visual": 1800}
+    def _stat_values(
+        obs: Optional[ScreenObservation],
+        *,
+        p_idol_id: Optional[int] = None,
+        db: Optional[Any] = None,
+    ) -> Dict[str, int]:
+        from demo.core.idol_guides import get_default_idol_stats
+
+        dflt = get_default_idol_stats(p_idol_id, db=db)
+        stats = (obs.idol_stats if obs and obs.idol_stats else None) or dflt
         return {
-            "vo": min(STAT_CAP, max(0, int(stats.get("vocal", 180) or 180))),
-            "da": min(STAT_CAP, max(0, int(stats.get("dance", 160) or 160))),
-            "vi": min(STAT_CAP, max(0, int(stats.get("visual", 150) or 150))),
+            "vo": min(STAT_CAP, max(0, int(stats.get("vocal", dflt["vocal"]) or dflt["vocal"]))),
+            "da": min(STAT_CAP, max(0, int(stats.get("dance", dflt["dance"]) or dflt["dance"]))),
+            "vi": min(STAT_CAP, max(0, int(stats.get("visual", dflt["visual"]) or dflt["visual"]))),
         }
 
     @classmethod
-    def _stat_rank_map(cls, obs: Optional[ScreenObservation]) -> Dict[str, int]:
-        vals = cls._stat_values(obs)
+    def _stat_rank_map(
+        cls,
+        obs: Optional[ScreenObservation],
+        *,
+        p_idol_id: Optional[int] = None,
+        db: Optional[Any] = None,
+    ) -> Dict[str, int]:
+        from demo.core.idol_guides import get_idol_stat_order
+
+        vals = cls._stat_values(obs, p_idol_id=p_idol_id, db=db)
+        order = get_idol_stat_order(p_idol_id, db=db)
+        key_short = {"vocal": "vo", "dance": "da", "visual": "vi"}
+        tie_rank = {key_short[k]: (3 - idx) for idx, k in enumerate(order)}
         ordered = sorted(
             vals.items(),
-            key=lambda kv: kv[1],
+            key=lambda kv: (kv[1], tie_rank.get(kv[0], 0)),
             reverse=True,
         )
         return {k: (3 - idx) for idx, (k, _) in enumerate(ordered)}
@@ -438,6 +490,8 @@ class LocalHybridDecisionAgent:
         is_sp: bool = False,
         prefer_non_highest: bool = False,
         enforce_floor: bool = False,
+        p_idol_id: Optional[int] = None,
+        db: Optional[Any] = None,
     ) -> int:
         attr: Optional[str] = None
         if "vo" in text_l or "ボーカル" in text_l:
@@ -448,10 +502,10 @@ class LocalHybridDecisionAgent:
             attr = "da"
         if attr is None:
             return 0
-        vals = cls._stat_values(obs)
-        ranks = cls._stat_rank_map(obs)
+        vals = cls._stat_values(obs, p_idol_id=p_idol_id, db=db)
+        ranks = cls._stat_rank_map(obs, p_idol_id=p_idol_id, db=db)
         week = int(getattr(obs, "week", 1) or 1)
-        reserve = 140 if (attr == "vo" and week <= 6) else 60
+        reserve = 140 if (ranks.get(attr, 0) == 3 and week <= 6) else 60
         soft_cap = STAT_CAP - reserve
         val = vals[attr]
         headroom = max(0, soft_cap - val)
@@ -491,6 +545,8 @@ class LocalHybridDecisionAgent:
         in_change_pickup: bool = False,
         has_removable_unwanted: Optional[bool] = None,
         check_same_card: bool = True,
+        ignore_upgrade: bool = False,
+        is_customized: bool = False,
     ) -> int:
         """Score a skill card by idol `recommended_effect`, PIdolGuide, rarity, and deck quality."""
         row = self.db.get_card_by_id(int(card_id)) if card_id else None
@@ -498,14 +554,44 @@ class LocalHybridDecisionAgent:
         ctype = str(row.get("type") or "") if row else ""
         rarity = str(row.get("rarity") or "").upper() if row else ""
         dsl = f"{row.get('dsl_actions', '')} {row.get('dsl_effects', '')}".lower() if row else ""
+        dsl_cond = str(row.get("dsl_conditions") or "").lower() if row else ""
         c_rec = str(row.get("recommended_effect") or "") if row else ""
         text_l = f"{cname} {title} {desc} {dsl}".lower()
-        upgraded = bool((row and row.get("upgraded")) or "+" in cname or "+" in title)
+        upgraded = (
+            False
+            if ignore_upgrade
+            else bool((row and row.get("upgraded")) or "+" in cname or "+" in title)
+        )
         base_id = int(row.get("base_id") or card_id) if (row is not None and card_id) else (int(card_id) if card_id else 0)
+        family_ids: Set[int] = set()
+        if card_id:
+            family_ids.add(int(card_id))
+        if base_id:
+            family_ids.add(base_id)
+        if row and row.get("upgraded_id"):
+            family_ids.add(int(row["upgraded_id"]))
+        elif base_id and base_id != (int(card_id) if card_id else 0):
+            b_row = self.db.get_card_by_id(base_id)
+            if b_row and b_row.get("upgraded_id"):
+                family_ids.add(int(b_row["upgraded_id"]))
+
+        # Check whether this card has customizations (加点强化 / カスタマイズ済) from vision badge OR tracker metadata
+        card_has_custom = bool(is_customized) or ("已加点强化" in desc) or ("カスタマイズ済" in desc)
+        if (not card_has_custom) and self.tracker is not None and card_id:
+            tr_custs = getattr(self.tracker, "card_customizations", None) or {}
+            for fid in family_ids:
+                cm = tr_custs.get(fid) or tr_custs.get(str(fid))
+                if isinstance(cm, dict) and (cm.get("levels") or cm.get("modifiers")):
+                    card_has_custom = True
+                    break
 
         # Trouble cards (`眠気` / `トラブル`): terrible to pick, top priority to remove
         if card_id == 23 or ctype == "trouble" or "眠気" in cname or "トラブル" in cname:
             return 5000 if for_removal else -10_000
+
+        # Customized cards (加点强化済): NEVER swap out (チェンジ does NOT inherit customizations!) or delete!
+        if for_removal and card_has_custom:
+            return -18_000
 
         # Extra-turn cards (e.g. #170/#171 私がスター, #728 レジェンドスター): must NEVER be deleted/swapped away
         is_extra_turn_card = (
@@ -574,26 +660,66 @@ class LocalHybridDecisionAgent:
             if c_plan not in ("all", "free", "", plan.lower()):
                 score -= 800
 
-        # Primary `recommended_effect` alignment
-        if target_effect:
+        # Primary `recommended_effect` alignment (guard against anti-synergy cap conditions like `if:goodConditionTurns<=15` on #751 精神統一!)
+        is_anti_good_cond_conc_card = bool(
+            target_effect == "goodConditionTurns"
+            and (
+                "goodconditionturns<=" in dsl
+                or "goodconditionturns<=" in dsl_cond
+                or bool(re.search(r"好調が\d+ターン以下", text_l))
+            )
+            and "goodconditionturns+=" not in dsl
+            and "perfectconditionturns+=" not in dsl
+        )
+        if is_anti_good_cond_conc_card:
+            if for_removal:
+                return 900 if not upgraded else 750
+            score -= 1_800
+        elif target_effect:
+            te_l = target_effect.lower()
+            has_pos_dsl_gain = (
+                f"{te_l}+=" in dsl
+                or f"{te_l}*=" in dsl
+                or f"set{te_l}" in dsl
+                or (target_effect == "goodConditionTurns" and "perfectconditionturns+=" in dsl)
+            )
             if c_rec == target_effect:
                 score += 650
-            elif target_effect.lower() in dsl:
+            elif has_pos_dsl_gain:
                 score += 500
             prim_kws = _EFFECT_KEYWORDS.get(target_effect, ())
-            if any(kw in text_l for kw in prim_kws):
+            # Strip negative cap clauses ("好調が15ターン以下") before checking positive primary keyword alignment
+            cleaned_text_for_prim = re.sub(r"好調が\d+ターン以下", "", text_l)
+            if any(kw in cleaned_text_for_prim for kw in prim_kws):
                 score += 380
             sec_kws = _SECONDARY_EFFECT_KEYWORDS.get(target_effect, ())
             if any(kw in text_l for kw in sec_kws):
-                score += 120
+                is_pure_conc_on_gc = (
+                    target_effect == "goodConditionTurns"
+                    and "concentration+=" in dsl
+                    and not has_pos_dsl_gain
+                    and "cardusesremaining+=" not in dsl
+                    and "doublecardeffectcards+=" not in dsl
+                )
+                score += 30 if is_pure_conc_on_gc else 120
 
         # PIdolGuide affinity / anti-synergy
         if guide is not None:
-            if card_id and int(card_id) in guide.recommended_cards:
+            rec_hit = (
+                any(fid in guide.recommended_cards for fid in family_ids)
+                if ignore_upgrade
+                else bool(card_id and int(card_id) in guide.recommended_cards)
+            )
+            caut_hit = (
+                any(fid in guide.caution_cards for fid in family_ids)
+                if ignore_upgrade
+                else bool(card_id and int(card_id) in guide.caution_cards)
+            )
+            if rec_hit:
                 score += 420
             elif any(k in cname for k in guide.recommended_card_names):
                 score += 360
-            if card_id and int(card_id) in guide.caution_cards:
+            if caut_hit:
                 score -= 350
             elif any(k in cname for k in guide.caution_card_names):
                 score -= 280
@@ -602,7 +728,8 @@ class LocalHybridDecisionAgent:
             score += 350
         if upgraded:
             score += 90
-        if "cardusesremaining+=" in dsl or "使用数追加" in text_l:
+        is_free_action_card = bool("cardusesremaining+=" in dsl or "使用数追加" in text_l)
+        if is_free_action_card:
             score += 140
 
         # Protect multiplicative 好印象 scaling (#521 夢色リップ+) & GI effect-buff engines (#920/#617/#778)
@@ -613,17 +740,29 @@ class LocalHybridDecisionAgent:
         family_in_deck = False
         if self.tracker is not None and card_id:
             deck_ids_tr = self.tracker.produce_deck or []
-            deck_count = sum(1 for cid_d in deck_ids_tr if int(cid_d) == int(card_id))
-            if base_id:
+            if ignore_upgrade:
                 for cid_d in deck_ids_tr:
                     cid_di = int(cid_d)
-                    if cid_di == int(card_id) or cid_di == base_id:
+                    if cid_di in family_ids:
+                        deck_count += 1
                         family_in_deck = True
-                        break
+                        continue
                     r_d = self.db.get_card_by_id(cid_di)
                     if r_d and int(r_d.get("base_id") or cid_di) == base_id:
+                        deck_count += 1
                         family_in_deck = True
-                        break
+            else:
+                deck_count = sum(1 for cid_d in deck_ids_tr if int(cid_d) == int(card_id))
+                if base_id:
+                    for cid_d in deck_ids_tr:
+                        cid_di = int(cid_d)
+                        if cid_di == int(card_id) or cid_di == base_id:
+                            family_in_deck = True
+                            break
+                        r_d = self.db.get_card_by_id(cid_di)
+                        if r_d and int(r_d.get("base_id") or cid_di) == base_id:
+                            family_in_deck = True
+                            break
 
         is_core_keep = bool(
             (card_id and int(card_id) in _CORE_KEEP_CARD_IDS)
@@ -663,8 +802,8 @@ class LocalHybridDecisionAgent:
             score -= 4_000
 
         # Same-card swap bonus on Page 1 (`チェンジで獲得`) when no unwanted cards remain:
-        # prefer an already-owned family so Page 2 can swap X -> X cleanly without losing core cards.
-        if (not for_removal) and in_change_pickup and family_in_deck and (has_removable_unwanted is False):
+        # prefer an already-owned UNCUSTOMIZED family so Page 2 can swap X -> X cleanly without losing customizations or core cards.
+        if (not for_removal) and in_change_pickup and family_in_deck and (not card_has_custom) and (has_removable_unwanted is False):
             score += 4_000 if upgraded else 3_500
             if not is_unique_card:
                 score += 400
@@ -673,15 +812,18 @@ class LocalHybridDecisionAgent:
 
         tracker_hooks = (getattr(self.tracker, "card_memory_hooks", None) or {}) if self.tracker is not None else {}
         hook_meta = resolve_card_family_meta(tracker_hooks, card_id, db=self.db)
+        is_misuzu_logic = (p_idol_id in (None, 163)) and (plan.lower() == "logic")
         has_real_hook = bool(
             hook_meta.get("force_initial_hand")
             or hook_meta.get("free_extra_use_first_play")
             or int(hook_meta.get("extra_use_limit") or 0) > 0
+            or int(hook_meta.get("draw_on_play") or 0) > 0
             or (hook_meta.get("exiles_trouble_on_play") and base_id != 426)
-            or base_id in (126, 128, 136, 296, 298)
+            or (is_misuzu_logic and base_id in (126, 128, 136, 296, 298))
         )
-        if has_real_hook and not (for_removal and deck_count >= 2):
-            score += 1_200
+        has_memory_protection = bool(has_real_hook and not (for_removal and deck_count >= 2))
+        if has_memory_protection:
+            score += 2_500 if for_removal else 1_600
 
         rarity_pts = {"LEGEND": 240, "SSR": 200, "SR": 120, "R": 60, "N": 10}
         score += rarity_pts.get(rarity, 30)
@@ -709,20 +851,26 @@ class LocalHybridDecisionAgent:
 
         has_strong_user_protection = (
             user_priority
+            or (for_removal and has_memory_protection)
             or (for_removal and user_keep)
             or (for_removal and override_delta >= 500)
         )
 
+        protect_free_action_active = is_free_action_card and not is_logic_gi_build
+        if for_removal and protect_free_action_active:
+            score += 760
         is_ordinary_unupgraded_active = (
             ctype == "active"
             and not upgraded
             and not is_elite_active
+            and not protect_free_action_active
             and not is_core_keep
             and not has_strong_user_protection
         )
         is_non_elite_active = (
             ctype == "active"
             and not is_elite_active
+            and not protect_free_action_active
             and not is_core_keep
             and not has_strong_user_protection
         )
@@ -742,12 +890,13 @@ class LocalHybridDecisionAgent:
             if not upgraded:
                 score -= 350
         elif (not is_core_keep and not has_strong_user_protection) and (
-            (rarity == "R" and not upgraded) or (card_id in (68, 69, 94) and not upgraded)
+            (rarity == "R" and not upgraded)
+            or ((card_id in (68, 69, 94) or (ignore_upgrade and base_id in (68, 94))) and not upgraded)
         ):
             score -= 600
             if for_removal:
                 return max(450, -score)
-        elif rarity == "SR" and not upgraded and not is_core_keep and not has_strong_user_protection and ctype != "mental":
+        elif rarity == "SR" and not upgraded and not is_core_keep and not protect_free_action_active and not has_strong_user_protection and ctype != "mental":
             if for_removal:
                 return 250 - override_delta
 
@@ -827,10 +976,12 @@ class LocalHybridDecisionAgent:
         self,
         legal_actions: List[LegalAction],
         obs: Optional[ScreenObservation],
+        p_idol_id: Optional[int] = None,
     ) -> DecisionResult:
         self._has_entered_produce = True
         self._reward_preview_count = 0
         self._last_reward_sig = None
+        resolved_pid, _, _ = self._resolve_idol_and_effect(obs, p_idol_id=p_idol_id)
 
         maybe_discard = self._maybe_pick_banned_drink_discard(
             legal_actions,
@@ -843,6 +994,10 @@ class LocalHybridDecisionAgent:
         stamina = int(getattr(obs, "stamina", 30) or 30)
         max_stam = max(1, int(getattr(obs, "max_stamina", 44) or 44))
         low_hp = stamina < max(8, int(round(max_stam * 0.22)))
+        deck_ids_sched = list(getattr(self.tracker, "produce_deck", []) or [])
+        has_trouble_sched = any(self._is_trouble_card_id(cid_s) for cid_s in deck_ids_sched)
+        p_pts_sched = int(getattr(obs, "p_points", 0) or 0) if obs is not None else 0
+        wk_sched = int(getattr(obs, "week", 0) or 0) if obs is not None else 0
 
         def _is_sp_action(act: LegalAction) -> bool:
             p = act.payload or {}
@@ -876,18 +1031,24 @@ class LocalHybridDecisionAgent:
                 is_sp=is_sp,
                 prefer_non_highest=is_jugyo,
                 enforce_floor=is_jugyo,
+                p_idol_id=resolved_pid,
+                db=self.db,
             )
             if is_sp:
                 return 10_000 + attr_bonus
 
             is_rest = any(k in combined for k in ("休む", "休息", "rest"))
+            is_soudan = any(k in combined for k in ("特別指導", "相談"))
+            if is_soudan and stamina >= 6 and (has_trouble_sched or (wk_sched >= 5 and p_pts_sched >= 125)):
+                # W6 相談 is the critical pre-Battle-1 shop to delete #23 眠気 / trouble cards
+                return 6_000 + attr_bonus
             if low_hp and is_rest:
                 return 5_000
 
             base = 300
             if any(k in combined for k in ("追い込み", "公開レッスン", "授業", "ボーカル", "ダンス", "ビジュアル", "レッスン")):
                 base = 2_000
-            elif any(k in combined for k in ("特別指導", "相談")):
+            elif is_soudan:
                 base = 1_800
             elif any(k in combined for k in ("差し入れ", "活動支給")):
                 base = 1_500
@@ -899,7 +1060,7 @@ class LocalHybridDecisionAgent:
 
         best = max(legal_actions, key=_score_sched)
         best_combined = f"{(best.payload or {}).get('title') or (best.payload or {}).get('name') or ''} {best.description}".lower()
-        if _is_sp_action(best) and self._stat_attr_bonus(obs, best_combined, est_gain=420, is_sp=True) > -5_000:
+        if _is_sp_action(best) and self._stat_attr_bonus(obs, best_combined, est_gain=420, is_sp=True, p_idol_id=resolved_pid, db=self.db) > -5_000:
             return DecisionResult(
                 choice_id=best.choice_id,
                 reason=f"LocalAgent(schedule): Prioritizing SP course -> {best.description}",
@@ -925,7 +1086,7 @@ class LocalHybridDecisionAgent:
             or bool(self.tracker is not None and self.tracker.produce_deck)
         ):
             self._has_entered_produce = True
-        _, target_eff, guide = self._resolve_idol_and_effect(obs, p_idol_id=p_idol_id)
+        resolved_pid_ev, target_eff, guide = self._resolve_idol_and_effect(obs, p_idol_id=p_idol_id)
         eff_kws = _EFFECT_KEYWORDS.get(target_eff or "goodImpressionTurns", ("好印象",))
         sec_kws = _SECONDARY_EFFECT_KEYWORDS.get(target_eff or "goodImpressionTurns", ("やる気", "元気"))
         is_jugyo_event = bool(
@@ -954,7 +1115,10 @@ class LocalHybridDecisionAgent:
             if any(tk in combined for tk in ("トラブル", "トラプル", "眠気", "睡眠", "干扰卡")):
                 score -= 4_500
             if any(k in combined for k in eff_kws):
-                score += 900
+                score += 1_200 if target_eff == "goodConditionTurns" else 900
+            elif target_eff == "goodConditionTurns" and "集中" in combined:
+                # On 好調 idols (e.g. #139 姫崎莉波), avoid picking pure 集中 lesson/event paths over 好調!
+                score -= 700
             elif any(k in combined for k in sec_kws):
                 score += 400
             attr_bonus = self._stat_attr_bonus(
@@ -964,6 +1128,8 @@ class LocalHybridDecisionAgent:
                 is_sp=False,
                 prefer_non_highest=is_jugyo_event,
                 enforce_floor=is_jugyo_event,
+                p_idol_id=resolved_pid_ev,
+                db=self.db,
             )
             if attr_bonus < 0:
                 score += attr_bonus
@@ -1406,9 +1572,16 @@ class LocalHybridDecisionAgent:
             )
         )
         is_drink_flow = ("ドリンク" in raw_txt and "スキルカード" not in raw_txt) or any(is_drink_opt(a) for a in legal_actions)
+        is_delete_removal = bool(
+            claim_name_peek == "削除する"
+            or (is_removal and any(k in raw_txt for k in ("削除", "手放す")) and "チェンジ" not in raw_txt)
+        )
+        is_change_swap = bool(is_removal and not is_delete_removal)
         is_change_pickup = (not is_removal) and (not is_drink_flow) and (
             ("チェンジで獲得" in raw_txt) or (claim_name_peek == "次へ")
         )
+        ignore_change_upgrade = bool(is_change_pickup or is_change_swap)
+        deck_has_trouble = self._deck_has_trouble_card()
         has_removable_unwanted: Optional[bool] = None
         if (is_removal or is_change_pickup) and not is_drink_flow:
             has_removable_unwanted = self._deck_has_removable_unwanted_card(
@@ -1416,6 +1589,7 @@ class LocalHybridDecisionAgent:
                 guide=guide,
                 plan=plan,
                 p_idol_id=resolved_pid,
+                ignore_upgrade=ignore_change_upgrade,
             )
 
         reroll_act = next(
@@ -1455,7 +1629,8 @@ class LocalHybridDecisionAgent:
                     p_idol_id=resolved_pid,
                     in_change_pickup=is_change_pickup,
                     has_removable_unwanted=has_removable_unwanted,
-                    check_same_card=(claim_name_peek != "削除する"),
+                    check_same_card=(not is_delete_removal),
+                    ignore_upgrade=ignore_change_upgrade,
                 ),
             )
             best_cid = (best_direct.payload or {}).get("card_id")
@@ -1660,6 +1835,7 @@ class LocalHybridDecisionAgent:
                     if self._last_clicked_grid_slot is not None
                     else (int(claim_slot) if claim_slot is not None else self._infer_current_reward_slot(preview_acts))
                 )
+                claim_is_custom = bool((claim_act.payload or {}).get("is_customized"))
                 cur_score = (
                     self._score_skill_card(
                         card_id=int(claim_cid),
@@ -1671,14 +1847,66 @@ class LocalHybridDecisionAgent:
                         for_removal=True,
                         p_idol_id=resolved_pid,
                         has_removable_unwanted=has_removable_unwanted,
-                        check_same_card=(claim_name != "削除する"),
+                        check_same_card=(not is_delete_removal),
+                        ignore_upgrade=is_change_swap,
+                        is_customized=claim_is_custom,
                     )
                     if claim_cid
-                    else -500
+                    else (-18_000 if claim_is_custom else -500)
                 )
                 self._reward_grid_scores[cur_slot] = cur_score
                 self._reward_visited_grid_slots.add(cur_slot)
-                if cur_score >= 4000 or cur_score > 0:
+                unvisited_grid = [
+                    p for p in preview_acts
+                    if (
+                        (s := self._extract_reward_slot_idx(p)) is None
+                        or (s != cur_slot and s not in self._reward_visited_grid_slots)
+                    )
+                ]
+                # When deleting in shop with a Trouble (T) card in deck (or on first shop probe where W1-W5
+                # events may have injected an untracked #23 眠気), keep scanning until we locate the T card (>=4000).
+                # Similarly, during チェンジ/削除, if the deck contains user-configured avoid_card_ids or forbidden cards,
+                # keep scanning the visible deck grid so we ALWAYS swap/delete those avoided cards first!
+                deck_has_avoid_or_forbidden = False
+                if self.tracker is not None and self.tracker.produce_deck:
+                    for _dcid in self.tracker.produce_deck:
+                        _drow = self.db.get_card_by_id(int(_dcid))
+                        _dbase = int(_drow.get("base_id") or _dcid) if _drow else int(_dcid)
+                        if (
+                            int(_dcid) in self._avoid_card_ids
+                            or _dbase in self._avoid_card_base_ids
+                            or self._is_forbidden_card(
+                                card_id=int(_dcid),
+                                base_id=_dbase,
+                                cname=str((_drow or {}).get("name") or ""),
+                                p_idol_id=resolved_pid,
+                                guide=guide,
+                            )
+                        ):
+                            deck_has_avoid_or_forbidden = True
+                            break
+                prefer_trouble_scan = bool(
+                    is_delete_removal
+                    and (deck_has_trouble or (self._in_shop_visit and not self._first_shop_delete_done))
+                    and cur_score < 4000
+                    and unvisited_grid
+                    and self._reward_preview_count < 16
+                )
+                prefer_avoid_scan = bool(
+                    is_removal
+                    and deck_has_avoid_or_forbidden
+                    and cur_score < 2500
+                    and unvisited_grid
+                    and self._reward_preview_count < 14
+                )
+                prefer_high_removal_scan = prefer_trouble_scan or prefer_avoid_scan
+                if (
+                    cur_score >= 4000
+                    or (cur_score >= 2500 and not prefer_trouble_scan)
+                    or (cur_score > 0 and not prefer_high_removal_scan)
+                ):
+                    if is_delete_removal and self._shop_visit_count <= 1:
+                        self._first_shop_delete_done = True
                     self._came_from_change_pickup = False
                     self._pending_change_gain_card_id = None
                     self._pending_change_gain_base_id = None
@@ -1688,20 +1916,20 @@ class LocalHybridDecisionAgent:
                         reason=f"LocalAgent(removal): Confirming weak/trouble card (score={cur_score}) -> {claim_act.description}",
                         source="local_hybrid",
                     )
-                unvisited_grid = [
-                    p for p in preview_acts
-                    if (
-                        (s := self._extract_reward_slot_idx(p)) is None
-                        or (s != cur_slot and s not in self._reward_visited_grid_slots)
-                    )
+                max_grid_scans = 14 if prefer_high_removal_scan else (12 if cur_score <= -1500 else 6)
+                non_custom_unvisited = [
+                    p for p in unvisited_grid
+                    if not (p.payload or {}).get("is_customized")
                 ]
-                max_grid_scans = 12 if cur_score <= -1500 else 6
-                if unvisited_grid and self._reward_preview_count < max_grid_scans:
+                scan_pool = non_custom_unvisited or unvisited_grid
+                if scan_pool and self._reward_preview_count < max_grid_scans:
                     self._reward_preview_count += 1
                     nxt = max(
-                        unvisited_grid,
+                        scan_pool,
                         key=lambda a: (
-                            1 if ("暗灰" in a.description or "基本" in a.description or "暗灰" in str((a.payload or {}).get("title") or "")) else 0,
+                            -1 if (a.payload or {}).get("is_customized") else (
+                                1 if ("暗灰" in a.description or "基本" in a.description or "暗灰" in str((a.payload or {}).get("title") or "")) else 0
+                            ),
                             self._extract_reward_slot_idx(a) or 0,
                         ),
                     )
@@ -1727,10 +1955,11 @@ class LocalHybridDecisionAgent:
                     )
                 if (
                     cancel_act is not None
-                    and claim_name == "チェンジする"
-                    and cur_score < -250
-                    and (not self._came_from_change_pickup)
-                    and self._reward_cancel_attempts == 0
+                    and claim_name in ("チェンジする", "削除する")
+                    and (
+                        (cur_score < -250 and (not self._came_from_change_pickup) and self._reward_cancel_attempts == 0)
+                        or (claim_is_custom and self._reward_cancel_attempts < 2)
+                    )
                 ):
                     self._reward_cancel_attempts += 1
                     self._pending_change_gain_card_id = None
@@ -1738,7 +1967,7 @@ class LocalHybridDecisionAgent:
                     self._clear_reward_scan_state()
                     return DecisionResult(
                         choice_id=cancel_act.choice_id,
-                        reason=f"LocalAgent(removal): Cancelling swap once to avoid losing strong card (score={cur_score})",
+                        reason=f"LocalAgent(removal): Cancelling {claim_name} to protect {'customized' if claim_is_custom else 'strong'} card (score={cur_score})",
                         source="local_hybrid",
                     )
                 if self._reward_grid_scores:
@@ -1755,6 +1984,8 @@ class LocalHybridDecisionAgent:
                                 reason=f"LocalAgent(removal): Returning to least-costly swap slot #{best_grid_slot + 1} (score={self._reward_grid_scores[best_grid_slot]} > {cur_score})",
                                 source="local_hybrid",
                             )
+                if is_delete_removal and self._shop_visit_count <= 1:
+                    self._first_shop_delete_done = True
                 self._came_from_change_pickup = False
                 self._pending_change_gain_card_id = None
                 self._pending_change_gain_base_id = None
@@ -1792,6 +2023,7 @@ class LocalHybridDecisionAgent:
                         p_idol_id=resolved_pid,
                         in_change_pickup=in_chg_pick,
                         has_removable_unwanted=has_removable_unwanted if in_chg_pick else None,
+                        ignore_upgrade=in_chg_pick,
                     )
                 claim_slot = (claim_act.payload or {}).get("slot_idx")
                 prev_slots = [s for s in (self._extract_reward_slot_idx(p) for p in preview_acts) if s is not None]
@@ -1995,6 +2227,8 @@ class LocalHybridDecisionAgent:
                 )
 
             if is_removal:
+                if is_delete_removal and self._shop_visit_count <= 1:
+                    self._first_shop_delete_done = True
                 self._came_from_change_pickup = False
                 self._pending_change_gain_card_id = None
                 self._pending_change_gain_base_id = None
@@ -2094,6 +2328,7 @@ class LocalHybridDecisionAgent:
                         guide=guide,
                         plan=plan,
                         for_removal=is_removal,
+                        ignore_upgrade=ignore_change_upgrade,
                     )
                 )
             ),
@@ -2103,6 +2338,53 @@ class LocalHybridDecisionAgent:
             reason=f"LocalAgent(reward): Fallback pick -> {best.description}",
             source="local_hybrid",
         )
+
+    def _deck_has_card_family(self, card_id: Optional[int]) -> bool:
+        """Return True if tracker.produce_deck already owns any copy (base or +) of `card_id`."""
+        if not card_id or self.tracker is None:
+            return False
+        deck_ids = list(getattr(self.tracker, "produce_deck", []) or [])
+        if not deck_ids:
+            return False
+        cid_i = int(card_id)
+        row = self.db.get_card_by_id(cid_i)
+        target_base = int(row.get("base_id") or cid_i) if row else cid_i
+        target_upg = int(row["upgraded_id"]) if (row and row.get("upgraded_id")) else 0
+        for dcid in deck_ids:
+            di = int(dcid)
+            if di == cid_i or di == target_base or (target_upg and di == target_upg):
+                return True
+            drow = self.db.get_card_by_id(di)
+            if drow and int(drow.get("base_id") or di) == target_base:
+                return True
+        return False
+
+    def _is_shop_buyable_priority_card(self, act: LegalAction, p_pts: int) -> bool:
+        """Return True iff `act` previews or exchanges a user `priority_card_ids` card not yet in deck and affordable."""
+        if not self._priority_card_ids and not self._priority_card_base_ids:
+            return False
+        p = act.payload or {}
+        cid = p.get("card_id")
+        if cid is None:
+            return False
+        try:
+            cid_i = int(cid)
+        except (TypeError, ValueError):
+            return False
+        if cid_i <= 0:
+            return False
+        row = self.db.get_card_by_id(cid_i)
+        base_id = int(row.get("base_id") or cid_i) if row else cid_i
+        if not self._is_priority_card(cid_i, base_id=base_id):
+            return False
+        if cid_i in self._shop_attempted_card_ids or base_id in self._shop_attempted_card_ids:
+            return False
+        if self._deck_has_card_family(cid_i):
+            return False
+        price = int(p.get("price") or 0)
+        if price > p_pts:
+            return False
+        return True
 
     @staticmethod
     def _is_shop_skill_card_action(act: LegalAction) -> bool:
@@ -2152,8 +2434,18 @@ class LocalHybridDecisionAgent:
         when tray isn't full, else exit (`終了`/`次へ`).
         """
         self._has_entered_produce = True
+        if not self._in_shop_visit:
+            self._in_shop_visit = True
+            self._shop_visit_count += 1
         p_pts = int(getattr(obs, "p_points", 0) or 0) if obs is not None else 0
         wk = int(getattr(obs, "week", 0) or 0) if obs is not None else 0
+        if wk > 0 and self._shop_last_week is not None and wk != self._shop_last_week:
+            self._shop_noop_features.clear()
+            self._shop_clicked_slots.clear()
+            self._shop_refresh_noop_streak = 0
+            self._shop_last_clicked_feature = None
+        if wk > 0:
+            self._shop_last_week = wk
         maybe_discard = self._maybe_pick_banned_drink_discard(legal_actions, "shop", wk)
         if maybe_discard is not None:
             self._shop_card_popup_guard = False
@@ -2165,30 +2457,56 @@ class LocalHybridDecisionAgent:
             (scen in ("hif_honsen", "hif") and wk >= 8)
             or (tot_wk >= 2 and wk >= tot_wk - 1)
         )
+        is_first_shop = (not is_final_shop) and self._shop_visit_count <= 1
         if (
             self._shop_last_clicked_feature in ("強化", "削除", "カスタマイズ", "セレクトチェンジ")
             and self._shop_last_points is not None
             and p_pts == self._shop_last_points
         ):
             self._shop_noop_features.add(self._shop_last_clicked_feature)
+        elif self._shop_last_clicked_feature == "リフレッシュ" and self._shop_last_points is not None:
+            if p_pts < self._shop_last_points:
+                # Refresh succeeded and actually spent P-points -> unlock refreshed shop actions
+                self._shop_refresh_noop_streak = 0
+                self._shop_clicked_slots.clear()
+                self._shop_noop_features.clear()
+                self._shop_attempted_drink_ids.clear()
+                self._shop_attempted_card_ids.clear()
+                self._shop_expecting_priority_card_confirm = None
+                self._customize_done_count = 0
+                self._customize_cards_tried = 0
+            elif p_pts == self._shop_last_points:
+                self._shop_refresh_noop_streak += 1
+                if self._shop_refresh_noop_streak >= 3:
+                    self._shop_noop_features.add("リフレッシュ")
         self._shop_last_clicked_feature = None
         if self._shop_last_points is not None and p_pts != self._shop_last_points:
             self._shop_clicked_slots.clear()
         held_drinks = list(getattr(obs, "drinks", []) or [])
         cap_drinks = 4 if (obs and obs.scenario_id in ("hif_honsen", "hif")) else 3
         deck_ids = list(getattr(self.tracker, "produce_deck", []) or [])
-        has_trouble = 23 in deck_ids
+        has_trouble = any(self._is_trouble_card_id(cid_d) for cid_d in deck_ids)
         resolved_pid, _, _ = self._resolve_idol_and_effect(obs, p_idol_id=p_idol_id)
         forb_bases = _FORBIDDEN_BASE_IDS_BY_P_IDOL.get(int(resolved_pid or 0), frozenset())
         has_forbidden_in_deck = False
-        if forb_bases and deck_ids:
+        has_basic_n_or_avoided = False
+        if deck_ids:
             for cid_d in deck_ids:
                 cid_di = int(cid_d)
                 drow = self.db.get_card_by_id(cid_di)
                 dbase = int(drow.get("base_id") or cid_di) if drow else cid_di
-                if cid_di in forb_bases or dbase in forb_bases or (resolved_pid == 163 and cid_di in (152, 153, 426, 427)):
+                if forb_bases and (
+                    cid_di in forb_bases
+                    or dbase in forb_bases
+                    or (resolved_pid == 163 and cid_di in (152, 153, 426, 427))
+                ):
                     has_forbidden_in_deck = True
-                    break
+                if (
+                    cid_di in self._avoid_card_ids
+                    or dbase in self._avoid_card_base_ids
+                    or (drow is not None and str(drow.get("rarity") or "").upper() == "N")
+                ):
+                    has_basic_n_or_avoided = True
         has_upgradable_card = True
         if deck_ids:
             has_upgradable_card = False
@@ -2198,14 +2516,14 @@ class LocalHybridDecisionAgent:
                     has_upgradable_card = True
                     break
 
-        # Filter out ALL skill-card buying/previewing options unconditionally, plus already-attempted no-op shop buttons
+        # Filter out non-priority skill cards unconditionally; allow user `priority_card_ids` if not yet owned & affordable!
         def _slot_id(act: LegalAction) -> str:
             p = act.payload or {}
             return str(p.get("shop_slot_key") or p.get("name") or "")
 
         allowed = [
             a for a in legal_actions
-            if not self._is_shop_skill_card_action(a)
+            if (not self._is_shop_skill_card_action(a) or self._is_shop_buyable_priority_card(a, p_pts))
             and not self._is_shop_banned_drink_action(a)
             and not str((a.payload or {}).get("name") or "").startswith("破棄候補_")
             and (_slot_id(a) not in self._shop_clicked_slots or _slot_id(a) in ("終了", "次へ", "交換する", "リフレッシュ"))
@@ -2214,7 +2532,7 @@ class LocalHybridDecisionAgent:
         if not allowed:
             allowed = [
                 a for a in legal_actions
-                if not self._is_shop_skill_card_action(a)
+                if (not self._is_shop_skill_card_action(a) or self._is_shop_buyable_priority_card(a, p_pts))
                 and not self._is_shop_banned_drink_action(a)
                 and not str((a.payload or {}).get("name") or "").startswith("破棄候補_")
             ] or [
@@ -2231,7 +2549,33 @@ class LocalHybridDecisionAgent:
             None,
         )
 
-        # If an active non-banned drink exchange ("交換する" with drink_id) is ready and affordable, buy it!
+        # Top priority: if an active `交換する` matches an unowned user `priority_card_ids` card, buy it BEFORE drinks!
+        priority_card_exchange = next(
+            (
+                a for a in allowed
+                if str((a.payload or {}).get("name") or "") == "交換する"
+                and (a.payload or {}).get("card_id") is not None
+                and self._is_shop_buyable_priority_card(a, p_pts)
+            ),
+            None,
+        )
+        if priority_card_exchange is not None:
+            pcid = int((priority_card_exchange.payload or {}).get("card_id") or 0)
+            prow = self.db.get_card_by_id(pcid)
+            pbase = int(prow.get("base_id") or pcid) if prow else pcid
+            self._shop_card_popup_guard = False
+            self._shop_expecting_drink_confirm = False
+            self._shop_expecting_priority_card_confirm = pcid
+            self._shop_attempted_card_ids.add(pcid)
+            self._shop_attempted_card_ids.add(pbase)
+            return DecisionResult(
+                choice_id=priority_card_exchange.choice_id,
+                reason=f"LocalAgent(shop): Purchasing priority skill card #{pcid} -> {priority_card_exchange.description}",
+                source="local_hybrid",
+            )
+        self._shop_expecting_priority_card_confirm = None
+
+        # Next: if an active non-banned drink exchange ("交換する" with drink_id) is ready and affordable, buy it!
         drink_exchange = next(
             (
                 a for a in allowed
@@ -2255,6 +2599,34 @@ class LocalHybridDecisionAgent:
             )
         self._shop_expecting_drink_confirm = False
 
+        has_affordable_drink_opt = any(
+            (
+                str((a.payload or {}).get("name") or "").startswith("Pドリンク")
+                or str((a.payload or {}).get("shop_slot_key") or "").startswith("Pドリンク:")
+            )
+            and int((a.payload or {}).get("price") or 0) <= p_pts
+            for a in allowed
+        )
+        can_refresh_for_drinks = any(
+            (
+                str((a.payload or {}).get("name") or "") == "リフレッシュ"
+                or str((a.payload or {}).get("shop_slot_key") or "") == "リフレッシュ"
+            )
+            and "リフレッシュ" not in self._shop_noop_features
+            and self.preferences.spend_all_final_shop
+            and self._shop_refresh_count < 8
+            and int((a.payload or {}).get("price") or 0) <= 200
+            and p_pts >= int((a.payload or {}).get("price") or 0) + 60
+            for a in allowed
+        )
+        # Iron rule in W8 インターバル: while held drinks < 4 and a drink or refresh is available,
+        # strictly fill all 4 drink slots BEFORE allowing any card customization (加点) or upgrade!
+        need_fill_drinks_first = bool(
+            is_final_shop
+            and len(held_drinks) < cap_drinks
+            and (has_affordable_drink_opt or can_refresh_for_drinks)
+        )
+
         def _score_shop_allowed(act: LegalAction) -> int:
             p = act.payload or {}
             nm = str(p.get("name") or "")
@@ -2264,15 +2636,37 @@ class LocalHybridDecisionAgent:
                 return -5_000
             if price > p_pts and nm not in ("終了", "次へ"):
                 return -5_000
+            if self._is_shop_buyable_priority_card(act, p_pts):
+                # User-configured ★ 高优先必选卡 (not yet in deck): top priority in shop, ABOVE drinks!
+                return 2_600
             if nm == "削除" or slot_key == "削除":
-                return 2_400 if (has_trouble or has_forbidden_in_deck) else 1_200
+                if has_forbidden_in_deck:
+                    return 2_400
+                if is_first_shop and not self._first_shop_delete_done:
+                    # First shop (W6 相談): always inspect 削除 once to clear any W1-W5 Trouble (T / #23 眠気)
+                    # card even if it was injected by an event/授業 without updating tracker.produce_deck.
+                    # Inspecting 削除 costs 0P (cancels cleanly if no T/weak card is present).
+                    return 2_400
+                if self._first_shop_delete_done:
+                    return -5_000
+                if has_trouble:
+                    return 2_400
+                return 1_200 if ((not deck_ids) or has_basic_n_or_avoided) else -5_000
             if nm == "強化" or slot_key == "強化":
-                return 2_100 if has_upgradable_card else -5_000
+                if not has_upgradable_card:
+                    return -5_000
+                if need_fill_drinks_first:
+                    return -5_000
+                # Post-Battle-1 final shop (W8 インターバル): low priority for 強化; prefer Pドリンク (full 4) -> カスタマイズ first!
+                return 950 if is_final_shop else 2_100
             if (nm.startswith("Pドリンク") or slot_key.startswith("Pドリンク:")) and len(held_drinks) < cap_drinks:
-                return 1_950
+                return 2_400 if is_final_shop else 1_950
             if nm == "カスタマイズ" or slot_key == "カスタマイズ":
+                # Iron rule in W8 インターバル: MUST fill all 4 drink slots before any card customization (加点)!
+                if need_fill_drinks_first:
+                    return -5_000
                 if is_final_shop and self._customize_done_count < 3 and p_pts >= max(70, price):
-                    return 1_850
+                    return 2_250
                 if self._customize_done_count < 2 and p_pts >= 70:
                     return 1_800
             if (nm == "セレクトチェンジ" or slot_key == "セレクトチェンジ"):
@@ -2288,7 +2682,8 @@ class LocalHybridDecisionAgent:
                         and price <= 200
                         and ((len(held_drinks) < cap_drinks and p_pts >= price + 60) or p_pts >= price + 70)
                     ):
-                        return 1_050
+                        # When <4 drinks and no affordable drink is on shelf, refresh aggressively to fill 4 drinks!
+                        return 2_100 if need_fill_drinks_first else 1_350
                 elif (
                     self._shop_refresh_count < 2
                     and price <= 30
@@ -2307,12 +2702,7 @@ class LocalHybridDecisionAgent:
         best_key = _slot_id(best)
         if best_key == "リフレッシュ":
             self._shop_refresh_count += 1
-            self._shop_clicked_slots.clear()
-            self._shop_noop_features.clear()
-            self._shop_last_clicked_feature = None
-            self._shop_attempted_drink_ids.clear()
-            self._customize_done_count = 0
-            self._customize_cards_tried = 0
+            self._shop_last_clicked_feature = "リフレッシュ"
         elif best is not exit_act and best_key and best_key not in ("終了", "次へ", "交換する"):
             self._shop_clicked_slots.add(best_key)
             if best_key in ("強化", "削除", "カスタマイズ", "セレクトチェンジ"):
@@ -2404,7 +2794,10 @@ class LocalHybridDecisionAgent:
                         source="local_hybrid",
                     )
 
-        if ("交換しますか" in raw_l or "交換確認" in raw_l) and ("ドリンク" not in raw_l) and (not self._shop_expecting_drink_confirm):
+        expecting_any_shop_confirm = bool(
+            self._shop_expecting_drink_confirm or self._shop_expecting_priority_card_confirm
+        )
+        if ("交換しますか" in raw_l or "交換確認" in raw_l) and ("ドリンク" not in raw_l) and (not expecting_any_shop_confirm):
             cancel = next(
                 (a for a in safe_acts if any(k in str((a.payload or {}).get("name") or a.description) for k in ("キャンセル", "いいえ", "閉じる"))),
                 None,
@@ -2415,6 +2808,15 @@ class LocalHybridDecisionAgent:
                     reason="LocalAgent(popup): Cancelling unexpected card exchange confirmation",
                     source="local_hybrid",
                 )
+        if self._shop_expecting_priority_card_confirm and (
+            "交換しますか" in raw_l
+            or "交換確認" in raw_l
+            or any("交換" in str((a.payload or {}).get("name") or a.description) for a in safe_acts)
+        ):
+            bought_cid = int(self._shop_expecting_priority_card_confirm)
+            self._shop_expecting_priority_card_confirm = None
+            if self.tracker is not None and not self._deck_has_card_family(bought_cid):
+                self.tracker.produce_deck.append(bought_cid)
         if self._shop_expecting_drink_confirm and ("交換しますか" in raw_l or "交換確認" in raw_l or any("交換" in str((a.payload or {}).get("name") or a.description) for a in safe_acts)):
             self._shop_expecting_drink_confirm = False
 
@@ -2496,17 +2898,39 @@ class LocalHybridDecisionAgent:
                 self._banned_drink_discard_attempts = 0
                 self._banned_drink_discard_ctx = None
         if scene != "battle_turn":
-            # Reset battle-specific caches once out of battle scenes (except transient popup)
-            if scene in ("produce_schedule", "shop", "card_reward", "home", "produce_setup"):
+            # Reset battle-specific caches once out of battle scenes (NEVER on transient popups OR mid-battle #22 移動 modal!)
+            raw_obs_txt = (obs.raw_text or "") if obs is not None else ""
+            is_mid_battle_move_modal = (
+                scene == "card_reward"
+                and (
+                    any(
+                        str((a.payload or {}).get("name") or "") == "移動する"
+                        or "手札に移動" in str(a.description or "")
+                        or "加入手牌" in str(a.description or "")
+                        for a in legal_actions
+                    )
+                    or (
+                        ("移動" in raw_obs_txt or "手札" in raw_obs_txt)
+                        and not any(k in raw_obs_txt for k in ("受け取る", "チェンジ", "削除", "強化", "カスタマイズ"))
+                    )
+                )
+            )
+            if scene in ("produce_schedule", "shop", "home", "produce_setup") or (
+                scene == "card_reward" and not is_mid_battle_move_modal
+            ):
                 self.battle_planner.reset_battle()
         if scene in ("produce_schedule", "battle_turn", "home", "produce_setup"):
+            self._in_shop_visit = False
             self._shop_clicked_slots.clear()
             self._shop_noop_features.clear()
             self._shop_last_clicked_feature = None
             self._shop_last_points = None
             self._shop_refresh_count = 0
+            self._shop_refresh_noop_streak = 0
             self._shop_expecting_drink_confirm = False
+            self._shop_expecting_priority_card_confirm = None
             self._shop_attempted_drink_ids.clear()
+            self._shop_attempted_card_ids.clear()
             self._reward_seen_slots.clear()
             self._reward_slot_attempts.clear()
             self._reward_visited_grid_slots.clear()
@@ -2532,7 +2956,10 @@ class LocalHybridDecisionAgent:
                 self._shop_last_clicked_feature = None
                 self._shop_last_points = None
                 self._shop_attempted_drink_ids.clear()
+                self._shop_attempted_card_ids.clear()
+                self._shop_expecting_priority_card_confirm = None
                 self._shop_refresh_count = 0
+                self._shop_refresh_noop_streak = 0
                 self._customize_clicked_tiles.clear()
                 self._customize_cards_tried = 0
                 self._customize_done_count = 0
@@ -2549,7 +2976,7 @@ class LocalHybridDecisionAgent:
         if scene == "produce_setup":
             return self._decide_produce_setup(legal_actions)
         if scene == "produce_schedule":
-            return self._decide_produce_schedule(legal_actions, obs)
+            return self._decide_produce_schedule(legal_actions, obs, p_idol_id=p_idol_id)
         if scene == "produce_event":
             return self._decide_produce_event(legal_actions, obs, p_idol_id=p_idol_id)
         if scene == "card_reward":

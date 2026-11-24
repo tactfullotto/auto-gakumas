@@ -77,12 +77,30 @@ def build_local_hif_runner(
 
         controller.screencap = _wrapped_screencap  # type: ignore[method-assign]
 
+    seed_data: Optional[Dict[str, Any]] = None
+    if initial_loadout_dict and isinstance(initial_loadout_dict, dict):
+        seed_data = dict(initial_loadout_dict)
+    elif initial_library and Path(initial_library).exists():
+        seed_data = json.loads(Path(initial_library).read_text(encoding="utf-8"))
+
     mode_l = (loadout_mode or "auto").strip().lower()
     if mode_l not in ("auto", "manual", "hybrid"):
         mode_l = "auto"
 
-    prefs_obj = ProducePreferences.from_dict(preferences)
-    init_plan_hint = str(((initial_loadout_dict or {}).get("plan")) or plan or "logic").lower()
+    # Web-exported config JSONs have initial_loadout_captured=False (only signature cards + memories + preferences):
+    # keep HifLoadoutScanner active in hybrid mode unless user explicitly forced manual mode.
+    seed_is_unscanned_config = bool(
+        seed_data is not None and seed_data.get("initial_loadout_captured") is False
+    )
+    if seed_is_unscanned_config and mode_l == "auto":
+        mode_l = "hybrid"
+
+    effective_prefs_raw = preferences
+    if not effective_prefs_raw and seed_data and isinstance(seed_data.get("preferences"), dict):
+        effective_prefs_raw = seed_data["preferences"]
+    prefs_obj = ProducePreferences.from_dict(effective_prefs_raw)
+
+    init_plan_hint = str(((seed_data or {}).get("plan")) or plan or "logic").lower()
     scanner = None if mode_l == "manual" else HifLoadoutScanner(db=db, plan=init_plan_hint)
     if scanner is not None and hasattr(scanner.reco, "set_banned_drink_ids"):
         scanner.reco.set_banned_drink_ids(prefs_obj.banned_drink_ids)
@@ -101,6 +119,18 @@ def build_local_hif_runner(
     if dbg_path is not None:
         dbg_path.mkdir(parents=True, exist_ok=True)
     saved_battle_tags: set[str] = set()
+    saved_ui_dbg_count = [0]
+    last_captured_frame: list[Any] = [None]
+
+    orig_screencap_for_dbg = controller.screencap
+
+    def _capture_tracking_screencap():
+        frame = orig_screencap_for_dbg()
+        if frame is not None and getattr(frame, "size", 0) > 0:
+            last_captured_frame[0] = frame
+        return frame
+
+    controller.screencap = _capture_tracking_screencap  # type: ignore[method-assign]
 
     csv_fh = None
     csv_writer = None
@@ -142,6 +172,7 @@ def build_local_hif_runner(
             "deck_count",
             "deck_ids",
             "week_activity",
+            "click_coords",
         ])
         csv_fh.flush()
 
@@ -208,16 +239,31 @@ def build_local_hif_runner(
                 len(deck_list),
                 ",".join(str(x) for x in deck_list),
                 obs.week_activity if obs is not None else "",
+                f"{res.click_coords[0]},{res.click_coords[1]}" if res.click_coords else "",
             ])
             csv_fh.flush()
-        if dbg_path is not None and obs is not None and obs.scene_type == "battle_turn":
-            tag = f"W{obs.week}_rem{obs.turns_remaining}"
-            if tag not in saved_battle_tags:
-                saved_battle_tags.add(tag)
+        if dbg_path is not None and obs is not None:
+            if obs.scene_type == "battle_turn":
+                tag = f"W{obs.week}_rem{obs.turns_remaining}"
+                if tag not in saved_battle_tags:
+                    saved_battle_tags.add(tag)
+                    try:
+                        raw = last_captured_frame[0] if last_captured_frame[0] is not None else controller.screencap()
+                        if raw is not None and raw.size > 0:
+                            cv2.imwrite(str(dbg_path / f"battle_{tag}_step{res.step_idx:03d}.png"), cv2.cvtColor(raw, cv2.COLOR_RGB2BGR))
+                    except Exception:
+                        pass
+            elif obs.scene_type in ("card_reward", "shop") and saved_ui_dbg_count[0] < 60:
+                saved_ui_dbg_count[0] += 1
                 try:
-                    raw = controller.screencap()
-                    if raw is not None and raw.size > 0:
-                        cv2.imwrite(str(dbg_path / f"battle_{tag}_step{res.step_idx:03d}.png"), cv2.cvtColor(raw, cv2.COLOR_RGB2BGR))
+                    raw = last_captured_frame[0]
+                    if raw is not None and getattr(raw, "size", 0) > 0:
+                        bgr = cv2.cvtColor(raw.copy(), cv2.COLOR_RGB2BGR)
+                        if res.click_coords:
+                            cx, cy = int(res.click_coords[0]), int(res.click_coords[1])
+                            cv2.circle(bgr, (cx, cy), 14, (0, 0, 255), 3)
+                            cv2.drawMarker(bgr, (cx, cy), (0, 255, 255), cv2.MARKER_CROSS, 24, 2)
+                        cv2.imwrite(str(dbg_path / f"{obs.scene_type}_W{obs.week}_step{res.step_idx:03d}.png"), bgr)
                 except Exception:
                     pass
         if on_step_callback is not None:
@@ -225,12 +271,6 @@ def build_local_hif_runner(
                 on_step_callback(res)
             except Exception:
                 pass
-
-    seed_data: Optional[Dict[str, Any]] = None
-    if initial_loadout_dict and isinstance(initial_loadout_dict, dict):
-        seed_data = dict(initial_loadout_dict)
-    elif initial_library and Path(initial_library).exists():
-        seed_data = json.loads(Path(initial_library).read_text(encoding="utf-8"))
 
     hooks_raw = (seed_data.get("card_memory_hooks") or {}) if seed_data else {}
     manual_hooks_int = {
@@ -278,7 +318,9 @@ def build_local_hif_runner(
         runner.scene_routing_reco.set_banned_drink_ids(prefs_obj.banned_drink_ids)
 
     if seed_data is not None:
-        if mode_l == "manual" or (initial_library and Path(initial_library).exists()):
+        if mode_l == "manual" or (
+            initial_library and Path(initial_library).exists() and not seed_is_unscanned_config and mode_l != "hybrid"
+        ):
             runner.tracker.set_initial_loadout(
                 p_idol_id=init_pid_arg,
                 plan=init_plan_arg,
@@ -307,8 +349,8 @@ def build_local_hif_runner(
             if init_pid_arg is not None:
                 runner.p_idol_id = int(init_pid_arg)
             runner._flush_produce_library()
-        elif mode_l == "hybrid":
-            # Keep auto-scanner active at produce_setup, while seeding manual idol/memories/slots/passives/customizations
+        elif mode_l in ("hybrid", "auto"):
+            # Keep auto-scanner active at produce_setup, while ALWAYS seeding manual memories/slots/passives/customizations
             runner.tracker.memory_slots = [dict(s) for s in manual_slots if isinstance(s, dict)]
             runner.tracker.memory_passives = [dict(p) for p in manual_passives if isinstance(p, dict)]
             if manual_hooks_int or manual_custs_int:
@@ -334,7 +376,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--delay", type=float, default=0.5, help="Delay between steps in seconds")
     parser.add_argument("--ppo-episodes", type=int, default=2000, help="PPO training episodes per battle")
     parser.add_argument("--ismcts-sims", type=int, default=64, help="SO-ISMCTS simulations per battle decision")
-    parser.add_argument("--initial-library", default=None, help="Optional initial produce library JSON to seed mid-run starts")
+    parser.add_argument("--initial-library", default=None, help="Optional initial produce library or Web config JSON")
+    parser.add_argument("--loadout-mode", default="auto", choices=("auto", "hybrid", "manual"), help="Loadout capture mode (auto/hybrid/manual)")
     parser.add_argument("--library-out", default=None, help="Optional JSON output path for scanned produce library")
     parser.add_argument("--checkpoint", default=None, help="Optional runner checkpoint JSON path")
     parser.add_argument("--debug-dir", default=None, help="Optional directory to dump battle turn screenshots")
@@ -352,6 +395,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         adb_path=args.adb_path,
         plan=args.plan,
         scenario_id=args.scenario,
+        loadout_mode=args.loadout_mode,
         ppo_episodes=args.ppo_episodes,
         ismcts_sims=args.ismcts_sims,
         initial_library=args.initial_library,

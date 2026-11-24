@@ -105,7 +105,12 @@ def test_action_codec_and_mask_bijection():
             mask, action_map = codec.legal_mask_and_map(sim)
             legal_ids = np.flatnonzero(mask)
             assert len(legal_ids) == len(action_map)
-            assert mask[codec.end_turn_action_id]
+            has_trouble = any(
+                k == "card" and sim.is_trouble_card(sim.hand[idx].cfg)
+                for k, idx in action_map.values()
+            )
+            expected_end_turn = not (has_trouble and sim.is_trouble_exile_mandatory())
+            assert bool(mask[codec.end_turn_action_id]) is expected_end_turn
 
             for h_idx, inst in enumerate(sim.hand):
                 if inst.cfg.card_id == 299:

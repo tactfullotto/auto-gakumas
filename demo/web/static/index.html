@@ -562,28 +562,95 @@
 
                 <div class="hif-pref-buckets">
                   <div class="hif-pref-bucket">
-                    <h3>★ 高优先必选卡 (<span id="hif-pref-pri-cnt">0</span>)</h3>
+                    <div class="hif-pref-bucket-head">
+                      <h3>★ 高优先必选卡 (<span id="hif-pref-pri-cnt">0</span>) <span class="muted-note">· 商店遇到未拥有时优先于饮料买入 · 不限张数</span></h3>
+                      <button id="btn-hif-clear-priority" type="button" class="btn-secondary btn-compact">清空</button>
+                    </div>
                     <div id="hif-pref-priority-list" class="hif-pref-pills"></div>
                   </div>
                   <div class="hif-pref-bucket">
-                    <h3>🔒 锁卡保护（不删不换出）(<span id="hif-pref-keep-cnt">0</span>)</h3>
+                    <div class="hif-pref-bucket-head">
+                      <h3>🔒 锁卡保护（不删不换出）(<span id="hif-pref-keep-cnt">0</span>) <span class="muted-note">· 不限张数</span></h3>
+                      <button id="btn-hif-clear-keep" type="button" class="btn-secondary btn-compact">清空</button>
+                    </div>
                     <div id="hif-pref-keep-list" class="hif-pref-pills"></div>
                   </div>
                   <div class="hif-pref-bucket">
-                    <h3>🚫 避坑禁选卡（优先换删）(<span id="hif-pref-avoid-cnt">0</span>)</h3>
+                    <div class="hif-pref-bucket-head">
+                      <h3>🚫 避坑禁选卡（优先换删）(<span id="hif-pref-avoid-cnt">0</span>) <span class="muted-note">· 不限张数</span></h3>
+                      <button id="btn-hif-clear-avoid" type="button" class="btn-secondary btn-compact">清空</button>
+                    </div>
                     <div id="hif-pref-avoid-list" class="hif-pref-pills"></div>
                   </div>
                   <div class="hif-pref-bucket">
-                    <h3>⚖️ 单卡微调权重列表（支持手动 ± 分数）</h3>
+                    <div class="hif-pref-bucket-head">
+                      <h3>⚖️ 单卡微调权重列表（支持手动 ± 分数）(<span id="hif-pref-weight-cnt">0</span>)</h3>
+                      <button id="btn-hif-clear-weights" type="button" class="btn-secondary btn-compact">清空</button>
+                    </div>
                     <div id="hif-pref-card-weights-list" class="hif-weights-list"></div>
                   </div>
                 </div>
 
                 <div class="sub-section-header">
                   <h3>搜索当前职业卡牌加入偏好</h3>
+                  <div class="hif-pref-results-bar">
+                    <span id="hif-pref-card-count" class="muted-note">匹配 0 张</span>
+                    <button id="btn-hif-pref-bulk-avoid" type="button" class="btn-secondary btn-compact hif-btn-danger" title="将当前筛选列表中的全部卡牌一键加入避坑禁选">🚫 筛选结果全加入禁选</button>
+                    <button id="btn-hif-pref-reset-filter" type="button" class="btn-secondary btn-compact">重置筛选</button>
+                  </div>
                 </div>
                 <div class="hif-picker-filters">
-                  <input id="hif-pref-card-q" type="search" placeholder="搜索想优先抓取或避坑的技能卡（如：私がスター、夢色リップ...）">
+                  <input id="hif-pref-card-q" type="search" placeholder="搜索技能卡名 / ID / 效果关键词（如：私がスター、集中、好調...）">
+                  <select id="hif-pref-card-type">
+                    <option value="all">全部类型</option>
+                    <option value="active">主动 (A)</option>
+                    <option value="mental">精神 (M)</option>
+                  </select>
+                  <select id="hif-pref-card-cat">
+                    <option value="usable" selected>本角色固有 + 流派通用</option>
+                    <option value="normal">仅通用 / 流派</option>
+                    <option value="signature">仅角色固有（全角色）</option>
+                    <option value="all">全卡池（含他角色固有）</option>
+                  </select>
+                  <select id="hif-pref-card-rarity">
+                    <option value="all">全部稀有度</option>
+                    <option value="L">Legend (L)</option>
+                    <option value="SSR">SSR</option>
+                    <option value="SR">SR</option>
+                    <option value="R">R</option>
+                    <option value="N">N / 基础</option>
+                  </select>
+                  <select id="hif-pref-card-up">
+                    <option value="all">强化 +/- 全部</option>
+                    <option value="upgraded">仅看 + 版</option>
+                    <option value="base">仅看未强化</option>
+                  </select>
+                  <select id="hif-pref-card-effect">
+                    <option value="all">全部词条效果</option>
+                    <option value="好調">好調</option>
+                    <option value="絶好調">絶好調</option>
+                    <option value="集中">集中</option>
+                    <option value="好印象">好印象</option>
+                    <option value="やる気">やる気</option>
+                    <option value="元気">元気</option>
+                    <option value="全力">全力</option>
+                    <option value="強気">強気</option>
+                    <option value="温存">温存</option>
+                    <option value="使用数追加">使用数追加+1</option>
+                    <option value="引く">抽牌 (引く)</option>
+                  </select>
+                  <select id="hif-pref-card-status">
+                    <option value="all">全部偏好状态</option>
+                    <option value="unassigned">仅未配置</option>
+                    <option value="priority">已设高优</option>
+                    <option value="keep">已锁卡</option>
+                    <option value="avoid">已禁选</option>
+                  </select>
+                  <select id="hif-pref-card-sort">
+                    <option value="rarity_desc" selected>按稀有度排序</option>
+                    <option value="id_asc">按序号升序 (#1→)</option>
+                    <option value="id_desc">按序号降序 (→#1)</option>
+                  </select>
                 </div>
                 <div id="hif-pref-card-results" class="hif-pref-card-results"></div>
               </section>

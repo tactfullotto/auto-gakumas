@@ -1645,6 +1645,23 @@ class HeadlessBattleSimulator:
         total += len(re.findall(r"\bdrawcard\b", rem_top))
         return total
 
+    def can_use_drink(self, drink_cfg: DrinkConfig, *, hand_size: Optional[int] = None) -> bool:
+        """Core engine legality rule: forbid wasting tutor (#22) or pure-draw drinks at 5-card hand cap."""
+        h_sz = len(self.hand) if hand_size is None else int(hand_size)
+        if h_sz >= self.MAX_HAND_SIZE:
+            if self.is_tutor_drink(drink_cfg):
+                return False
+            if self.drink_draw_count(drink_cfg) > 0 and not self.is_score_buff_drink(drink_cfg):
+                return False
+        return True
+
+    def is_trouble_exile_mandatory(self, *, turns_remaining: Optional[int] = None) -> bool:
+        """Core engine rule: on non-final turns without 2x / active retrigger armed, exiling #23 眠気 strictly beats blank SKIP."""
+        if self.double_card_effect_cards != 0 or self.has_armed_active_retrigger(same_turn_only=True):
+            return False
+        rem = self.turns_remaining if turns_remaining is None else int(turns_remaining)
+        return rem >= 2
+
     def should_defer_drink_for_hand_cap(
         self,
         drink_cfg: DrinkConfig,
@@ -1654,6 +1671,8 @@ class HeadlessBattleSimulator:
     ) -> bool:
         """Defer draw/tutor drinks that would overflow the 5-card hand cap when cards can be played first."""
         h_sz = len(self.hand) if hand_size is None else int(hand_size)
+        if not self.can_use_drink(drink_cfg, hand_size=h_sz):
+            return True
         need = self.drink_draw_count(drink_cfg)
         if need <= 0:
             return False
@@ -1688,9 +1707,9 @@ class HeadlessBattleSimulator:
             return False
         st = self.stamina if stamina is None else int(stamina)
         rem = self.turns_remaining if turns_remaining is None else int(turns_remaining)
-        if has_non_trouble_card and (st >= 6 or rem <= 1):
+        if has_trouble_card and self.is_trouble_exile_mandatory(turns_remaining=rem):
             return True
-        if has_trouble_card and rem >= 2 and st >= 4:
+        if has_non_trouble_card and (st >= 6 or rem <= 1):
             return True
         return False
 
@@ -1801,13 +1820,19 @@ class HeadlessBattleSimulator:
     def legal_actions(self, *, include_voluntary_skip: bool = True) -> List[Tuple[str, int, str]]:
         """Return list of (kind, index, label): kind in {'card', 'drink', 'end_turn'}."""
         acts: List[Tuple[str, int, str]] = []
+        has_playable_trouble = False
         for idx, inst in enumerate(self.hand):
             if self.can_play_card(inst):
                 c_var, c_amt = self._effective_cost(inst.cfg)
                 acts.append(("card", idx, f"{inst.cfg.name}({c_var}-{c_amt})"))
+                if self.is_trouble_card(inst.cfg):
+                    has_playable_trouble = True
         for didx, dr in enumerate(self.available_drinks):
+            if not self.can_use_drink(dr):
+                continue
             acts.append(("drink", didx, f"{dr.name}(#{dr.drink_id})"))
-        if include_voluntary_skip or not any(a[0] == "card" for a in acts):
+        forbid_skip_for_trouble = has_playable_trouble and self.is_trouble_exile_mandatory()
+        if (not forbid_skip_for_trouble and include_voluntary_skip) or not any(a[0] == "card" for a in acts):
             acts.append(("end_turn", -1, "END_TURN"))
         return acts
 

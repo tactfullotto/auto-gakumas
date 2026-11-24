@@ -101,6 +101,7 @@ class LiveScreenRecognizer:
         self._non_battle_streak: int = 0
         self._shop_visited_slots: Set[str] = set()
         self._shop_last_clicked_slot: Optional[str] = None
+        self._shop_card_icon_cache: Dict[str, List[Tuple[int, np.ndarray]]] = {}
         self._reward_visited_slots: Set[int] = set()
         self._drink_templates_cache: Optional[List[Tuple[int, str, np.ndarray, np.ndarray]]] = None
         self._last_buff_hud_occluded: bool = False
@@ -582,20 +583,78 @@ class LiveScreenRecognizer:
                 return True
             return False
 
-        if hp_found or ("Pポイント" in full_text):
-            p_radius = max(3, int(round(w / 240.0)))
-            p_dig = frame[int(h * 0.056) : int(h * 0.090), int(w * 0.50) : int(w * 0.63)]
-            p_val = self._ocr_bw_banner_number(
-                self._extract_outlined_white_core(p_dig, radius=p_radius, white_min=205, dark_max=135),
-                prefix="P:",
-                max_val=9999,
-                scale=3,
-            )
-            if p_val is not None and not _is_truncated_p_points(p_val):
-                p_points = p_val
+        def _ocr_hud_p_points_sandwich() -> Optional[int]:
+            """Extract outlined white P-point digits (0..9999) via adaptive white-core + '10+<d>+10' sandwich OCR."""
+            if h < 400 or w < 240:
+                return None
+            crop = frame[int(h * 0.056) : int(h * 0.092), int(w * 0.50) : int(w * 0.62)]
+            if crop.size == 0:
+                return None
+            ch, cw = crop.shape[:2]
+            lum = crop.mean(axis=2)
+            sat = crop.max(axis=2).astype(np.int16) - crop.min(axis=2).astype(np.int16)
+            p99 = float(np.percentile(lum, 99))
+            if p99 < 145.0:
+                return None
+            thr = max(135.0, p99 - 42.0)
+            wmask = (lum > thr) & (sat < 35)
+            num_l, labels, stats_cc, _ = cv2.connectedComponentsWithStats(wmask.astype(np.uint8))
+            clean = np.zeros_like(wmask, dtype=np.uint8)
+            for idx_cc in range(1, num_l):
+                area = int(stats_cc[idx_cc, cv2.CC_STAT_AREA])
+                bw_cc = int(stats_cc[idx_cc, cv2.CC_STAT_WIDTH])
+                bh_cc = int(stats_cc[idx_cc, cv2.CC_STAT_HEIGHT])
+                if area >= 8 and int(ch * 0.22) <= bh_cc <= int(ch * 0.85) and bw_cc <= int(cw * 0.45):
+                    clean[labels == idx_cc] = 255
+            ys_cc, xs_cc = np.where(clean > 0)
+            if len(xs_cc) == 0:
+                return None
+            sub = clean[ys_cc.min() : ys_cc.max() + 1, xs_cc.min() : xs_cc.max() + 1]
+            up = cv2.resize(sub, (max(1, sub.shape[1] * 3), max(1, sub.shape[0] * 3)), interpolation=cv2.INTER_CUBIC)
+            _, up = cv2.threshold(up, 115, 255, cv2.THRESH_BINARY)
+            inv = 255 - up
+            dh, dw = inv.shape[:2]
+            pad_y = 32
+            pref, suff, gap = "10+", "+10", 8
+            fscale = max(0.8, dh / 24.0)
+            (tw_p, _), _ = cv2.getTextSize(pref, cv2.FONT_HERSHEY_SIMPLEX, fscale, 4)
+            (sw_p, _), _ = cv2.getTextSize(suff, cv2.FONT_HERSHEY_SIMPLEX, fscale, 4)
+            x0 = 30
+            dx = x0 + tw_p + gap
+            sx = dx + dw + gap
+            canvas = np.full((dh + pad_y * 2, sx + sw_p + 40, 3), 255, dtype=np.uint8)
+            cv2.putText(canvas, pref, (x0, pad_y + dh - 2), cv2.FONT_HERSHEY_SIMPLEX, fscale, (0, 0, 0), 4, cv2.LINE_AA)
+            canvas[pad_y : pad_y + dh, dx : dx + dw] = cv2.cvtColor(inv, cv2.COLOR_GRAY2RGB)
+            cv2.putText(canvas, suff, (sx, pad_y + dh - 2), cv2.FONT_HERSHEY_SIMPLEX, fscale, (0, 0, 0), 4, cv2.LINE_AA)
+            en_txt = self.en_ocr.recognize_array(canvas).get("text", "")
+            m_sw = re.search(r"10\+\s*(\d{1,4})\s*\+10", en_txt)
+            if m_sw:
+                val_sw = int(m_sw.group(1))
+                if 0 <= val_sw <= 9999:
+                    return val_sw
+            return None
+
+        is_shop_hud = ("Pポイント" in full_text) or ("交換する" in full_text)
+        if hp_found or is_shop_hud:
+            p_sw = _ocr_hud_p_points_sandwich()
+            if p_sw is not None and not _is_truncated_p_points(p_sw):
+                p_points = p_sw
                 self._last_p_points = p_points
                 p_found = True
-            else:
+            if not p_found:
+                p_radius = max(3, int(round(w / 240.0)))
+                p_dig = frame[int(h * 0.056) : int(h * 0.090), int(w * 0.50) : int(w * 0.63)]
+                p_val = self._ocr_bw_banner_number(
+                    self._extract_outlined_white_core(p_dig, radius=p_radius, white_min=205, dark_max=135),
+                    prefix="P:",
+                    max_val=9999,
+                    scale=3,
+                )
+                if p_val is not None and not _is_truncated_p_points(p_val):
+                    p_points = p_val
+                    self._last_p_points = p_points
+                    p_found = True
+            if not p_found:
                 for p_mode in ("white", "dark_on_light", "raw"):
                     for en_flag in (True, False):
                         p_crop_text = self._ocr_crop_upscaled(
@@ -610,7 +669,7 @@ class LiveScreenRecognizer:
                         m_pp = re.search(r"(\d{1,4})", p_clean)
                         if m_pp:
                             cand_p = int(m_pp.group(1))
-                            if self._last_p_points >= 50 and cand_p < 10:
+                            if (not is_shop_hud) and self._last_p_points >= 50 and cand_p < 10:
                                 continue
                             if _is_truncated_p_points(cand_p):
                                 continue
@@ -1694,9 +1753,16 @@ class LiveScreenRecognizer:
             )
             return 0 < lesson_cnt < 3
 
+        def _needs_soudan_scan() -> bool:
+            has_lesson = any(
+                any(k in o["name"] for k in ("授業", "公開レッスン", "レッスン"))
+                for o in options
+            )
+            return (not has_lesson) and ("相談" not in seen)
+
         seen = set()
         _scan_keywords(clusters, seen)
-        if (len(options) < 2 or _incomplete_lessons()) and strip.size > 0:
+        if (len(options) < 2 or _incomplete_lessons() or _needs_soudan_scan()) and strip.size > 0:
             # White-text mask (2x + pad15) catches white-on-cyan SELECT tiles (e.g. おでかけ) and pale tiles (e.g. 相談)
             from PIL import ImageOps
             wm = (strip[:, :, 0] > 212) & (strip[:, :, 1] > 212) & (strip[:, :, 2] > 212)
@@ -1716,7 +1782,7 @@ class LiveScreenRecognizer:
                     ],
                 })
             _scan_keywords(white_clusters, seen)
-        if (len(options) <= 1 or _incomplete_lessons()) and strip.size > 0:
+        if (len(options) <= 1 or _incomplete_lessons() or _needs_soudan_scan()) and strip.size > 0:
             # Upscaled 2x raw OCR pass catches Day 6 相談 / おでかけ tiles and rainbow SP lesson tiles
             from PIL import ImageOps
             s2 = Image.fromarray(strip).resize((strip.shape[1] * 2, strip.shape[0] * 2), Image.Resampling.BICUBIC)
@@ -3023,8 +3089,11 @@ class LiveScreenRecognizer:
             & (band[:, :, 2] < 135)
             & ((band[:, :, 0].astype(np.int16) - band[:, :, 2].astype(np.int16)) > 95)
         )
+        # Keep orange card artwork (e.g. Sense R silhouettes on white backgrounds) when finding slot spans,
+        # and use the non-halo ink profile only when splitting merged/touching segments.
+        ink_col_all = (min_ch < 228).mean(axis=0)
         ink_col = ((min_ch < 218) & (~is_orange_halo)).mean(axis=0)
-        ink = ink_col > 0.12
+        ink = ink_col_all > 0.12
         raw_segs: List[Tuple[int, int]] = []
         in_seg = False
         s = 0
@@ -3086,31 +3155,22 @@ class LiveScreenRecognizer:
 
         bracket_orange: List[Tuple[int, int, int, int, int]] = []
         for x1, x2 in split_segs:
-            top_br = frame[max(0, y_top - 16) : min(h, y_top + 2), max(0, x1 + 4) : min(w, max(x1 + 5, x2 - 4))]
-            bot_br = frame[max(0, y_bot - 2) : min(h, y_bot + 16), max(0, x1 + 4) : min(w, max(x1 + 5, x2 - 4))]
-            t_cnt = int(
-                ((top_br[:, :, 0] > 230) & (top_br[:, :, 1] > 115) & (top_br[:, :, 1] < 185) & (top_br[:, :, 2] < 85)).sum()
-            ) if top_br.size else 0
-            b_cnt = int(
-                ((bot_br[:, :, 0] > 230) & (bot_br[:, :, 1] > 115) & (bot_br[:, :, 1] < 185) & (bot_br[:, :, 2] < 85)).sum()
-            ) if bot_br.size else 0
-            bracket_orange.append((x1, y_top, x2, y_bot, t_cnt + b_cnt))
-        max_br = max((c for *_, c in bracket_orange), default=0)
-        if max_br >= 80:
-            raw_orange = bracket_orange
-        else:
-            raw_orange = []
-            for x1, x2 in split_segs:
-                pad_patch = frame[max(0, y_top - 8) : min(h, y_bot + 8), max(0, x1 - 6) : min(w, x2 + 6)]
-                orange_cnt = int(
-                    ((pad_patch[:, :, 0] > 230) & (pad_patch[:, :, 1] > 115) & (pad_patch[:, :, 1] < 185) & (pad_patch[:, :, 2] < 85)).sum()
-                )
-                raw_orange.append((x1, y_top, x2, y_bot, orange_cnt))
-        max_orange = max((c for *_, c in raw_orange), default=0)
+            top_br = frame[max(0, y_top - 16) : max(0, y_top - 2), max(0, x1 + 4) : min(w, max(x1 + 5, x2 - 4))]
+            bot_br = frame[min(h, y_bot + 2) : min(h, y_bot + 16), max(0, x1 + 4) : min(w, max(x1 + 5, x2 - 4))]
+            left_br = frame[max(0, y_top - 4) : min(h, y_bot + 4), max(0, x1 - 14) : max(0, x1 - 2)]
+            right_br = frame[max(0, y_top - 4) : min(h, y_bot + 4), min(w, x2 + 2) : min(w, x2 + 14)]
+            br_cnt = 0
+            for br in (top_br, bot_br, left_br, right_br):
+                if br.size:
+                    br_cnt += int(
+                        ((br[:, :, 0] > 230) & (br[:, :, 1] > 115) & (br[:, :, 1] < 185) & (br[:, :, 2] < 85)).sum()
+                    )
+            bracket_orange.append((x1, y_top, x2, y_bot, br_cnt))
+        max_orange = max((c for *_, c in bracket_orange), default=0)
         best_idx = -1
-        if max_orange >= 120:
-            best_idx = max(range(len(raw_orange)), key=lambda idx: raw_orange[idx][4])
-        return [(x1, y1, x2, y2, idx == best_idx) for idx, (x1, y1, x2, y2, _) in enumerate(raw_orange)]
+        if max_orange >= 80:
+            best_idx = max(range(len(bracket_orange)), key=lambda idx: bracket_orange[idx][4])
+        return [(x1, y1, x2, y2, idx == best_idx) for idx, (x1, y1, x2, y2, _) in enumerate(bracket_orange)]
 
     def _scan_deck_grid_slots(
         self,
@@ -3124,10 +3184,10 @@ class LiveScreenRecognizer:
     ) -> List[Tuple[int, int, int, int, bool, bool]]:
         """Detect 4-column scrollable deck-grid card slots for チェンジ/削除/強化/カスタマイズ."""
         cols = (
-            (0.111, 0.275),
-            (0.311, 0.475),
-            (0.511, 0.675),
-            (0.711, 0.875),
+            (0.112, 0.278),
+            (0.322, 0.488),
+            (0.532, 0.698),
+            (0.742, 0.908),
         )
         rows_px: List[Tuple[int, int]]
         if grid_mode == "upgrade":
@@ -3138,6 +3198,18 @@ class LiveScreenRecognizer:
                     (0.532, 0.608),
                     (0.626, 0.702),
                     (0.720, 0.796),
+                )
+            ]
+        elif grid_mode == "move_to_hand":
+            rows_px = [
+                (int(h * y1_f), int(h * y2_f))
+                for y1_f, y2_f in (
+                    (0.248, 0.324),
+                    (0.341, 0.417),
+                    (0.433, 0.509),
+                    (0.525, 0.601),
+                    (0.618, 0.694),
+                    (0.711, 0.786),
                 )
             ]
         elif grid_mode == "shop_delete":
@@ -3225,8 +3297,13 @@ class LiveScreenRecognizer:
                 sat = float((patch.max(axis=2).astype(np.int16) - patch.min(axis=2).astype(np.int16)).mean())
                 p95 = float(np.percentile(patch, 95))
                 if grid_mode == "shop_delete":
-                    if mean_v < 130.0 and sat < 40.0:
-                        # Blurred empty trailing slot in 6x4 shop delete grid
+                    patch_std = float(patch.std())
+                    if mean_v < 130.0 and sat < 40.0 and (patch_std < 22.0 or mean_v < 85.0):
+                        # Blurred empty trailing slot in 6x4 shop delete grid (preserve crisp dark-gray T/眠気 cards)
+                        continue
+                elif grid_mode == "move_to_hand":
+                    # In #22 移動 modal, populated cards sit brightly above the blurred stage background (mean>=138 & p95>=185)
+                    if mean_v < 138.0 or p95 < 185.0:
                         continue
                 elif (not allow_trouble_dark) and (p95 < 175.0 or (mean_v < 122.0 and sat < 45.0)):
                     # Dimmed / darkened unselectable card (e.g. 眠気 / locked card in チェンジ)
@@ -3240,7 +3317,7 @@ class LiveScreenRecognizer:
                             ((br[:, :, 0] > 230) & (br[:, :, 1] > 115) & (br[:, :, 1] < 185) & (br[:, :, 2] < 85)).sum()
                         )
                 is_basic_gray = (
-                    (sat < 48.0 and mean_v >= 130.0)
+                    (sat < 48.0 and (mean_v >= 130.0 or float(patch.std()) >= 22.0))
                     if grid_mode == "shop_delete"
                     else ((mean_v < 142.0) and (p95 >= 175.0 or allow_trouble_dark))
                 )
@@ -3326,38 +3403,74 @@ class LiveScreenRecognizer:
             k in norm_joined
             for k in ("カスタマイズを選", "カスタマイズ内容", "強化内容", "カスタマイズする", "カスタマイズ可能スキルカード")
         )
-        is_upgrade_flow = (
-            not is_customize_flow
-            and (
-                ("強化するスキルカード" in norm_joined)
-                or ("強化確認" in norm_joined)
-                or any(
-                    ("強化" in ln["text"]) and len(ln["text"].strip()) <= 6 and ln["bbox"][1] < int(h * 0.12)
-                    for ln in lines
-                )
-            )
-        )
-        is_move_to_hand_flow = (
-            ("手札に移動" in norm_joined)
-            or ("移動するスキルカード" in norm_joined)
-            or ("山札か捨札" in norm_joined)
+        has_delete_header = (
+            ("削除するスキルカード" in norm_joined)
             or any(
-                ln["text"].strip().lstrip("ノ") in ("移動", "移動する")
-                and ln["bbox"][1] > int(h * 0.74)
-                for ln in lines
-            )
-        ) and ("移動中" not in norm_joined)
-        is_shop_delete_flow = (
-            not is_customize_flow
-            and not is_upgrade_flow
-            and not is_move_to_hand_flow
-            and any(
                 ("削除" in ln["text"])
                 and len(ln["text"].strip()) <= 6
                 and ln["bbox"][1] < int(h * 0.12)
                 and ln["bbox"][0] < int(w * 0.35)
                 for ln in lines
             )
+        )
+        has_change_or_delete_cue = (
+            has_delete_header
+            or ("チェンジするスキルカード" in norm_joined)
+            or ("手放すスキルカード" in norm_joined)
+            or ("チェンジする" in norm_joined and "チェンジで獲得" not in norm_joined)
+            or ("削除する" in norm_joined)
+            or any(
+                ("チェンジ" in _normalize_katakana_ocr(ln["text"]) or "削除" in ln["text"])
+                and len(ln["text"].strip()) <= 8
+                and (
+                    (ln["bbox"][1] < int(h * 0.12) and ln["bbox"][0] < int(w * 0.40))
+                    or ln["bbox"][1] > int(h * 0.74)
+                )
+                for ln in lines
+            )
+        )
+        has_upgrade_header = (
+            ("強化するスキルカード" in norm_joined)
+            or any(
+                ("強化" in ln["text"]) and len(ln["text"].strip()) <= 6 and ln["bbox"][1] < int(h * 0.12)
+                for ln in lines
+            )
+        )
+        # Never let card-effect description text (e.g. 天賦の才+ / 夏夜に咲く思い出+ containing '山札か捨札...移動')
+        # hijack チェンジ / 削除 / 強化 / カスタマイズ into the #22 move_to_hand grid!
+        is_move_to_hand_flow = (
+            not is_customize_flow
+            and not has_change_or_delete_cue
+            and not has_upgrade_header
+            and (
+                ("手札に移動" in norm_joined)
+                or ("移動するスキルカード" in norm_joined)
+                or ("山札か捨札" in norm_joined)
+                or any(
+                    ("移動" in ln["text"])
+                    and len(ln["text"].strip()) <= 6
+                    and ln["bbox"][1] < int(h * 0.12)
+                    and ln["bbox"][0] < int(w * 0.35)
+                    for ln in lines
+                )
+                or any(
+                    ln["text"].strip().lstrip("ノ◆◇✦") in ("移動", "移動する")
+                    and ln["bbox"][1] > int(h * 0.74)
+                    for ln in lines
+                )
+            )
+            and ("移動中" not in norm_joined)
+        )
+        is_shop_delete_flow = (
+            not is_customize_flow
+            and not is_move_to_hand_flow
+            and has_delete_header
+        )
+        is_upgrade_flow = (
+            not is_customize_flow
+            and not is_move_to_hand_flow
+            and not has_change_or_delete_cue
+            and (has_upgrade_header or ("強化確認" in norm_joined))
         )
         want_deck_grid = want_deck_grid or is_upgrade_flow or is_shop_delete_flow or is_move_to_hand_flow
         is_deck_trade_or_delete = (
@@ -3385,7 +3498,7 @@ class LiveScreenRecognizer:
                     or (is_upgrade_flow and "強化" in norm_txt and "強化確認" not in norm_txt)
                     or "削除する" in norm_txt
                     or (is_shop_delete_flow and "削除" in norm_txt and "削除確認" not in norm_txt)
-                    or (is_move_to_hand_flow and norm_txt.lstrip("ノ") in ("移動", "移動する"))
+                    or (is_move_to_hand_flow and re.sub(r"^[ノレvV✓✔◆◇✦\W]+", "", norm_txt) in ("移動", "移動する"))
                     or "チェンジ" in norm_txt
                     or "カスタマイズする" in norm_txt
                     or ("カスタマイズ" in norm_txt and "可能" not in norm_txt and "メニュー" not in norm_txt and "確認" not in norm_txt)
@@ -3402,7 +3515,7 @@ class LiveScreenRecognizer:
                 receive_active = mean_r > (205.0 if (is_shop_delete_flow or is_move_to_hand_flow) else 218.0)
                 if is_shop_delete_flow and "削除" in norm_txt:
                     opt_name = "削除する"
-                elif is_move_to_hand_flow and norm_txt.lstrip("ノ") in ("移動", "移動する"):
+                elif is_move_to_hand_flow and re.sub(r"^[ノレvV✓✔◆◇✦\W]+", "", norm_txt) in ("移動", "移動する"):
                     opt_name = "移動する"
                 else:
                     opt_name = txt
@@ -3446,7 +3559,7 @@ class LiveScreenRecognizer:
         if (receive_opt is None or not receive_active) and not has_cap_text:
             orange_confirm = self._ocr_bottom_orange_button(frame, w, h)
             if orange_confirm is not None and orange_confirm["bbox"]["ymin"] >= int(h * 0.74):
-                oc_name = str(orange_confirm["name"] or "").strip().lstrip("ノ")
+                oc_name = re.sub(r"^[ノレvV✓✔◆◇✦\W]+", "", str(orange_confirm["name"] or "").strip())
                 if oc_name in ("決定", "受け取る", "強化する", "強化", "削除する", "削除", "移動する", "移動", "チェンジする", "チェンジ", "カスタマイズする", "カスタマイズ", "次へ", "確認", "はい", "OK", "受け取らない"):
                     if is_shop_delete_flow and oc_name in ("削除", "決定"):
                         receive_opt = dict(orange_confirm, name="削除する", title="削除する")
@@ -3484,8 +3597,8 @@ class LiveScreenRecognizer:
         # 2. Read upper modal preview panel (upgrade uses y=0.065..0.30; deck-grid チェンジ/削除 uses y=0.155..0.345; regular rewards use y=0.37..0.59)
         if is_upgrade_flow:
             pv_patch = frame[int(h * 0.065) : int(h * 0.30), int(w * 0.14) : int(w * 0.92)]
-        elif is_shop_delete_flow:
-            pv_patch = frame[int(h * 0.060) : int(h * 0.255), int(w * 0.24) : int(w * 0.92)]
+        elif is_shop_delete_flow or is_move_to_hand_flow:
+            pv_patch = frame[int(h * 0.060) : int(h * 0.255), int(w * 0.14) : int(w * 0.92)]
         elif want_deck_grid:
             pv_patch = frame[int(h * 0.155) : int(h * 0.345), int(w * 0.26) : int(w * 0.92)]
         else:
@@ -3573,7 +3686,19 @@ class LiveScreenRecognizer:
         # 3. Check modal square card/drink slots and P-Drink cap state (3 in Hajime, 4 in H.I.F) via visual/OCR cues
         cap_count = 4 if self.scenario_id in ("hif_honsen", "hif") else 3
         allow_trouble = ("削除" in norm_joined) and (not is_move_to_hand_flow)
-        grid_mode = "customize" if is_customize_flow else ("upgrade" if is_upgrade_flow else ("shop_delete" if is_shop_delete_flow else "default"))
+        grid_mode = (
+            "customize"
+            if is_customize_flow
+            else (
+                "upgrade"
+                if is_upgrade_flow
+                else (
+                    "move_to_hand"
+                    if is_move_to_hand_flow
+                    else ("shop_delete" if is_shop_delete_flow else "default")
+                )
+            )
+        )
         grid_slots = (
             self._scan_deck_grid_slots(
                 frame,
@@ -3602,6 +3727,11 @@ class LiveScreenRecognizer:
         if want_deck_grid and not receive_active:
             icon_slots = [(x1, y1, x2, y2, False) for x1, y1, x2, y2, _ in icon_slots]
         grid_gray_flags = [is_gray for *_, is_gray in grid_slots] if grid_slots else []
+        grid_custom_flags = (
+            [self._has_card_customization_badge(frame[y1:y2, x1:x2]) for x1, y1, x2, y2, _ in icon_slots]
+            if (want_deck_grid and icon_slots)
+            else []
+        )
         slot_matches: List[Tuple[Optional[Dict[str, Any]], float]] = (
             [self._match_square_drink_slot_with_score(frame, x1, y1, x2, y2) for x1, y1, x2, y2, _ in icon_slots]
             if icon_slots and "スキルカード" not in full_joined
@@ -3736,25 +3866,45 @@ class LiveScreenRecognizer:
                     else receive_opt["title"]
                 )
             sel_slot_idx = next((i for i, (_, _, _, _, is_sel) in enumerate(icon_slots) if is_sel), None) if want_deck_grid else None
+            preview_is_customized = False
+            if is_deck_trade_or_delete and not is_drink_reward and not is_customize_flow:
+                if sel_slot_idx is not None and sel_slot_idx < len(grid_custom_flags) and grid_custom_flags[sel_slot_idx]:
+                    preview_is_customized = True
+                elif h >= 400 and w >= 300:
+                    # Check left preview icon & top-left 'before' icon on チェンジ/削除 screens for green (1)/(2)/(3) customization badge
+                    lp = frame[int(h * 0.165) : int(h * 0.265), int(w * 0.045) : int(w * 0.255)]
+                    if self._has_card_customization_badge(lp):
+                        preview_is_customized = True
+                    elif "チェンジ" in norm_joined:
+                        tp = frame[int(h * 0.055) : int(h * 0.155), int(w * 0.230) : int(w * 0.440)]
+                        if self._has_card_customization_badge(tp):
+                            preview_is_customized = True
+            cust_tag = " 【已加点强化(カスタマイズ済)·换牌不继承!】" if preview_is_customized else ""
             options.append({
                 "choice_id": len(options),
                 **id_extra,
                 **({"slot_idx": sel_slot_idx} if sel_slot_idx is not None else {}),
+                **({"is_customized": True} if preview_is_customized else {}),
                 "name": act_name,
                 "title": act_title,
-                "description": f"{preview_effect.replace(chr(10), ' / ')} (点击{receive_opt['title']}确认)" if preview_effect else f"奖励界面确认按钮: {receive_opt['title']}",
+                "description": (
+                    f"{preview_effect.replace(chr(10), ' / ')}{cust_tag} (点击{receive_opt['title']}确认)"
+                    if preview_effect
+                    else f"奖励界面确认按钮: {receive_opt['title']}{cust_tag}"
+                ),
                 "bbox": receive_opt["bbox"],
             })
             # Also allow switching to another thumbnail if multiple candidates exist
             if len(icon_slots) > 1:
                 if want_deck_grid:
                     # Keep full stable slot list so agent can scan cleanly and return to any best_grid_slot
-                    unselected_idxs = list(range(len(icon_slots)))[:16]
+                    unselected_idxs = list(range(len(icon_slots)))[:24]
                 else:
                     unselected_idxs = [i for i, (_, _, _, _, is_sel) in enumerate(icon_slots) if not is_sel]
                 for idx in unselected_idxs:
                     x1, y1, x2, y2, _is_sel = icon_slots[idx]
                     cd = slot_drinks[idx] if idx < len(slot_drinks) else None
+                    is_slot_cust = bool(idx < len(grid_custom_flags) and grid_custom_flags[idx])
                     if is_drink_reward:
                         sw_name = f"预览候选饮料{idx + 1}"
                         sw_title = f"切换选中第{idx + 1}瓶候选饮料《{cd['name']}》" if cd else f"预览第{idx + 1}瓶候选饮料"
@@ -3775,16 +3925,20 @@ class LiveScreenRecognizer:
                         else:
                             is_gray_low = idx < len(grid_gray_flags) and grid_gray_flags[idx]
                             sw_name = f"预览第{idx + 1}张待选卡"
-                            sw_title = (
-                                f"改选底部暗灰低稀有度卡 #{idx + 1} (疑似基本卡·推荐换出)"
-                                if is_gray_low
-                                else f"切换选中卡库第{idx + 1}张卡"
-                            )
-                            sw_desc = (
-                                "位于卡库最底部的暗灰N/基本卡，换出几乎无损(推荐先点看确认再点チェンジ)"
-                                if is_gray_low
-                                else "切换查看并选中该卡库卡牌"
-                            )
+                            if is_slot_cust:
+                                sw_title = f"切换选中卡库第{idx + 1}张卡 【已加点强化·勿换出】"
+                                sw_desc = "已加点强化(カスタマイズ済)卡牌，换牌/删除不会继承加点，请勿换出"
+                            else:
+                                sw_title = (
+                                    f"改选底部暗灰低稀有度卡 #{idx + 1} (疑似基本卡·推荐换出)"
+                                    if is_gray_low
+                                    else f"切换选中卡库第{idx + 1}张卡"
+                                )
+                                sw_desc = (
+                                    "位于卡库最底部的暗灰N/基本卡，换出几乎无损(推荐先点看确认再点チェンジ)"
+                                    if is_gray_low
+                                    else "切换查看并选中该卡库卡牌"
+                                )
                     else:
                         sw_name = f"预览第{idx + 1}张候选卡"
                         sw_title = sw_name
@@ -3793,6 +3947,7 @@ class LiveScreenRecognizer:
                         "choice_id": len(options),
                         "slot_idx": idx,
                         **({"drink_id": int(cd["id"])} if cd else {}),
+                        **({"is_customized": True} if is_slot_cust else {}),
                         "name": sw_name,
                         "title": sw_title,
                         "description": sw_desc,
@@ -3819,7 +3974,7 @@ class LiveScreenRecognizer:
             has_unselected = any(not s[4] for s in icon_slots)
             iter_slots = list(enumerate(icon_slots))
             if want_deck_grid:
-                iter_slots = iter_slots[:16]
+                iter_slots = iter_slots[:24]
             for idx, (x1, y1, x2, y2, is_sel) in iter_slots:
                 if is_sel and has_unselected:
                     continue
@@ -3850,19 +4005,29 @@ class LiveScreenRecognizer:
                         })
                     else:
                         is_gray_low = idx < len(grid_gray_flags) and grid_gray_flags[idx]
+                        is_slot_cust = bool(idx < len(grid_custom_flags) and grid_custom_flags[idx])
                         options.append({
                             "choice_id": len(options),
                             "slot_idx": idx,
+                            **({"is_customized": True} if is_slot_cust else {}),
                             "name": f"换出候选卡{idx + 1}",
                             "title": (
-                                f"待换出卡 {idx + 1} (底部暗灰基本卡区域·优先选看!)"
-                                if is_gray_low
-                                else f"待选卡 {idx + 1} (点击预览卡牌名称与效果)"
+                                f"待选卡 {idx + 1} 【已加点强化·勿换出】"
+                                if is_slot_cust
+                                else (
+                                    f"待换出卡 {idx + 1} (底部暗灰基本卡区域·优先选看!)"
+                                    if is_gray_low
+                                    else f"待选卡 {idx + 1} (点击预览卡牌名称与效果)"
+                                )
                             ),
                             "description": (
-                                "卡库底部低稀有度/基本卡槽位，点击预览名称确认后点チェンジ换出"
-                                if is_gray_low
-                                else "点击预览并选中该卡库技能卡"
+                                "已加点强化(カスタマイズ済)卡牌，换牌/删除不会继承加点，请勿换出"
+                                if is_slot_cust
+                                else (
+                                    "卡库底部低稀有度/基本卡槽位，点击预览名称确认后点チェンジ换出"
+                                    if is_gray_low
+                                    else "点击预览并选中该卡库技能卡"
+                                )
                             ),
                             "bbox": BoundingBox(xmin=x1, ymin=y1, xmax=x2, ymax=y2).model_dump(),
                         })
@@ -4087,6 +4252,90 @@ class LiveScreenRecognizer:
                         })
         return feat_lines
 
+    def _get_shop_card_icon_templates(self, plan: str) -> List[Tuple[int, np.ndarray]]:
+        """Lazy-load normalized 32x32 inner-art templates for plan+free skill cards (used on shop shelves)."""
+        key = (plan or "all").lower()
+        cached = self._shop_card_icon_cache.get(key)
+        if cached is not None:
+            return cached
+        from pathlib import Path
+
+        allowed_plans = {key, "free", "all", ""} if key not in ("all", "") else None
+        out: List[Tuple[int, np.ndarray]] = []
+        cards_root = Path(__file__).resolve().parents[2] / "cards"
+        if not cards_root.exists():
+            cards_root = Path("cards")
+        if cards_root.exists():
+            for p in cards_root.rglob("icons/*.png"):
+                try:
+                    cid = int(p.stem)
+                except ValueError:
+                    continue
+                row = self.db.get_card_by_id(cid)
+                if not row or str(row.get("type") or "").lower() == "trouble":
+                    continue
+                pl = str(row.get("plan") or "").lower()
+                if allowed_plans is not None and pl not in allowed_plans:
+                    continue
+                try:
+                    im = np.array(Image.open(p).convert("RGB"))
+                except Exception:
+                    continue
+                ih, iw = im.shape[:2]
+                if ih < 20 or iw < 20:
+                    continue
+                crop = cv2.resize(
+                    im[int(ih * 0.14) : int(ih * 0.76), int(iw * 0.16) : int(iw * 0.84)],
+                    (32, 32),
+                ).astype(np.float32)
+                std = float(crop.std())
+                if std < 1e-4:
+                    continue
+                vec = (crop - float(crop.mean())) / (std + 1e-6)
+                out.append((cid, vec))
+        self._shop_card_icon_cache[key] = out
+        return out
+
+    def _match_square_card_slot(
+        self,
+        frame: np.ndarray,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        *,
+        plan: str = "all",
+        min_score: float = 0.28,
+    ) -> Optional[Dict[str, Any]]:
+        """Visually identify a skill card icon on a shop shelf (returns DB card row when confident)."""
+        patch = frame[y1:y2, x1:x2]
+        if patch is None or patch.size == 0:
+            return None
+        ph, pw = patch.shape[:2]
+        if ph < 24 or pw < 24:
+            return None
+        templates = self._get_shop_card_icon_templates(plan)
+        if not templates:
+            return None
+        crop = cv2.resize(
+            patch[int(ph * 0.14) : int(ph * 0.76), int(pw * 0.16) : int(pw * 0.84)],
+            (32, 32),
+        ).astype(np.float32)
+        std = float(crop.std())
+        if std < 1e-4:
+            return None
+        vec = (crop - float(crop.mean())) / (std + 1e-6)
+        best_cid = 0
+        best_sc = -1.0
+        for cid, tvec in templates:
+            sc = float((vec * tvec).mean())
+            if sc > best_sc:
+                best_sc = sc
+                best_cid = cid
+        if best_cid > 0 and best_sc >= min_score:
+            return self.db.get_card_by_id(best_cid)
+        return None
+
     def _scan_shop_grid_and_confirm(
         self,
         frame: np.ndarray,
@@ -4210,6 +4459,10 @@ class LiveScreenRecognizer:
 
         cap_count = 4 if self.scenario_id in ("hif_honsen", "hif") else 3
         held_drinks = self._recognize_bottom_drinks(frame, plan)
+        # Any red unaffordable price on the shop grid proves p_pts < price!
+        min_red_price = min((g[6] for g in grid_entries if g[8] and 10 <= g[6] < 999), default=None)
+        if min_red_price is not None and p_pts >= min_red_price:
+            p_pts = max(0, min_red_price - 1)
         if (
             selected_key is not None
             and exchange_opt is not None
@@ -4289,11 +4542,21 @@ class LiveScreenRecognizer:
                 continue
             if (not is_red_unaff) and p_pts >= price:
                 slot_dr = self._match_square_drink_slot(frame, x1, iy1, x2, iy2) if kind == "Pドリンク" else None
-                item_label = f"《{slot_dr['name']}》 " if slot_dr else ""
+                slot_card = (
+                    self._match_square_card_slot(frame, x1, iy1, x2, iy2, plan=plan)
+                    if kind == "スキルカード"
+                    else None
+                )
+                item_label = (
+                    f"《{slot_dr['name']}》 "
+                    if slot_dr
+                    else (f"《{slot_card['name']}》 " if slot_card else "")
+                )
                 options.append({
                     "choice_id": len(options),
                     "shop_slot_key": slot_key,
                     **({"drink_id": int(slot_dr["id"])} if slot_dr else {}),
+                    **({"card_id": int(slot_card["id"])} if slot_card else {}),
                     "name": f"{kind}{ci + 1}",
                     "title": f"切换预览 {kind} #{ci + 1} {item_label}({price}P)".replace("  ", " "),
                     "price": price,
@@ -4412,8 +4675,10 @@ class LiveScreenRecognizer:
                 obx1, oby1, obx2, oby2 = oln["bbox"]
                 ocx = (obx1 + obx2) // 2
                 ocy = (oby1 + oby2) // 2
-                if abs(ocy - cy_this) <= 24 and x_min <= ocx <= x_max:
+                if abs(ocy - cy_this) <= 32 and x_min <= ocx <= x_max:
                     m_adj = re.search(r"^\s*P?\s*(\d{2,3})\s*P?\s*$", otxt)
+                    if not m_adj and len(otxt) <= 10 and not any(k in otxt for k in ("強化", "削除", "カード")):
+                        m_adj = re.search(r"(\d{2,3})", otxt)
                     if m_adj and 10 <= int(m_adj.group(1)) <= 500:
                         return int(m_adj.group(1))
             return None
@@ -4421,6 +4686,14 @@ class LiveScreenRecognizer:
         for ln in feat_lines:
             txt = ln["text"].strip()
             norm_t = txt.replace("チェンツ", "チェンジ").replace("カスタマイス", "カスタマイズ")
+            # Skip the white helper tooltip banner ("持っているスキルカードの強化や削除ができます。") above the real buttons!
+            if (
+                "持っている" in norm_t
+                or "強化や削除" in norm_t
+                or "ができます" in norm_t
+                or "スキルカードの強化" in norm_t
+            ):
+                continue
             has_both_upg_del = ("強化" in norm_t and "削除" in norm_t)
             if len(norm_t) > (34 if has_both_upg_del else 18):
                 continue
@@ -4548,6 +4821,59 @@ class LiveScreenRecognizer:
                         **({"price": d_price} if d_price is not None else {}),
                         "bbox": BoundingBox(xmin=d_box[0], ymin=d_box[1], xmax=d_box[2], ymax=d_box[3]).model_dump(),
                     })
+
+        # Visual fallback for W6 相談's vivid pink-orange 強化 (left) and purple-blue 削除 (right) buttons
+        # at y=0.681..0.730: WinRT OCR often misses white kanji on the colored gradient buttons.
+        btn_y1, btn_y2 = int(h * 0.681), int(h * 0.730)
+        if "強化" not in seen_feats and "強化" not in self._shop_visited_slots:
+            u_box = (int(w * 0.070), btn_y1, int(w * 0.490), btn_y2)
+            u_patch = frame[u_box[1] : u_box[3], u_box[0] : u_box[2]]
+            if u_patch.size > 0:
+                u_sat = float((u_patch.max(axis=2).astype(np.int16) - u_patch.min(axis=2).astype(np.int16)).mean())
+                u_r = float(u_patch[:, :, 0].mean())
+                u_b = float(u_patch[:, :, 2].mean())
+                if u_sat >= 50.0 and (u_r - u_b) >= 25.0:
+                    u_price = _lookup_side_price(btn_y1, btn_y2, 0, int(w * 0.49))
+                    if u_price is None or p_pts >= u_price:
+                        seen_feats.add("強化")
+                        options.append({
+                            "choice_id": len(options),
+                            "shop_slot_key": "強化",
+                            "name": "強化",
+                            "title": (
+                                f"スキルカード強化 ({u_price}P·强化手头未+卡牌)"
+                                if u_price is not None
+                                else "スキルカード強化 (强化手头未+卡牌)"
+                            ),
+                            **({"price": u_price} if u_price is not None else {}),
+                            "description": f"花费{u_price}P强化一张技能卡(+)" if u_price is not None else "强化一张技能卡(+)",
+                            "bbox": BoundingBox(xmin=u_box[0], ymin=u_box[1], xmax=u_box[2], ymax=u_box[3]).model_dump(),
+                        })
+
+        if "削除" not in seen_feats and "削除" not in self._shop_visited_slots:
+            d_box = (int(w * 0.508), btn_y1, int(w * 0.930), btn_y2)
+            d_patch = frame[d_box[1] : d_box[3], d_box[0] : d_box[2]]
+            if d_patch.size > 0:
+                d_sat = float((d_patch.max(axis=2).astype(np.int16) - d_patch.min(axis=2).astype(np.int16)).mean())
+                d_r = float(d_patch[:, :, 0].mean())
+                d_b = float(d_patch[:, :, 2].mean())
+                if d_sat >= 45.0 and (d_b - d_r) >= 20.0:
+                    d_price = _lookup_side_price(btn_y1, btn_y2, int(w * 0.50), w)
+                    if d_price is None or p_pts >= d_price:
+                        seen_feats.add("削除")
+                        options.append({
+                            "choice_id": len(options),
+                            "shop_slot_key": "削除",
+                            "name": "削除",
+                            "title": (
+                                f"スキルカード削除 ({d_price}P·删除冗余废卡)"
+                                if d_price is not None
+                                else "スキルカード削除 (删除冗余废卡)"
+                            ),
+                            "description": f"花费{d_price}P删除一张废卡/干扰卡" if d_price is not None else "删除多余基本/废卡精简牌库",
+                            **({"price": d_price} if d_price is not None else {}),
+                            "bbox": BoundingBox(xmin=d_box[0], ymin=d_box[1], xmax=d_box[2], ymax=d_box[3]).model_dump(),
+                        })
 
         return self._finalize_shop_observation(
             frame,
@@ -4714,7 +5040,26 @@ class LiveScreenRecognizer:
                             int(n) for n in re.findall(r"\d{1,3}", oln["text"]) if 5 <= int(n) <= 300
                         )
                 ref_price = r_nums[-1] if r_nums else 10
-                if r_bright and p_pts >= ref_price:
+                ref_price_band = frame[
+                    min(h - 1, r_box[3]) : min(h, r_box[3] + int(h * 0.035)),
+                    max(0, r_box[0]) : min(w, r_box[2]),
+                ]
+                ref_red_px = (
+                    int(
+                        (
+                            (ref_price_band[:, :, 0] > 185)
+                            & (ref_price_band[:, :, 1] < 105)
+                            & (ref_price_band[:, :, 2] < 115)
+                        ).sum()
+                    )
+                    if ref_price_band.size > 0
+                    else 0
+                )
+                ref_price_is_red = ref_red_px >= max(12, int(round(25 * (w * h) / (720.0 * 1600.0))))
+                if ref_price_is_red and ref_price >= 10:
+                    p_pts = min(p_pts, max(0, ref_price - 1))
+                    self._last_p_points = p_pts
+                if r_bright and (not ref_price_is_red) and p_pts >= ref_price:
                     seen_feats.add("リフレッシュ")
                     options.append({
                         "choice_id": len(options),
@@ -5048,12 +5393,33 @@ class LiveScreenRecognizer:
                 seen_ids.add(did)
         return drinks
 
+    @staticmethod
+    def _has_card_customization_badge(card_patch: np.ndarray) -> bool:
+        """Detect the bright-green circular customization-count badge (1)/(2)/(3) above the A/M tab of a skill card icon."""
+        if card_patch is None or card_patch.size == 0:
+            return False
+        ph, pw = card_patch.shape[:2]
+        if ph < 24 or pw < 24:
+            return False
+        roi = card_patch[int(ph * 0.64) : int(ph * 0.88), int(pw * 0.45) : int(pw * 0.65)]
+        if roi.size == 0:
+            return False
+        r = roi[:, :, 0].astype(np.int16)
+        g = roi[:, :, 1].astype(np.int16)
+        b = roi[:, :, 2].astype(np.int16)
+        gm = (g >= 145) & ((g - r) >= 45) & ((g - b) >= 25) & (r < 115)
+        cnt = int(gm.sum())
+        area = max(1, roi.shape[0] * roi.shape[1])
+        return cnt >= max(24, int(area * 0.045))
+
     def _detect_hand_card_slots(self, frame: np.ndarray) -> List[Tuple[int, int, int, int, bool]]:
-        """Detect card column slots via light card title strip brightness projection."""
+        """Detect card column slots via light card title strip brightness projection + non-overlapping Trouble (眠気) scan."""
         h, w = frame.shape[:2]
         foot = frame[int(h * 0.865) : int(h * 0.905), :]
         col_bright = (np.max(foot, axis=2) > 195).mean(axis=0) > 0.32
-        slots: List[Tuple[int, int, int, int, bool]] = []
+        min_slot_w = max(55, int(round(w * 0.135)))
+        max_single_w = max(150, int(round(w * 0.275)))
+        raw_spans: List[Tuple[int, int]] = []
         in_seg = False
         s = 0
         for x in range(w):
@@ -5062,10 +5428,52 @@ class LiveScreenRecognizer:
                 s = x
             elif not col_bright[x] and in_seg:
                 in_seg = False
-                if x - s >= 120:
-                    slots.append((s, int(h * 0.74), x, int(h * 0.91), False))
-        if in_seg and w - s >= 120:
-            slots.append((s, int(h * 0.74), w, int(h * 0.91), False))
+                if x - s >= min_slot_w:
+                    raw_spans.append((s, x))
+        if in_seg and w - s >= min_slot_w:
+            raw_spans.append((s, w))
+
+        slots: List[Tuple[int, int, int, int, bool]] = []
+        for sx, ex in raw_spans:
+            seg_w = ex - sx
+            if seg_w > max_single_w:
+                # 4- or 5-card hand with touching title strips: split evenly by expected card width (~0.19w)
+                n_cards = max(2, min(5, int(round(seg_w / max(1.0, w * 0.19)))))
+                step = seg_w / float(n_cards)
+                for k in range(n_cards):
+                    cx1 = int(round(sx + k * step))
+                    cx2 = int(round(sx + (k + 1) * step))
+                    if cx2 - cx1 >= max(45, int(round(w * 0.11))):
+                        slots.append((cx1, int(h * 0.74), cx2, int(h * 0.91), False))
+            else:
+                slots.append((sx, int(h * 0.74), ex, int(h * 0.91), False))
+
+        # Separate non-overlapping scan for dark-charcoal Trouble (#23 眠気) cards (silver body + dark neutral footer)
+        if h >= 400 and w >= 300:
+            dark_strip = frame[int(h * 0.885) : int(h * 0.902), :]
+            f_r = dark_strip[:, :, 0].astype(np.int16)
+            f_g = dark_strip[:, :, 1].astype(np.int16)
+            f_b = dark_strip[:, :, 2].astype(np.int16)
+            f_spread = np.maximum(np.maximum(f_r, f_g), f_b) - np.minimum(np.minimum(f_r, f_g), f_b)
+            f_mean = (f_r + f_g + f_b) / 3.0
+            col_dark = ((f_mean >= 42) & (f_mean <= 112) & (f_spread <= 24)).mean(axis=0) > 0.50
+            body = frame[int(h * 0.775) : int(h * 0.865), :]
+            b_r = body[:, :, 0].astype(np.int16)
+            b_g = body[:, :, 1].astype(np.int16)
+            b_b = body[:, :, 2].astype(np.int16)
+            b_spread = np.maximum(np.maximum(b_r, b_g), b_b) - np.minimum(np.minimum(b_r, b_g), b_b)
+            b_mean = (b_r + b_g + b_b) / 3.0
+            col_silver = ((b_mean >= 170) & (b_mean <= 245) & (b_spread <= 45)).mean(axis=0) > 0.35
+            col_nemuki = col_dark & col_silver & (~col_bright)
+            for bx1, _, bx2, _, _ in slots:
+                col_nemuki[max(0, bx1 - 4) : min(w, bx2 + 4)] = False
+            for nx1, nx2 in self._contiguous_true_spans(
+                np.where(col_nemuki)[0],
+                max_gap=max(24, int(round(w * 0.06))),
+                min_len=max(55, int(round(w * 0.115))),
+            ):
+                slots.append((int(nx1), int(h * 0.74), int(nx2), int(h * 0.91), False))
+            slots.sort(key=lambda t: t[0])
 
         enriched: List[Tuple[int, int, int, int, bool]] = []
         for x1, y1, x2, y2, _ in slots:
@@ -5350,12 +5758,13 @@ class LiveScreenRecognizer:
             rarity=matched.get("rarity") or "N",
         )
 
-    def _parse_left_buff_diamonds(self, frame: np.ndarray) -> Dict[str, int]:
-        """Detect left-HUD blue buff diamonds and classify 👍 (goodImpressionTurns) vs ✊ (motivation) with stack counts."""
+    def _parse_left_buff_diamonds(self, frame: np.ndarray, *, plan: str = "logic") -> Dict[str, int]:
+        """Detect left-HUD blue buff diamonds for Logic (好印象/やる気) and Sense (好調/集中/絶好調)."""
         self._last_buff_hud_occluded = False
         h, w = frame.shape[:2]
         if h < 400 or w < 300:
             return {}
+        is_sense_plan = (plan or "logic").lower() == "sense"
 
         def _classify_glyph(wm: np.ndarray) -> Optional[str]:
             g_ys, g_xs = np.where(wm)
@@ -5427,29 +5836,60 @@ class LiveScreenRecognizer:
             # Exclude outer white diamond rim & bottom-right overlapping stack-digit corner
             in_inner = (norm_dist <= 0.80) & ~((yy > cy + 0.35 * ph / 2.0) & (xx > cx + 0.35 * pw / 2.0))
             wm = in_inner & (patch[:, :, 0] > 205) & (patch[:, :, 1] > 205) & (patch[:, :, 2] > 205)
-            buff_key = _classify_glyph(wm)
-            if buff_key is None and k > 1:
+            buff_key = None if is_sense_plan else _classify_glyph(wm)
+            if (not is_sense_plan) and buff_key is None and k > 1:
                 continue
 
             ja_lbl = self._ocr_crop_upscaled(
                 frame,
-                (x2 + 1, max(0, y1 - 6), ja_right_grid, min(h, y2 + 8)),
-                scale=2,
+                (
+                    (x1 + int(pw * 0.56), y1 + int(ph * 0.35), int(w * 0.32), min(h, y2 + 10))
+                    if is_sense_plan
+                    else (x2 + 1, max(0, y1 - 6), ja_right_grid, min(h, y2 + 8))
+                ),
+                scale=(3 if is_sense_plan else 2),
                 use_en=False,
                 mode="white",
-                pad=10,
+                pad=(12 if is_sense_plan else 10),
             )
             if any(tok in ja_lbl for tok in self._LEFT_BUFF_TOAST_TOKENS):
                 self._last_buff_hud_occluded = True
                 continue
-            if buff_key is None or any(tok in ja_lbl for tok in ("ターン", "回", "%", "％")):
-                continue
+            if is_sense_plan:
+                if any(tok in ja_lbl for tok in ("回", "%", "％")):
+                    continue
+                has_turn_lbl = any(tok in ja_lbl for tok in ("ターン", "フーン", "タ-ン", "ター"))
+                if k == 0 and (has_turn_lbl or not ja_lbl.strip()):
+                    buff_key = "goodConditionTurns"
+                elif k == 1 and not has_turn_lbl:
+                    buff_key = "concentration"
+                elif k >= 2 and has_turn_lbl and "perfectConditionTurns" not in found:
+                    # 絶好調 (flexing arm + burst lines) always appears above 消費体力減少 (heart)
+                    buff_key = "perfectConditionTurns"
+                else:
+                    continue
+            else:
+                if buff_key is None or any(tok in ja_lbl for tok in ("ターン", "回", "%", "％")):
+                    continue
 
-            dy1, dy2 = y1 + int(ph * 0.48), min(h, y2 + 10)
-            dx1 = x1 + int(pw * 0.52)
-            dp = frame[dy1:dy2, dx1:dx2_grid]
+            dy1, dy2 = (y1 + int(ph * 0.35), min(h, y2 + 10)) if is_sense_plan else (y1 + int(ph * 0.48), min(h, y2 + 10))
+            dx1 = x1 + int(pw * (0.56 if is_sense_plan else 0.52))
+            dx2_cur = min(w, int(w * 0.19)) if is_sense_plan else dx2_grid
+            dp = frame[dy1:dy2, dx1:dx2_cur]
             b_val = None
-            if dp.size > 0:
+            if is_sense_plan and dp.size > 0:
+                core_s = self._extract_outlined_white_core(dp, radius=3, white_min=200, dark_max=135)
+                for pfx in ("LV:", "M:", "W:", "HP:"):
+                    b_val = self._ocr_bw_banner_number(core_s, prefix=pfx, max_val=999, scale=3, min_val=1)
+                    if b_val is not None:
+                        break
+                if b_val is None and ja_lbl:
+                    m_jt = re.search(r"(\d{1,3})\s*(?:ターン|フーン|ター)", ja_lbl) or re.search(r"(\d{1,3})", ja_lbl)
+                    if m_jt:
+                        cand_v = int(m_jt.group(1))
+                        if 1 <= cand_v <= 999:
+                            b_val = cand_v
+            if (not is_sense_plan) and dp.size > 0:
                 enc_nb = _filter_digit_mask(
                     self._extract_enclosed_white_digits(dp, white_min=220, outline_max=200, exclude_blue=False),
                     dp.shape[0],
@@ -5479,7 +5919,7 @@ class LiveScreenRecognizer:
             if b_val is None:
                 v_txt = self._ocr_crop_upscaled(
                     frame,
-                    (dx1, dy1, dx2_grid, dy2),
+                    (dx1, dy1, dx2_cur, dy2),
                     scale=3,
                     use_en=True,
                     mode="white",
@@ -5490,10 +5930,25 @@ class LiveScreenRecognizer:
                     cand_v = int(m_v.group(1))
                     if 1 <= cand_v <= 999:
                         b_val = cand_v
+            if b_val is None and is_sense_plan and buff_key in ("goodConditionTurns", "perfectConditionTurns"):
+                # Also allow Japanese OCR on "56ターン" full row crop as a clean fallback
+                full_lbl = self._ocr_crop_upscaled(
+                    frame,
+                    (dx1, max(0, y1 + int(ph * 0.30)), int(w * 0.30), dy2),
+                    scale=3,
+                    use_en=False,
+                    mode="white",
+                    pad=12,
+                )
+                m_t = re.search(r"(\d{1,3})\s*(?:ターン|フーン|ター)", full_lbl) or re.search(r"(\d{1,3})", full_lbl)
+                if m_t:
+                    cand_v = int(m_t.group(1))
+                    if 1 <= cand_v <= 999:
+                        b_val = cand_v
             if b_val is not None and 1 <= b_val <= 999:
                 found[buff_key] = max(found.get(buff_key, 0), b_val)
 
-        if found or self._last_buff_hud_occluded:
+        if found or self._last_buff_hud_occluded or is_sense_plan:
             return found
 
         # Dynamic cluster fallback for non-standard / synthetic layouts
@@ -6032,12 +6487,18 @@ class LiveScreenRecognizer:
         if is_exam_hud and hp_found or (not is_exam_hud and best_hp_y >= 0):
             self._last_stamina = (stamina, meta["max_stamina"])
 
-        # Top-left Good Impression (👍好印象) & Motivation (✊やる気) diamonds (Logic only) + red feather halfCostTurns
+        # Top-left Logic (👍好印象/✊やる気) & Sense (好調/集中/絶好調) buff diamonds + red feather halfCostTurns
         buffs: Dict[str, int] = {}
-        is_logic_plan = (plan or "logic").lower() == "logic"
-        diamond_buffs = self._parse_left_buff_diamonds(frame) if is_logic_plan else {}
+        plan_l = (plan or "logic").lower()
+        is_logic_plan = plan_l == "logic"
+        is_sense_plan = plan_l == "sense"
+        diamond_buffs = (
+            self._parse_left_buff_diamonds(frame, plan=plan_l)
+            if (is_logic_plan or is_sense_plan)
+            else {}
+        )
         buff_hud_occluded = bool(
-            (is_logic_plan and getattr(self, "_last_buff_hud_occluded", False))
+            ((is_logic_plan or is_sense_plan) and getattr(self, "_last_buff_hud_occluded", False))
             or self._has_left_buff_toast_in_lines(lines, w, h)
         )
         if diamond_buffs:
@@ -6158,9 +6619,18 @@ class LiveScreenRecognizer:
                     if (card_body.size > 0 and float(card_body.max()) > 0.0)
                     else None
                 )
-                playable_flag = float(title_p.mean()) >= 145.0 or float(np.percentile(title_p, 88)) >= 200.0
-                if visual_playable is not None:
-                    playable_flag = playable_flag and visual_playable
+                is_trouble_matched = (
+                    int(matched.get("id") or 0) == 23
+                    or str(matched.get("type") or "").lower() == "trouble"
+                )
+                if is_trouble_matched:
+                    # Trouble (#23 眠気) always has a dark charcoal title strip (~105 mean) and costs 0 stamina;
+                    # judge playability by its silver body brightness (visual_playable) instead of title strip luminance.
+                    playable_flag = True if visual_playable is not False else False
+                else:
+                    playable_flag = float(title_p.mean()) >= 145.0 or float(np.percentile(title_p, 88)) >= 200.0
+                    if visual_playable is not None:
+                        playable_flag = playable_flag and visual_playable
                 cards.append(
                     self._build_recognized_card(
                         matched,
@@ -6249,6 +6719,7 @@ class LiveScreenRecognizer:
             p_items=ctx["p_items"],
             stage_bonuses=ctx["stage_bonuses"],
             cards=cards,
+            hand_slot_count=max(len(slots), len(cards)),
             drinks=self._recognize_bottom_drinks(frame, plan),
             options=battle_options,
             raw_text="\n".join([turn_box_txt, ring_hdr, ring_num_txt] + [ln["text"] for ln in lines]),

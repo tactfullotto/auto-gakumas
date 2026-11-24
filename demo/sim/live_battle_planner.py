@@ -246,14 +246,17 @@ def build_live_battle_config(
     live_top_multiplier: Optional[float] = None,
 ) -> BattleConfig:
     """Construct a BattleConfig aligned to current produce deck, P-items, stats, and live turn count."""
-    raw_stats = dict(idol_stats or {"vocal": 2400, "dance": 1400, "visual": 1800})
+    from demo.core.idol_guides import get_default_idol_stats
+
+    dflt_stats = get_default_idol_stats(p_idol_id, db=db)
+    raw_stats = dict(idol_stats or dflt_stats)
     stats = {
         k: min(3200, max(0, int(v or 0)))
         for k, v in raw_stats.items()
     }
-    for req_k, dflt in (("vocal", 2400), ("dance", 1400), ("visual", 1800)):
+    for req_k in ("vocal", "dance", "visual"):
         if req_k not in stats or stats[req_k] <= 0:
-            stats[req_k] = dflt
+            stats[req_k] = dflt_stats[req_k]
     hooks = card_memory_hooks or {}
     custs = card_customizations or {}
 
@@ -513,6 +516,9 @@ class LiveBattlePlanner:
         p_row = self.db.get_p_idol_by_id(p_idol_id) if p_idol_id else None
         idol_name = f"[{p_row['title']}] {p_row['idol_name']}" if p_row else "秦谷 美鈴"
 
+        from demo.core.idol_guides import get_default_idol_stats
+
+        dflt_battle_stats = get_default_idol_stats(p_idol_id, db=self.db, high=2600, mid=1900, low=1400)
         obs_stats = obs.idol_stats or {}
         tr_stats = getattr(tracker, "idol_stats", None) or {}
         if max((int(v or 0) for v in obs_stats.values()), default=0) > 300:
@@ -520,7 +526,7 @@ class LiveBattlePlanner:
         elif max((int(v or 0) for v in tr_stats.values()), default=0) > 300:
             raw_s = tr_stats
         elif obs.scenario_id in ("hif_honsen", "hif"):
-            raw_s = {"vocal": 2600, "dance": 1400, "visual": 1900}
+            raw_s = dflt_battle_stats
         else:
             raw_s = obs_stats
         clamped_stats = {
@@ -530,9 +536,9 @@ class LiveBattlePlanner:
 
         top_attr = max(
             (
-                ("Vo", (clamped_stats or {}).get("vocal", 2400)),
-                ("Da", (clamped_stats or {}).get("dance", 1400)),
-                ("Vi", (clamped_stats or {}).get("visual", 1800)),
+                ("Vo", (clamped_stats or {}).get("vocal", dflt_battle_stats["vocal"])),
+                ("Da", (clamped_stats or {}).get("dance", dflt_battle_stats["dance"])),
+                ("Vi", (clamped_stats or {}).get("visual", dflt_battle_stats["visual"])),
             ),
             key=lambda kv: kv[1],
         )[0]
@@ -1098,7 +1104,11 @@ class LiveBattlePlanner:
             for act in legal_actions
         )
 
-        live_hand_size = len(obs.cards)
+        live_hand_size = max(
+            len(obs.cards),
+            int(getattr(obs, "hand_slot_count", 0) or 0),
+            len(self._sim.hand) if self._sim is not None else 0,
+        )
         has_playable_non_fin = any(
             a.action_type == "play_card"
             and not self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0))
@@ -1111,6 +1121,8 @@ class LiveBattlePlanner:
                 if act.action_type == "use_drink":
                     did = int((act.payload or {}).get("drink_id") or 0)
                     dr_cfg = next((d for d in self._sim.available_drinks if d.drink_id == did), None)
+                    if dr_cfg is not None and not self._sim.can_use_drink(dr_cfg, hand_size=live_hand_size):
+                        return False
                     if self._is_tutor_drink(did) and live_hand_size >= self._sim.MAX_HAND_SIZE:
                         return False
                     if dr_cfg is not None and self._sim.should_defer_drink_for_hand_cap(
@@ -1265,6 +1277,10 @@ class LiveBattlePlanner:
                 if a.action_type == "play_card"
                 or (
                     a.action_type == "use_drink"
+                    and not (
+                        self._is_tutor_drink(int((a.payload or {}).get("drink_id") or 0))
+                        and live_hand_size >= self._sim.MAX_HAND_SIZE
+                    )
                     and not _is_banned_drink(
                         (a.payload or {}).get("drink_id"),
                         str((a.payload or {}).get("name") or ""),
@@ -1468,11 +1484,7 @@ class LiveBattlePlanner:
                     elif end_act is not None:
                         chosen_ui = end_act
                         override_note += " [Hold #814/#163 for last 2 turns]"
-            elif (
-                chosen_ui.action_type == "play_card"
-                and self._is_late_scaling_finisher_card(chosen_cid)
-                and self._sim.double_card_effect_cards == 0
-            ):
+            elif self._sim.double_card_effect_cards == 0:
                 combo_163 = next(
                     (
                         a for a in playable_cards
@@ -1480,9 +1492,58 @@ class LiveBattlePlanner:
                     ),
                     None,
                 )
-                if combo_163 is not None and int(self._sim.buffs.get("goodConditionTurns", 0) or 0) >= 13:
-                    chosen_ui = combo_163
-                    override_note += " [Combo #162/#163->#814 2x]"
+                finisher_in_hand = next(
+                    (
+                        a for a in playable_cards
+                        if self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0))
+                    ),
+                    None,
+                )
+                sim_gc = int(self._sim.buffs.get("goodConditionTurns", 0) or 0)
+                obs_gc = (obs.buffs or {}).get("goodConditionTurns")
+                # Allow #162/#163 -> #813/#814 whenever tracked goodConditionTurns >= 13, OR when HUD OCR was
+                # occluded/blank in late turns (turns_remaining <= 2) while #814 itself is visually playable (>=12 好調).
+                gc_ok_for_combo = (
+                    sim_gc >= 13
+                    or (
+                        obs_gc is None
+                        and live_rem_turns <= max(2, fin_window)
+                        and finisher_in_hand is not None
+                    )
+                )
+                chosen_is_finisher = (
+                    chosen_ui.action_type == "play_card"
+                    and self._is_late_scaling_finisher_card(chosen_cid)
+                )
+                chosen_is_free_play = (
+                    chosen_ui.action_type == "play_card"
+                    and (
+                        "不耗行动点" in str(chosen_ui.description or "")
+                        or any(
+                            c.cfg.card_id == chosen_cid and self._sim.is_free_action_card(c)
+                            for c in self._sim.hand
+                        )
+                    )
+                )
+                chosen_is_sb_drink = (
+                    chosen_ui.action_type == "use_drink"
+                    and self._score_buff_drink_info(int((chosen_ui.payload or {}).get("drink_id") or 0))[0]
+                )
+                if combo_163 is not None and gc_ok_for_combo:
+                    if chosen_is_finisher:
+                        chosen_ui = combo_163
+                        override_note += " [Combo #162/#163->#814 2x]"
+                    elif (
+                        finisher_in_hand is not None
+                        and live_rem_turns <= max(2, fin_window)
+                        and not chosen_is_free_play
+                        and not chosen_is_sb_drink
+                        and not self._is_double_effect_enabler_card(chosen_cid)
+                    ):
+                        # Both #162/#163 and #813/#814 are playable together in final turns: fire #163->#814 now
+                        # instead of spending the last action on a normal card and discarding #163!
+                        chosen_ui = combo_163
+                        override_note += " [Combo #162/#163->#814 2x]"
             elif self._sim.double_card_effect_cards > 0:
                 already_finisher = (
                     chosen_ui.action_type == "play_card"
@@ -1522,7 +1583,7 @@ class LiveBattlePlanner:
                         )
                         if (
                             tutor_act is not None
-                            and len(obs.cards) < self._sim.MAX_HAND_SIZE
+                            and live_hand_size < self._sim.MAX_HAND_SIZE
                             and len(self._sim.hand) < self._sim.MAX_HAND_SIZE
                             and any(c.cfg.base_id == 813 for z in (self._sim.draw_pile, self._sim.discard_pile) for c in z)
                         ):
@@ -1577,6 +1638,113 @@ class LiveBattlePlanner:
                     _, sb_did, sb_act = sb_drinks[0]
                     chosen_ui = sb_act
                     override_note += f" [Pre-#814 ScoreBuff Drink #{sb_did}]"
+
+        # Hard guard: never leave an unused free-action memory hook card (free_extra_use_first_play) unplayed
+        # when about to spend the action on a non-free card or end_turn (and 2x / active retrigger is not armed).
+        if (
+            chosen_ui is not None
+            and self._sim.double_card_effect_cards == 0
+            and not self._sim.has_armed_active_retrigger(same_turn_only=True)
+            and chosen_ui.action_type != "use_drink"
+        ):
+            chosen_cid_mem = int((chosen_ui.payload or {}).get("card_id") or 0) if chosen_ui.action_type == "play_card" else 0
+            chosen_inst_mem = (
+                next((c for c in self._sim.hand if c.cfg.card_id == chosen_cid_mem or c.cfg.base_id == chosen_cid_mem), None)
+                if chosen_cid_mem > 0
+                else None
+            )
+            chosen_already_free = bool(
+                chosen_ui.action_type == "play_card"
+                and (
+                    self._is_double_effect_enabler_card(chosen_cid_mem)
+                    or (chosen_inst_mem is not None and self._sim.is_free_action_card(chosen_inst_mem))
+                    or "不耗行动点" in str(chosen_ui.description or "")
+                )
+            )
+            if not chosen_already_free:
+                mem_free_act = None
+                for a in legal_actions:
+                    if a.action_type != "play_card":
+                        continue
+                    acid = int((a.payload or {}).get("card_id") or 0)
+                    if acid <= 0 or acid == 23:
+                        continue
+                    inst_m = next((c for c in self._sim.hand if c.cfg.card_id == acid or c.cfg.base_id == acid), None)
+                    if (
+                        inst_m is not None
+                        and self._sim.has_unused_memory_extra_use(inst_m)
+                        and self._sim.is_safe_dominating_free_card(inst_m)
+                    ):
+                        mem_free_act = a
+                        break
+                if mem_free_act is not None:
+                    chosen_ui = mem_free_act
+                    override_note += " [Memory Free+1 Action]"
+
+        # Final hard engine-rule guards:
+        # 1. NEVER drink a tutor (#22 初星黒酢) or pure-draw drink when hand is already at 5-card cap.
+        # 2. NEVER blank-SKIP (end_turn) when a playable trouble card (#23 眠気) can be exiled on rem>=2.
+        if chosen_ui is not None and chosen_ui.action_type == "use_drink" and live_hand_size >= self._sim.MAX_HAND_SIZE:
+            chosen_did_cap = int((chosen_ui.payload or {}).get("drink_id") or 0)
+            dr_cfg_cap = next((d for d in self._sim.available_drinks if d.drink_id == chosen_did_cap), None)
+            forbidden_by_cap = self._is_tutor_drink(chosen_did_cap) or (
+                dr_cfg_cap is not None and not self._sim.can_use_drink(dr_cfg_cap, hand_size=live_hand_size)
+            )
+            if forbidden_by_cap:
+                safe_alt_cards = [
+                    a for a in legal_actions
+                    if a.action_type == "play_card" and int((a.payload or {}).get("card_id") or 0) != 23
+                ]
+                trouble_alt_cap = [
+                    a for a in legal_actions
+                    if a.action_type == "play_card" and int((a.payload or {}).get("card_id") or 0) == 23
+                ]
+                safe_alt_drinks = [
+                    a for a in legal_actions
+                    if a.action_type == "use_drink"
+                    and not self._is_tutor_drink(int((a.payload or {}).get("drink_id") or 0))
+                    and not self._is_active_retrigger_drink(int((a.payload or {}).get("drink_id") or 0))
+                    and not _is_banned_drink(
+                        (a.payload or {}).get("drink_id"),
+                        str((a.payload or {}).get("name") or ""),
+                        str(a.description or ""),
+                        banned_ids=self.banned_drink_ids,
+                    )
+                    and not any(
+                        d.drink_id == int((a.payload or {}).get("drink_id") or 0)
+                        and not self._sim.can_use_drink(d, hand_size=live_hand_size)
+                        for d in self._sim.available_drinks
+                    )
+                ]
+                alt_end = next((a for a in legal_actions if a.action_type == "end_turn"), None)
+                if safe_alt_cards:
+                    chosen_ui = safe_alt_cards[0]
+                    override_note += " [Engine Rule: Blocked draw/tutor drink at 5-card cap->Play card]"
+                elif trouble_alt_cap and self._sim.is_trouble_exile_mandatory(turns_remaining=live_rem_turns):
+                    chosen_ui = trouble_alt_cap[0]
+                    override_note += " [Engine Rule: Blocked draw/tutor drink at 5-card cap->Exile #23]"
+                elif safe_alt_drinks:
+                    chosen_ui = safe_alt_drinks[0]
+                    override_note += " [Engine Rule: Blocked draw/tutor drink at 5-card cap->Other drink]"
+                elif alt_end is not None:
+                    chosen_ui = alt_end
+                    override_note += " [Engine Rule: Blocked draw/tutor drink at 5-card cap->End turn]"
+
+        if (
+            chosen_ui is not None
+            and chosen_ui.action_type == "end_turn"
+            and self._sim.is_trouble_exile_mandatory(turns_remaining=live_rem_turns)
+        ):
+            trouble_exile_act = next(
+                (
+                    a for a in legal_actions
+                    if a.action_type == "play_card" and int((a.payload or {}).get("card_id") or 0) == 23
+                ),
+                None,
+            )
+            if trouble_exile_act is not None:
+                chosen_ui = trouble_exile_act
+                override_note += " [Engine Rule: Exile #23 眠気 instead of SKIP]"
 
         q_best = float(mcts_stats.get("best_q_score", 0.0))
         reason = (

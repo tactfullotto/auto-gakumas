@@ -93,6 +93,7 @@ class ScreenObservation(BaseModel):
     buffs: Dict[str, int] = Field(default_factory=dict)
     buff_hud_occluded: bool = False
     cards: List[RecognizedCard] = Field(default_factory=list)
+    hand_slot_count: int = 0
     drinks: List[RecognizedDrink] = Field(default_factory=list)
     options: List[Dict[str, Any]] = Field(default_factory=list)
     raw_text: Optional[str] = None

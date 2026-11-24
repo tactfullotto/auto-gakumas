@@ -485,6 +485,46 @@ class GakumasRunner:
                     continue
                 if (
                     obs.scene_type == "battle_turn"
+                    and isinstance(self.controller, (AdbController, Win32Controller))
+                    and max_loading_waits > 1
+                    and load_try < 3
+                    and obs.cards
+                    and all(not bool(getattr(c, "playable", True)) for c in obs.cards)
+                ):
+                    logger.info(
+                        "Detected all %d battle hand cards dimmed mid-animation (try %d/3); settling 1.1s...",
+                        len(obs.cards),
+                        load_try + 1,
+                    )
+                    time.sleep(1.1)
+                    continue
+                if (
+                    obs.scene_type == "battle_turn"
+                    and isinstance(self.controller, (AdbController, Win32Controller))
+                    and max_loading_waits > 1
+                    and load_try < 3
+                    and obs.cards
+                    and frame is not None
+                    and frame.size > 0
+                ):
+                    fh_m, fw_m = frame.shape[:2]
+                    hand_a = frame[int(fh_m * 0.73) : int(fh_m * 0.90), int(fw_m * 0.04) : int(fw_m * 0.96)]
+                    time.sleep(0.45)
+                    with self._ctrl_lock:
+                        probe_frame = self.controller.screencap()
+                    if probe_frame is not None and probe_frame.shape == frame.shape:
+                        hand_b = probe_frame[int(fh_m * 0.73) : int(fh_m * 0.90), int(fw_m * 0.04) : int(fw_m * 0.96)]
+                        hand_motion = float(np.mean(np.abs(hand_b.astype(np.float32) - hand_a.astype(np.float32))))
+                        if hand_motion > 6.0:
+                            logger.info(
+                                "Detected active battle hand animation (motion=%.1f, try %d/3); settling 0.85s...",
+                                hand_motion,
+                                load_try + 1,
+                            )
+                            time.sleep(0.85)
+                            continue
+                if (
+                    obs.scene_type == "battle_turn"
                     and bool(getattr(obs, "buff_hud_occluded", False))
                     and max_loading_waits > 1
                     and load_try < 4
@@ -752,13 +792,18 @@ class GakumasRunner:
 
             is_live_ctrl = self.mode != "mock" and not isinstance(self.controller, MockController)
             raw_r = obs.raw_text or ""
+            raw_r_clean = raw_r
+            for _preview_btn_tok in ("強化確認", "カスタマイズ確認", "カスタマイス確認", "強化認"):
+                raw_r_clean = raw_r_clean.replace(_preview_btn_tok, "")
+            has_explicit_trade_prompt = any(
+                k in raw_r_clean for k in ("チェンジするスキルカード", "削除するスキルカード", "手放すスキルカード")
+            )
             is_trade_or_delete_grid = (
-                any(tok in raw_r for tok in ("チェンジ", "削除", "手放す"))
-                and "チェンジで獲得" not in raw_r
-                and "カスタマイズ" not in raw_r
-                and "強化" not in raw_r
-                and "移動" not in raw_r
-                and "手札に移動" not in raw_r
+                any(tok in raw_r_clean for tok in ("チェンジ", "削除", "手放す"))
+                and "チェンジで獲得" not in raw_r_clean
+                and "カスタマイズ" not in raw_r_clean
+                and "強化" not in raw_r_clean
+                and (has_explicit_trade_prompt or ("移動" not in raw_r_clean and "手札に移動" not in raw_r_clean))
             )
             if (
                 is_live_ctrl
@@ -928,6 +973,25 @@ class GakumasRunner:
                             for o in (obs.options or [])
                         )
                     )
+                    keep_mid_battle_move_modal = (
+                        obs.scene_type == "card_reward"
+                        and self.tracker.in_battle
+                        and (
+                            any(
+                                str(o.get("name") or "") == "移動する"
+                                or "手札に移動" in str(o.get("description") or "")
+                                or "加入手牌" in str(o.get("description") or "")
+                                for o in (obs.options or [])
+                            )
+                            or (
+                                ("移動" in (obs.raw_text or "") or "手札" in (obs.raw_text or ""))
+                                and not any(
+                                    k in (obs.raw_text or "")
+                                    for k in ("受け取る", "チェンジ", "削除", "強化", "カスタマイズ", "獲得")
+                                )
+                            )
+                        )
+                    )
                     keep_mid_battle_skip = False
                     if (
                         self.tracker.in_battle
@@ -942,10 +1006,10 @@ class GakumasRunner:
                             keep_mid_battle_skip = True
                         else:
                             self._mid_battle_skip_streak = 0
-                    elif not keep_mid_battle_popup:
+                    elif not (keep_mid_battle_popup or keep_mid_battle_move_modal):
                         self._mid_battle_skip_streak = 0
 
-                    if not (keep_mid_battle_popup or keep_mid_battle_skip):
+                    if not (keep_mid_battle_popup or keep_mid_battle_move_modal or keep_mid_battle_skip):
                         if self.tracker.in_battle:
                             self.tracker.sanitize_produce_deck(self.db)
                             if hasattr(self.agent, "reset_battle"):
@@ -1078,25 +1142,38 @@ class GakumasRunner:
                         source="rule_skip",
                     )
             elif obs.scene_type == "card_reward" and self._reward_step_count >= 20 and legal_actions:
-                safe_reward_act = next(
-                    (
-                        a for a in legal_actions
-                        if str((a.payload or {}).get("name") or "") in (
-                            "決定",
-                            "受け取らない",
-                            "スキップ",
-                            "受け取る",
-                            "次へ",
-                            "チェンジする",
-                            "削除する",
-                            "強化する",
-                            "カスタマイズする",
-                        )
-                        or any(k in a.description for k in ("已勾选『受け取らない』", "直接不拿新饮料", "スキップ"))
-                    ),
-                    None,
+                is_active_removal_screen = any(
+                    str((a.payload or {}).get("name") or "") in ("チェンジする", "削除する")
+                    for a in legal_actions
                 )
-                if safe_reward_act is None:
+                if is_active_removal_screen and self._reward_step_count < 24:
+                    safe_reward_act = None
+                elif is_active_removal_screen:
+                    safe_reward_act = next(
+                        (
+                            a for a in legal_actions
+                            if str((a.payload or {}).get("name") or "") in ("キャンセル", "戻る", "もどる")
+                        ),
+                        None,
+                    )
+                else:
+                    safe_reward_act = next(
+                        (
+                            a for a in legal_actions
+                            if str((a.payload or {}).get("name") or "") in (
+                                "決定",
+                                "受け取らない",
+                                "スキップ",
+                                "受け取る",
+                                "次へ",
+                                "強化する",
+                                "カスタマイズする",
+                            )
+                            or any(k in a.description for k in ("已勾选『受け取らない』", "直接不拿新饮料", "スキップ"))
+                        ),
+                        None,
+                    )
+                if safe_reward_act is None and not is_active_removal_screen:
                     if self._reward_step_count >= 24 and self._reward_forced_cancel_count < 2:
                         cancel_cand = next(
                             (
@@ -1118,7 +1195,7 @@ class GakumasRunner:
                         ]
                         if prev_candidates:
                             safe_reward_act = prev_candidates[(self._reward_step_count - 20) % len(prev_candidates)]
-                if safe_reward_act is None and self._reward_forced_cancel_count < 2:
+                if safe_reward_act is None and not is_active_removal_screen and self._reward_forced_cancel_count < 2:
                     safe_reward_act = next(
                         (
                             a for a in legal_actions
@@ -1156,6 +1233,7 @@ class GakumasRunner:
                 click_coords = (540, 960)
 
             click_ok = True
+            card_play_confirmed = True
             if click_coords is not None:
                 already_selected = (
                     chosen_action is not None
@@ -1165,6 +1243,16 @@ class GakumasRunner:
                         for c in (obs.cards or [])
                     )
                 )
+                pre_play_hand: Optional[np.ndarray] = None
+                if (
+                    is_live_ctrl
+                    and chosen_action is not None
+                    and chosen_action.action_type == "play_card"
+                    and frame is not None
+                    and frame.size > 0
+                ):
+                    fh_p, fw_p = frame.shape[:2]
+                    pre_play_hand = frame[int(fh_p * 0.73) : int(fh_p * 0.90), int(fw_p * 0.04) : int(fw_p * 0.96)].copy()
                 with self._ctrl_lock:
                     click_ok = self.controller.click(click_coords[0], click_coords[1])
                 chosen_name = str((chosen_action.payload or {}).get("name") or "") if chosen_action is not None else ""
@@ -1184,7 +1272,7 @@ class GakumasRunner:
                     )
                 )
                 if click_ok and needs_double_tap:
-                    time.sleep(0.75 if obs.scene_type in ("produce_schedule", "produce_event") else 0.55)
+                    time.sleep(0.75 if obs.scene_type in ("produce_schedule", "produce_event") else 0.65)
                     with self._ctrl_lock:
                         self.controller.click(click_coords[0], click_coords[1])
                 if click_ok and is_live_ctrl and chosen_action is not None and chosen_action.action_type in ("play_card", "use_drink", "end_turn"):
@@ -1198,12 +1286,54 @@ class GakumasRunner:
                             "cardusesremaining+=" in dsl_l
                             or chosen_action.payload.get("card_id") in (755, 756, 757, 758)
                         )
-                        play_wait = 3.80 if is_extra_turn else (3.10 if is_continuous_play else 3.60)
+                        # Verify the card actually launched (animation changed the hand); if swallowed by lingering animation, retry cleanly
+                        verif_elapsed = 0.0
+                        if pre_play_hand is not None and isinstance(self.controller, (AdbController, Win32Controller)):
+                            time.sleep(0.95)
+                            verif_elapsed += 0.95
+                            with self._ctrl_lock:
+                                post_f = self.controller.screencap()
+                            if post_f is not None and post_f.shape == frame.shape:
+                                fh_p, fw_p = post_f.shape[:2]
+                                post_hand = post_f[int(fh_p * 0.73) : int(fh_p * 0.90), int(fw_p * 0.04) : int(fw_p * 0.96)]
+                                play_diff = float(np.mean(np.abs(post_hand.astype(np.float32) - pre_play_hand.astype(np.float32))))
+                                if play_diff < 5.5:
+                                    logger.info(
+                                        "Play card tap may have been swallowed by animation (diff=%.1f); settling 0.9s and retrying tap...",
+                                        play_diff,
+                                    )
+                                    time.sleep(0.90)
+                                    with self._ctrl_lock:
+                                        self.controller.click(click_coords[0], click_coords[1])
+                                    time.sleep(0.65)
+                                    with self._ctrl_lock:
+                                        post_f2 = self.controller.screencap()
+                                    if post_f2 is not None and post_f2.shape == frame.shape:
+                                        post_hand2 = post_f2[int(fh_p * 0.73) : int(fh_p * 0.90), int(fw_p * 0.04) : int(fw_p * 0.96)]
+                                        play_diff2 = float(np.mean(np.abs(post_hand2.astype(np.float32) - pre_play_hand.astype(np.float32))))
+                                        if play_diff2 < 5.5:
+                                            with self._ctrl_lock:
+                                                self.controller.click(click_coords[0], click_coords[1])
+                                            time.sleep(0.90)
+                                            with self._ctrl_lock:
+                                                post_f3 = self.controller.screencap()
+                                            if post_f3 is not None and post_f3.shape == frame.shape:
+                                                post_hand3 = post_f3[int(fh_p * 0.73) : int(fh_p * 0.90), int(fw_p * 0.04) : int(fw_p * 0.96)]
+                                                play_diff3 = float(np.mean(np.abs(post_hand3.astype(np.float32) - pre_play_hand.astype(np.float32))))
+                                                if play_diff3 < 5.5:
+                                                    logger.warning(
+                                                        "Card play unconfirmed after retry (diff=%.1f); skipping tracker/sim play record so card is not falsely marked exhausted.",
+                                                        play_diff3,
+                                                    )
+                                                    card_play_confirmed = False
+                        total_play_wait = 4.60 if is_extra_turn else (3.70 if is_continuous_play else 4.20)
+                        rem_wait = max(0.0, total_play_wait - verif_elapsed) if card_play_confirmed else 0.50
+                        if rem_wait > 0:
+                            time.sleep(rem_wait)
                     elif chosen_action.action_type == "use_drink":
-                        play_wait = 2.20
+                        time.sleep(2.60)
                     else:
-                        play_wait = 2.40
-                    time.sleep(play_wait)
+                        time.sleep(2.80)
                 elif (
                     click_ok
                     and is_live_ctrl
@@ -1245,7 +1375,7 @@ class GakumasRunner:
             pending_before = len(self.tracker.pending_top_deck)
             if chosen_action and chosen_action.action_type == "play_card":
                 card_id = chosen_action.payload.get("card_id")
-                if card_id is not None:
+                if card_id is not None and card_play_confirmed:
                     self.tracker.record_card_play(
                         card_id,
                         limit_count=chosen_action.payload.get("limit_count", 1 if self.mode == "mock" else None),
@@ -1287,9 +1417,11 @@ class GakumasRunner:
                 elif picked_name in ("削除する", "チェンジする") and picked_cid:
                     cid_int = int(picked_cid)
                     removed = False
+                    removed_cid: Optional[int] = None
                     if cid_int in self.tracker.produce_deck:
                         self.tracker.produce_deck.remove(cid_int)
                         removed = True
+                        removed_cid = cid_int
                     elif self.db is not None:
                         crow = self.db.get_card_by_id(cid_int)
                         target_base = int(crow.get("base_id") or cid_int) if crow else cid_int
@@ -1297,12 +1429,26 @@ class GakumasRunner:
                             drow = self.db.get_card_by_id(int(dcid))
                             dbase = int(drow.get("base_id") or dcid) if drow else int(dcid)
                             if dbase == target_base:
+                                removed_cid = int(dcid)
                                 del self.tracker.produce_deck[idx]
                                 removed = True
                                 break
                     added_change = False
                     if picked_name == "チェンジする" and self._pending_change_pickup_cid:
-                        self.tracker.add_card_to_deck(int(self._pending_change_pickup_cid), db=self.db)
+                        gain_cid = int(self._pending_change_pickup_cid)
+                        if self.db is not None:
+                            rem_check_cid = removed_cid if removed_cid is not None else cid_int
+                            rem_row = self.db.get_card_by_id(rem_check_cid)
+                            picked_row = self.db.get_card_by_id(cid_int)
+                            removed_was_upgraded = bool(
+                                (rem_row and rem_row.get("upgraded"))
+                                or (picked_row and picked_row.get("upgraded"))
+                            )
+                            if removed_was_upgraded:
+                                gain_row = self.db.get_card_by_id(gain_cid)
+                                if gain_row and not gain_row.get("upgraded") and gain_row.get("upgraded_id"):
+                                    gain_cid = int(gain_row["upgraded_id"])
+                        self.tracker.add_card_to_deck(gain_cid, db=self.db)
                         added_change = True
                     self._pending_change_pickup_cid = None
                     if removed or added_change:
@@ -1380,7 +1526,8 @@ class GakumasRunner:
                         self.tracker.record_session_event("已勾选『受け取らない』，下一步请点击底部确认按钮跳过领取")
 
             if obs.scene_type == "battle_turn" and hasattr(self.agent, "notify_battle_action"):
-                self.agent.notify_battle_action(chosen_action)
+                if not (chosen_action and chosen_action.action_type == "play_card" and not card_play_confirmed):
+                    self.agent.notify_battle_action(chosen_action)
 
             if self.on_action_executed:
                 try:

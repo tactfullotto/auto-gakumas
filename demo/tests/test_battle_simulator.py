@@ -879,3 +879,56 @@ def test_hand_cap_5_defers_overflow_drinks_and_exiles_nemuki_over_blank_skip():
         sim2.double_card_effect_cards = 1
         _, amap2 = codec.legal_mask_and_map(sim2, prune_dominated=True)
         assert codec.end_turn_action_id in amap2
+
+
+def test_core_engine_hard_rules_no_drink22_at_5_hand_and_no_skip_with_trouble():
+    """Verify both foundational rules live at the lowest engine layer (legal_actions & prune_dominated=False mask)."""
+    from demo.sim.battle_simulator import _make_drink_config
+    from demo.sim.rl_env import GakumasActionCodec
+
+    with GakumasDB("gakumas_library.db") as db:
+        sim = _new_clean_sim(db, enable_404=False, enable_509=False)
+        sim.plan = "sense"
+        sim.turns_remaining = 1
+        sim.stamina = 40
+        sim.card_uses_remaining = 1
+        sim.hand.clear()
+        for cid in (294, 112, 162, 23, 814):
+            inst = _spawn_test_card(sim, db, cid, sim.hand)
+            sim.config.deck.append(inst.cfg)
+        d22 = _make_drink_config(db, 22)
+        sim.available_drinks = [d22]
+        sim.config.drinks = [d22]
+
+        # Rule 1 (even at prune_dominated=False and rem=1): #22 is strictly illegal at 5-card hand cap!
+        assert sim.can_use_drink(d22) is False
+        assert not any(a[0] == "drink" for a in sim.legal_actions())
+        codec = GakumasActionCodec(sim.config, db=db)
+        mask_raw, amap_raw = codec.legal_mask_and_map(sim, prune_dominated=False)
+        d22_aid = codec.drink_id_to_action[22]
+        assert not mask_raw[d22_aid]
+        assert d22_aid not in amap_raw
+
+        # Dropping to 4 cards immediately makes #22 legal again
+        sim.hand.pop()
+        assert sim.can_use_drink(d22) is True
+        assert any(a[0] == "drink" for a in sim.legal_actions())
+        mask_4, amap_4 = codec.legal_mask_and_map(sim, prune_dominated=False)
+        assert mask_4[d22_aid] and d22_aid in amap_4
+
+        # Rule 2 (even at prune_dominated=False, T1/rem=9, low stamina): blank SKIP is strictly illegal when #23 is playable!
+        sim.turns_remaining = 9
+        sim.stamina = 2
+        sim.double_card_effect_cards = 0
+        sim.hand.clear()
+        _spawn_test_card(sim, db, 23, sim.hand)
+        sim.available_drinks.clear()
+        assert sim.is_trouble_exile_mandatory() is True
+        raw_acts = sim.legal_actions(include_voluntary_skip=True)
+        assert not any(a[0] == "end_turn" for a in raw_acts)
+        assert any(a[0] == "card" for a in raw_acts)
+        mask_tr, amap_tr = codec.legal_mask_and_map(sim, prune_dominated=False)
+        assert not mask_tr[codec.end_turn_action_id]
+        assert codec.end_turn_action_id not in amap_tr
+        assert list(amap_tr.values()) == [("card", 0)]
+

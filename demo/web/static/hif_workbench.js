@@ -958,6 +958,56 @@ async function renderMemoryTab() {
 }
 
 /* ==================== Tab 4: Produce Card & Drink Preferences ==================== */
+let _prefSaveQueue = Promise.resolve();
+let _lastPrefFilteredCards = [];
+
+function getFilteredPrefCards(planCards, st) {
+  const prefs = st?.preferences || {};
+  const priSet = new Set((prefs.priority_card_ids || []).map(Number));
+  const keepSet = new Set((prefs.keep_card_ids || []).map(Number));
+  const avoidSet = new Set((prefs.avoid_card_ids || []).map(Number));
+
+  const q = (byId("hif-pref-card-q")?.value || "").trim().toLowerCase();
+  const typeF = byId("hif-pref-card-type")?.value || "all";
+  const catF = byId("hif-pref-card-cat")?.value || "usable";
+  const rarityF = byId("hif-pref-card-rarity")?.value || "all";
+  const upF = byId("hif-pref-card-up")?.value || "all";
+  const effF = byId("hif-pref-card-effect")?.value || "all";
+  const statusF = byId("hif-pref-card-status")?.value || "all";
+  const sortF = byId("hif-pref-card-sort")?.value || "rarity_desc";
+
+  const rawMatches = (planCards || [])
+    .filter((c) => (c.type || "") !== "trouble")
+    .filter((c) => {
+      if (typeF !== "all" && (c.type || "").toLowerCase() !== typeF) return false;
+      if (catF === "usable") {
+        if (!q && !isUsableForSelectedIdol(c, st.selected_p_idol_id)) return false;
+        if (q && !isUsableForSelectedIdol(c, st.selected_p_idol_id)) return false;
+      } else if (catF !== "all" && (c.category || "") !== catF) {
+        return false;
+      }
+      if (rarityF !== "all" && (c.rarity || "").toUpperCase() !== rarityF.toUpperCase()) return false;
+      if (upF === "upgraded" && !c.upgraded) return false;
+      if (upF === "base" && c.upgraded) return false;
+      if (effF !== "all") {
+        const effHay = `${c.name || ""} ${c.description || ""} ${c.dsl_actions || ""} ${c.dsl_effects || ""}`;
+        if (!effHay.includes(effF)) return false;
+      }
+      const cidNum = Number(c.id);
+      if (statusF === "unassigned" && (priSet.has(cidNum) || keepSet.has(cidNum) || avoidSet.has(cidNum))) return false;
+      if (statusF === "priority" && !priSet.has(cidNum)) return false;
+      if (statusF === "keep" && !keepSet.has(cidNum)) return false;
+      if (statusF === "avoid" && !avoidSet.has(cidNum)) return false;
+      if (q) {
+        const hay = `${c.id} ${c.name} ${c.description || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+
+  return sortCardPool(rawMatches, sortF);
+}
+
 async function renderPrefsTab() {
   const st = hifState.state;
   if (!st) return;
@@ -980,9 +1030,10 @@ async function renderPrefsTab() {
       pill.appendChild(makeEl("span", "", `${item.name} (#${item.card_id})`));
       const xBtn = makeEl("button", "hif-pill-x", "✕");
       xBtn.type = "button";
-      xBtn.addEventListener("click", async () => {
-        const nextIds = (prefs[fieldName] || []).filter((id) => Number(id) !== Number(item.card_id));
-        await savePrefs({ [fieldName]: nextIds });
+      xBtn.addEventListener("click", () => {
+        mutatePrefs((curPrefs) => ({
+          [fieldName]: (curPrefs[fieldName] || []).filter((id) => Number(id) !== Number(item.card_id)),
+        }));
       });
       pill.appendChild(xBtn);
       box.appendChild(pill);
@@ -997,8 +1048,10 @@ async function renderPrefsTab() {
   const planCards = await ensurePlanCards(plan);
   const wBox = byId("hif-pref-card-weights-list");
   const cardOverrides = prefs.card_score_overrides || {};
-  wBox.replaceChildren();
   const wEntries = Object.entries(cardOverrides);
+  const wCntEl = byId("hif-pref-weight-cnt");
+  if (wCntEl) wCntEl.textContent = String(wEntries.length);
+  wBox.replaceChildren();
   if (wEntries.length === 0) {
     wBox.appendChild(makeEl("span", "muted-note", "（暂无自定义单卡数值权重，可在下方搜索卡片设定）"));
   } else {
@@ -1012,36 +1065,40 @@ async function renderPrefsTab() {
       inp.max = "8000";
       inp.step = "100";
       inp.value = String(deltaVal);
-      inp.addEventListener("change", async () => {
-        const nextMap = { ...cardOverrides, [cidStr]: Number(inp.value || 0) };
-        if (nextMap[cidStr] === 0) delete nextMap[cidStr];
-        await savePrefs({ card_score_overrides: nextMap });
+      inp.addEventListener("change", () => {
+        mutatePrefs((curPrefs) => {
+          const nextMap = { ...(curPrefs.card_score_overrides || {}), [cidStr]: Number(inp.value || 0) };
+          if (nextMap[cidStr] === 0) delete nextMap[cidStr];
+          return { card_score_overrides: nextMap };
+        });
       });
       const delBtn = makeEl("button", "btn-secondary btn-compact", "✕");
       delBtn.type = "button";
-      delBtn.addEventListener("click", async () => {
-        const nextMap = { ...cardOverrides };
-        delete nextMap[cidStr];
-        await savePrefs({ card_score_overrides: nextMap });
+      delBtn.addEventListener("click", () => {
+        mutatePrefs((curPrefs) => {
+          const nextMap = { ...(curPrefs.card_score_overrides || {}) };
+          delete nextMap[cidStr];
+          return { card_score_overrides: nextMap };
+        });
       });
       row.append(inp, delBtn);
       wBox.appendChild(row);
     }
   }
 
-  // Search results for preference card actions (untruncated!)
-  const q = (byId("hif-pref-card-q")?.value || "").trim().toLowerCase();
+  // Search results for preference card actions (multi-filter & unlimited!)
+  const priSet = new Set((prefs.priority_card_ids || []).map(Number));
+  const keepSet = new Set((prefs.keep_card_ids || []).map(Number));
+  const avoidSet = new Set((prefs.avoid_card_ids || []).map(Number));
   const resBox = byId("hif-pref-card-results");
   resBox.replaceChildren();
-  const rawMatches = planCards
-    .filter((c) => (c.type || "") !== "trouble")
-    .filter((c) => {
-      if (q) return `${c.id} ${c.name} ${c.description || ""}`.toLowerCase().includes(q);
-      return isUsableForSelectedIdol(c, st.selected_p_idol_id);
-    });
-  const cardMatches = sortCardPool(rawMatches, "rarity_desc");
+  const cardMatches = getFilteredPrefCards(planCards, st);
+  _lastPrefFilteredCards = cardMatches;
+  const cntEl = byId("hif-pref-card-count");
+  if (cntEl) cntEl.textContent = `匹配 ${cardMatches.length} 张`;
 
   for (const c of cardMatches) {
+    const cidNum = Number(c.id);
     const row = makeEl("div", "hif-pref-search-row");
     const left = makeEl("div", "hif-deck-left");
     if (c.icon_url) {
@@ -1054,33 +1111,42 @@ async function renderPrefsTab() {
       left.appendChild(img);
     }
     const inf = makeEl("div", "hif-deck-info");
-    inf.appendChild(makeEl("strong", "", `${c.name} (#${c.id})`));
-    inf.appendChild(makeEl("span", "muted-note", `${(c.type || "").toUpperCase()} · ${c.rarity} · ${(c.description || "").slice(0, 36)}`));
+    const tags = [];
+    if (priSet.has(cidNum)) tags.push("★高优");
+    if (keepSet.has(cidNum)) tags.push("🔒锁卡");
+    if (avoidSet.has(cidNum)) tags.push("🚫禁选");
+    const tagStr = tags.length > 0 ? ` [${tags.join("/")}]` : "";
+    inf.appendChild(makeEl("strong", "", `${c.name} (#${c.id})${tagStr}`));
+    inf.appendChild(makeEl("span", "muted-note", `${(c.type || "").toUpperCase()} · ${c.rarity} · ${(c.description || "").slice(0, 42)}`));
     left.appendChild(inf);
 
     const btns = makeEl("div", "hif-deck-actions");
     const mkAdd = (label, listKey, cls = "") => {
       const b = makeEl("button", `btn-secondary btn-compact ${cls}`.trim(), label);
       b.type = "button";
-      b.addEventListener("click", async () => {
-        const cur = new Set((prefs[listKey] || []).map(Number));
-        cur.add(Number(c.id));
-        const patch = { [listKey]: [...cur] };
-        if (listKey === "priority_card_ids") {
-          patch.avoid_card_ids = (prefs.avoid_card_ids || []).filter((x) => Number(x) !== Number(c.id));
-        } else if (listKey === "avoid_card_ids") {
-          patch.priority_card_ids = (prefs.priority_card_ids || []).filter((x) => Number(x) !== Number(c.id));
-          patch.keep_card_ids = (prefs.keep_card_ids || []).filter((x) => Number(x) !== Number(c.id));
-        }
-        await savePrefs(patch);
+      b.addEventListener("click", () => {
+        mutatePrefs((curPrefs) => {
+          const cur = new Set((curPrefs[listKey] || []).map(Number));
+          cur.add(cidNum);
+          const patch = { [listKey]: [...cur] };
+          if (listKey === "priority_card_ids") {
+            patch.avoid_card_ids = (curPrefs.avoid_card_ids || []).filter((x) => Number(x) !== cidNum);
+          } else if (listKey === "avoid_card_ids") {
+            patch.priority_card_ids = (curPrefs.priority_card_ids || []).filter((x) => Number(x) !== cidNum);
+            patch.keep_card_ids = (curPrefs.keep_card_ids || []).filter((x) => Number(x) !== cidNum);
+          }
+          return patch;
+        });
       });
       return b;
     };
     const bWeight = makeEl("button", "btn-secondary btn-compact", "⚖+500");
     bWeight.type = "button";
-    bWeight.addEventListener("click", async () => {
-      const nextMap = { ...(prefs.card_score_overrides || {}), [String(c.id)]: Number((prefs.card_score_overrides || {})[String(c.id)] || 0) + 500 };
-      await savePrefs({ card_score_overrides: nextMap });
+    bWeight.addEventListener("click", () => {
+      mutatePrefs((curPrefs) => {
+        const curMap = curPrefs.card_score_overrides || {};
+        return { card_score_overrides: { ...curMap, [String(c.id)]: Number(curMap[String(c.id)] || 0) + 500 } };
+      });
     });
     btns.append(
       mkAdd("★高优", "priority_card_ids"),
@@ -1171,6 +1237,19 @@ async function renderPrefsTab() {
   }
 }
 
+function mutatePrefs(updaterFn) {
+  _prefSaveQueue = _prefSaveQueue
+    .then(async () => {
+      const cur = hifState.state?.preferences || {};
+      const partial = updaterFn(cur) || {};
+      await savePrefs(partial);
+    })
+    .catch((err) => {
+      console.error("mutatePrefs failed:", err);
+    });
+  return _prefSaveQueue;
+}
+
 async function savePrefs(partial = {}) {
   const cur = hifState.state?.preferences || {};
   const payload = {
@@ -1185,8 +1264,16 @@ async function savePrefs(partial = {}) {
     reroll_early_non_exhaust_mental:
       partial.reroll_early_non_exhaust_mental ?? byId("hif-pref-reroll-m")?.checked ?? true,
   };
-  await hifState.ctx.apiPost("/api/hif/preferences", payload);
-  await refreshHifState();
+  const res = await hifState.ctx.apiPost("/api/hif/preferences", payload);
+  if (res?.state) {
+    hifState.state = res.state;
+    renderWorkbenchHeader();
+    if (hifState.activeTab === "prefs") {
+      await renderPrefsTab();
+    }
+  } else {
+    await refreshHifState();
+  }
 }
 
 async function saveRunConfig() {
@@ -1294,6 +1381,34 @@ function bindHifEvents() {
     btn.addEventListener("click", () => setActiveTab(btn.dataset.hifTab));
   }
 
+  // Helper: read currently checked memory-hook form into a merged card_memory_hooks dict
+  const buildMergedHooksWithForm = () => {
+    const nextHooks = { ...(hifState.state?.card_memory_hooks || {}) };
+    const cid = byId("hif-hook-card-select")?.value;
+    if (!cid) return { nextHooks, formChanged: false };
+    const extraOn = Boolean(byId("hif-hook-extra-use")?.checked);
+    const drawOn = Boolean(byId("hif-hook-draw")?.checked);
+    const hookEntry = {
+      force_initial_hand: Boolean(byId("hif-hook-force-init")?.checked),
+      exiles_trouble_on_play: Boolean(byId("hif-hook-exile")?.checked),
+      free_extra_use_first_play: extraOn,
+      extra_use_limit: extraOn ? Number(byId("hif-hook-extra-limit")?.value || 1) : 0,
+      draw_on_play: extraOn && drawOn ? 1 : 0,
+    };
+    const anyChecked =
+      hookEntry.force_initial_hand ||
+      hookEntry.exiles_trouble_on_play ||
+      hookEntry.free_extra_use_first_play ||
+      hookEntry.draw_on_play > 0;
+    const prev = nextHooks[String(cid)] || null;
+    if (anyChecked) {
+      nextHooks[String(cid)] = hookEntry;
+      const changed = JSON.stringify(prev) !== JSON.stringify(hookEntry);
+      return { nextHooks, formChanged: changed };
+    }
+    return { nextHooks, formChanged: false };
+  };
+
   // Launch / Stop buttons (sticky + Tab 1)
   const toggleRun = async () => {
     const running = Boolean(hifState.state?.running);
@@ -1302,6 +1417,10 @@ function bindHifEvents() {
         await hifState.ctx.apiPost("/api/hif/stop");
         hifState.ctx.showToast("已请求停止 H.I.F 自动化");
       } else {
+        const { nextHooks, formChanged } = buildMergedHooksWithForm();
+        if (formChanged) {
+          await hifState.ctx.apiPost("/api/hif/memories", { card_memory_hooks: nextHooks });
+        }
         await saveRunConfig();
         await hifState.ctx.apiPost("/api/hif/start");
         hifState.ctx.showToast("H.I.F 自动化任务已启动！");
@@ -1468,11 +1587,21 @@ function bindHifEvents() {
   });
 
   byId("btn-hif-save-memories")?.addEventListener("click", async () => {
+    const { nextHooks } = buildMergedHooksWithForm();
+    const nextSlots = structuredClone(hifState.state?.memory_slots || []);
+    document.querySelectorAll(".hif-slot-card").forEach((cardEl) => {
+      const idx = Number(cardEl.dataset.slotIndex);
+      const inp = cardEl.querySelector(".hif-slot-owner");
+      if (nextSlots[idx] && inp) {
+        nextSlots[idx].owner_name = inp.value;
+      }
+    });
     await hifState.ctx.apiPost("/api/hif/memories", {
-      card_memory_hooks: hifState.state?.card_memory_hooks || {},
+      card_memory_hooks: nextHooks,
+      memory_slots: nextSlots,
     });
     await refreshHifState();
-    hifState.ctx.showToast("已保存技能卡回忆配置");
+    hifState.ctx.showToast(`已保存回忆配置（当前共 ${Object.keys(hifState.state?.card_memory_hooks || {}).length} 条技能回忆效果）`);
   });
 
   byId("btn-hif-save-slots")?.addEventListener("click", async () => {
@@ -1489,8 +1618,55 @@ function bindHifEvents() {
     hifState.ctx.showToast("已保存 4 枚回忆槽位词条");
   });
 
-  // Preferences tab controls
+  // Preferences tab controls & multi-dimensional card filters
   byId("hif-pref-card-q")?.addEventListener("input", renderPrefsTab);
+  for (const fid of [
+    "hif-pref-card-type",
+    "hif-pref-card-cat",
+    "hif-pref-card-rarity",
+    "hif-pref-card-up",
+    "hif-pref-card-effect",
+    "hif-pref-card-status",
+    "hif-pref-card-sort",
+  ]) {
+    byId(fid)?.addEventListener("change", renderPrefsTab);
+  }
+  byId("btn-hif-pref-reset-filter")?.addEventListener("click", () => {
+    if (byId("hif-pref-card-q")) byId("hif-pref-card-q").value = "";
+    if (byId("hif-pref-card-type")) byId("hif-pref-card-type").value = "all";
+    if (byId("hif-pref-card-cat")) byId("hif-pref-card-cat").value = "usable";
+    if (byId("hif-pref-card-rarity")) byId("hif-pref-card-rarity").value = "all";
+    if (byId("hif-pref-card-up")) byId("hif-pref-card-up").value = "all";
+    if (byId("hif-pref-card-effect")) byId("hif-pref-card-effect").value = "all";
+    if (byId("hif-pref-card-status")) byId("hif-pref-card-status").value = "all";
+    if (byId("hif-pref-card-sort")) byId("hif-pref-card-sort").value = "rarity_desc";
+    renderPrefsTab();
+  });
+  byId("btn-hif-pref-bulk-avoid")?.addEventListener("click", async () => {
+    const idsToAdd = (_lastPrefFilteredCards || []).map((c) => Number(c.id)).filter((n) => n > 0);
+    if (idsToAdd.length === 0) {
+      hifState.ctx.showToast("当前筛选列表为空");
+      return;
+    }
+    if (idsToAdd.length > 30 && !window.confirm(`确认将当前筛选出的全部 ${idsToAdd.length} 张卡牌一次性加入「避坑禁选卡」吗？`)) {
+      return;
+    }
+    const addSet = new Set(idsToAdd);
+    await mutatePrefs((curPrefs) => {
+      const nextAvoid = new Set((curPrefs.avoid_card_ids || []).map(Number));
+      for (const id of idsToAdd) nextAvoid.add(id);
+      return {
+        avoid_card_ids: [...nextAvoid],
+        priority_card_ids: (curPrefs.priority_card_ids || []).filter((x) => !addSet.has(Number(x))),
+        keep_card_ids: (curPrefs.keep_card_ids || []).filter((x) => !addSet.has(Number(x))),
+      };
+    });
+    hifState.ctx.showToast(`已将 ${idsToAdd.length} 张筛选卡牌加入避坑禁选（当前共 ${(hifState.state?.preferences?.avoid_card_ids || []).length} 张）`);
+  });
+  byId("btn-hif-clear-priority")?.addEventListener("click", () => mutatePrefs(() => ({ priority_card_ids: [] })));
+  byId("btn-hif-clear-keep")?.addEventListener("click", () => mutatePrefs(() => ({ keep_card_ids: [] })));
+  byId("btn-hif-clear-avoid")?.addEventListener("click", () => mutatePrefs(() => ({ avoid_card_ids: [] })));
+  byId("btn-hif-clear-weights")?.addEventListener("click", () => mutatePrefs(() => ({ card_score_overrides: {} })));
   byId("btn-hif-save-prefs")?.addEventListener("click", async () => {
     await savePrefs();
     hifState.ctx.showToast("已保存全部选卡与饮料偏好");

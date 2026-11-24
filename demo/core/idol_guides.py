@@ -320,6 +320,59 @@ P_IDOL_GUIDE_REGISTRY: Dict[int, PIdolGuide] = {
     _GARAKUTA_MISUZU_GUIDE.p_idol_id: _GARAKUTA_MISUZU_GUIDE,
 }
 
+# Authoritative per-idol 3D stat specialty order: (primary, secondary, tertiary) from high -> low.
+# Keyed by `p_idols.idol_id` (character ID).
+IDOL_STAT_SPECIALTY_ORDER: Dict[int, Tuple[str, str, str]] = {
+    1: ("vocal", "dance", "visual"),    # 花海 咲季: Vo -> Da -> Vi
+    2: ("vocal", "visual", "dance"),    # 月村 手毬: Vo -> Vi -> Da
+    3: ("dance", "visual", "vocal"),    # 藤田 ことね: Da -> Vi -> Vo
+    4: ("visual", "vocal", "dance"),    # 有村 麻央: Vi -> Vo -> Da
+    5: ("vocal", "dance", "visual"),    # 葛城 リーリヤ: Vo -> Da -> Vi
+    6: ("vocal", "visual", "dance"),    # 倉本 千奈: Vo -> Vi -> Da
+    7: ("dance", "visual", "vocal"),    # 紫雲 清夏: Da -> Vi -> Vo
+    8: ("visual", "dance", "vocal"),    # 篠澤 広: Vi -> Da -> Vo
+    9: ("visual", "dance", "vocal"),    # 姫崎 莉波: Vi -> Da -> Vo
+    10: ("dance", "vocal", "visual"),   # 花海 佑芽: Da -> Vo -> Vi
+    11: ("vocal", "visual", "dance"),   # 十王 星南: Vo -> Vi -> Da
+    12: ("vocal", "visual", "dance"),   # 秦谷 美鈴: Vo -> Vi -> Da
+    13: ("vocal", "dance", "visual"),   # 雨夜 燕: Vo -> Da -> Vi
+}
+
+
+def get_idol_stat_order(
+    p_idol_id: Optional[int] = None,
+    *,
+    db: Optional[Any] = None,
+) -> Tuple[str, str, str]:
+    """Return `(primary, secondary, tertiary)` stat keys (high -> low) for a P-Idol."""
+    if p_idol_id is not None:
+        pid = int(p_idol_id)
+        if db is not None and hasattr(db, "get_p_idol_by_id"):
+            try:
+                p_row = db.get_p_idol_by_id(pid)
+                if p_row and p_row.get("idol_id") is not None:
+                    char_id = int(p_row["idol_id"])
+                    if char_id in IDOL_STAT_SPECIALTY_ORDER:
+                        return IDOL_STAT_SPECIALTY_ORDER[char_id]
+            except Exception:
+                pass
+        if pid in IDOL_STAT_SPECIALTY_ORDER:
+            return IDOL_STAT_SPECIALTY_ORDER[pid]
+    return ("vocal", "visual", "dance")
+
+
+def get_default_idol_stats(
+    p_idol_id: Optional[int] = None,
+    *,
+    db: Optional[Any] = None,
+    high: int = 2400,
+    mid: int = 1800,
+    low: int = 1400,
+) -> Dict[str, int]:
+    """Build default `{vocal, dance, visual}` stats aligned with the P-Idol's specialty order."""
+    prim, sec, tert = get_idol_stat_order(p_idol_id, db=db)
+    return {prim: int(high), sec: int(mid), tert: int(low)}
+
 # Maps signature / P-Idol-specific card IDs to their P-Idol ID for auto-detection.
 _SIGNATURE_CARD_TO_P_IDOL: Dict[int, int] = {
     755: 126,

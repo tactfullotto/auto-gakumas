@@ -1,6 +1,6 @@
 # auto-gakumas
 
-[中文](README.zh.md) | **English** | [日本語](README.ja.md)
+[中文](README.zh.md) | [**English**](README.md) | [日本語](README.ja.md)
 
 > **Zero-LLM** end-to-end automation for the **学園アイドルマスター (Gakumas) H.I.F 本戦** card game — from produce schedule to final battle, fully automated via ADB + local vision + PPO/ISMCTS planner.
 
@@ -28,12 +28,14 @@ ADB (MuMu 127.0.0.1:16384)
 LiveScreenRecognizer          ← OpenCV + Tesseract OCR
   • scene detection
   • card/drink/score OCR
+  • P-point sandwich OCR (outlined white digits, anti-occlusion)
+  • battle hand animation stabiliser
         │
         ▼
 LocalHybridDecisionAgent      ← rule engine + local ML
   ├── ScheduleAgent            (lesson / rest selection)
   ├── CardRewardAgent          (card pick & discard rules)
-  ├── ShopAgent                (upgrade / buy / refresh logic)
+  ├── ShopAgent                (upgrade / buy / refresh + visit tracking)
   └── LiveBattlePlanner        ← PPO value network + SO-ISMCTS
             │
             └── HeadlessBattleSimulator  (fast local rollouts)
@@ -44,15 +46,17 @@ LocalHybridDecisionAgent      ← rule engine + local ML
 | Path | Description |
 |---|---|
 | `demo/run_hif_local.py` | Main entry point; supports `on_step_callback` / `on_frame_callback` hooks |
-| `demo/agent/local_agent.py` | `LocalHybridDecisionAgent` orchestrator |
-| `demo/maa_bridge/adb_controller.py` | ADB tap/swipe/screenshot |
-| `demo/vision/live_adb_recognizer.py` | `LiveScreenRecognizer`, OCR helpers |
-| `demo/sim/` | `HeadlessBattleSimulator`, SO-ISMCTS planner |
-| `demo/core/rules.py` | Card/drink selection rules |
+| `demo/agent/local_agent.py` | `LocalHybridDecisionAgent` orchestrator; P-idol stat fallback; shop visit state machine |
+| `demo/maa_bridge/runner.py` | Step loop; battle hand animation wait; card-upgrade popup disambiguation |
+| `demo/vision/live_adb_recognizer.py` | `LiveScreenRecognizer`; P-point sandwich OCR; shop icon cache |
+| `demo/sim/live_battle_planner.py` | `LiveBattlePlanner`; finisher combo gating (好調 ≥ 13); free-action & SB-drink detection |
+| `demo/sim/battle_simulator.py` | `HeadlessBattleSimulator`; hand cap enforcement |
+| `demo/sim/ismcts.py` | SO-ISMCTS; anti-SKIP pruning; trouble-exile fallback |
+| `demo/core/idol_guides.py` | P-idol default stat lookup & stat-axis ordering |
 | `demo/core/hif_catalog.py` | `ProducePreferences`, HIF memory ability templates, plan metadata |
 | `demo/core/tracker.py` | In-run state tracker (deck, hand, P-items, produce step) |
 | `demo/web/hif_session.py` | Web workbench session manager (SSE, loadout config, live ADB preview) |
-| `demo/web/static/hif_workbench.js` | 3-profession configurator + manual card/memory editor front-end |
+| `demo/web/static/hif_workbench.js` | 3-profession configurator + multi-filter card preference editor |
 | `gakumas_library.db` | SQLite card & drink database (926 cards, 28 drinks) |
 
 ---
@@ -71,12 +75,12 @@ python demo/app.py
 
 - **3-profession selector** (Sense / Logic / Anomaly) with P-Idol catalog and stat preview
 - **Loadout modes:**
-  - `auto` — fully rely on the ADB scan to detect deck/P-items at run start
-  - `manual` — skip scan; inject a hand-crafted deck + P-item list directly into the simulator
+  - `auto` — fully rely on ADB scan to detect deck/P-items at run start
+  - `manual` — skip scan; inject a hand-crafted deck + P-item list directly
   - `hybrid` — ADB scan + manually specified H.I.F memory hooks merged at start
 - **Manual card/P-item editor** — build your deck card by card from the full DB
-- **H.I.F Memory editor** — 4-slot memory cards, passive bonuses, and wiki preset groups (exile-trouble, extra-use, draw triggers)
-- **Produce Preferences panel** — set priority/avoid/keep card lists, banned drink IDs, score delta thresholds
+- **H.I.F Memory editor** — 4-slot memory cards, passive bonuses, and wiki preset groups
+- **Produce Preferences panel** — multi-filter card selector (type / rarity / upgraded / effect keyword / assignment status); set priority/avoid/keep card lists; banned drink IDs
 - **Live ADB preview** — real-time screen mirror during a run
 - **Library JSON import/export** — save and reload full loadout configs
 - **SSE progress stream** — live step-by-step automation log in the browser
@@ -86,7 +90,7 @@ python demo/app.py
 ## Special Rules
 
 ### Drink #19 — 初星スペシャル青汁 (banned)
-Never select, buy, or use. Auto-discarded via `捨てる` if received. Too random, net-negative in most hands.
+Never select, buy, or use. Auto-discarded via `捨てる` if received.
 
 ### Drink #25 — 特製ハツボシエキス (strict gating)
 Only consumed when **all three** conditions hold:
@@ -94,13 +98,17 @@ Only consumed when **all three** conditions hold:
 2. The active card is playable immediately after the drink effect.
 3. Commits to playing that Active card the same turn.
 
-If a non-L Active card hasn't appeared yet, do **not** drink in advance.
-
 ### Shop — spend all P-points
-On the final shop visit, refresh the store until all P-points are exhausted. Upgrades are prioritized over new cards.
+On the final shop visit, refresh the store until all P-points are exhausted. Upgrades prioritised over new cards.
 
 ### Card swap — M-card refresh
-During the early-game card exchange, if an unremovable M-card appears, click refresh to reroll the swap pool.
+If an unremovable M-card appears in the early-game card exchange, click refresh to reroll.
+
+### Battle — finisher combo gating
+Cards `#162/#163 → #813/#814` combo is only allowed when tracked `goodConditionTurns ≥ 13` (or OCR is occluded in the last 2 turns while the finisher is visually playable).
+
+### Battle — hand animation stabiliser
+Before reading cards, the runner waits for hand-area motion < 6.0 mean-pixel-delta (up to 3 probes × 0.85 s) to avoid misreads during draw animations.
 
 ---
 
@@ -110,15 +118,12 @@ During the early-game card exchange, if an unremovable M-card appears, click ref
 - MuMu Player (Android emulator) with ADB at `127.0.0.1:16384`
 - Gakumas installed in emulator
 - `gakumas_library.db` (included in repo)
-- Python packages: see `demo/requirements.txt`
 
 ```bash
 pip install -r demo/requirements.txt
 ```
 
-Also requires:
-- `tesseract` on PATH (for OCR)
-- `adb` on PATH or bundled with MuMu
+Also requires `tesseract` and `adb` on PATH.
 
 ---
 
@@ -138,18 +143,15 @@ python demo/app.py
 # Open http://localhost:5000  →  H.I.F Workbench tab
 ```
 
-Logs are written to `live<N>_run_log.csv`. Debug frames are saved under `debug_frames_live<N>/`.
-
 ---
 
 ## Tests
 
 ```bash
-# Run all unit/integration tests (skip live-device tests)
 python -m pytest demo/tests/ -k "not test_live_xai_llm_decision_e2e" -q
 ```
 
-Expected: **176+ passed** in ~260s (offline suite, no live-device tests).
+Expected: **298 passed, 2 skipped** in ~91s.
 
 ---
 
@@ -163,8 +165,7 @@ Expected: **176+ passed** in ~260s (offline suite, no live-device tests).
 
 ## Data Sources
 
-Card and drink data extracted from [gakumas-tools/gakumas-tools](https://github.com/gakumas-tools/gakumas-tools) (commit `a82c3a3`, 2026-11-15).  
-DSL effect schema from [gakumas-data](https://github.com/pnpm/gakumas-data).
+Card and drink data from [gakumas-tools/gakumas-tools](https://github.com/gakumas-tools/gakumas-tools) (commit `a82c3a3`, 2026-11-15).
 
 ---
 

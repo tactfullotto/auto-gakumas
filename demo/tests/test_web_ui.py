@@ -457,5 +457,70 @@ def test_full_library_card_pool_and_card_customizations_roundtrip(web_server):
     assert imp_res["state"]["card_customizations"]["127"]["levels"] == {"36": 1, "55": 2}
     assert imp_res["state"]["card_customizations"]["299"]["modifiers"]["score_delta"] == 15
 
+    # 4. Selecting 莉波 (#139) seeds Vi > Da > Vo default stats; selecting 美鈴 (#163) seeds Vo > Vi > Da
+    rin_st, rin_res = _post_json(f"{base_url}/api/hif/select-idol", {"p_idol_id": 139, "auto_seed_signature": True})
+    assert rin_st == 200
+    r_stats = rin_res["state"]["idol_stats"]
+    assert r_stats["visual"] > r_stats["dance"] > r_stats["vocal"]
+
+    mis_st, mis_res = _post_json(f"{base_url}/api/hif/select-idol", {"p_idol_id": 163, "auto_seed_signature": True})
+    assert mis_st == 200
+    m_stats = mis_res["state"]["idol_stats"]
+    assert m_stats["vocal"] > m_stats["visual"] > m_stats["dance"]
+
+
+def test_unlimited_preferences_and_pref_search_filters(web_server):
+    """Preferences must support >15 cards (e.g. 40+ avoid cards) without cap, and index.html exposes multi-filters."""
+    base_url, _ = web_server
+
+    # Fetch real Sense card IDs (>40)
+    st_s, _, raw_s = _get_bytes(f"{base_url}/api/library/cards?plan=sense&limit=500")
+    assert st_s == 200
+    sense_ids = [int(c["id"]) for c in json.loads(raw_s.decode("utf-8"))["items"] if (c.get("type") or "") != "trouble"]
+    assert len(sense_ids) >= 60
+
+    avoid_40 = sense_ids[:40]
+    pri_20 = sense_ids[40:60]
+    keep_18 = sense_ids[60:78]
+    weights_20 = {str(cid): 200 for cid in sense_ids[:20]}
+
+    p_st, p_res = _post_json(
+        f"{base_url}/api/hif/preferences",
+        {
+            "priority_card_ids": pri_20,
+            "keep_card_ids": keep_18,
+            "avoid_card_ids": avoid_40,
+            "card_score_overrides": weights_20,
+            "preferred_drink_ids": [22, 18, 14],
+            "banned_drink_ids": [19],
+        },
+    )
+    assert p_st == 200
+    prefs = p_res["state"]["preferences"]
+    assert len(prefs["avoid_card_ids"]) == 40
+    assert len(prefs["priority_card_ids"]) == 20
+    assert len(prefs["keep_card_ids"]) == 18
+    assert len(prefs["card_score_overrides"]) == 20
+
+    # Verify index.html contains all preference search filter controls
+    h_st, _, h_raw = _get_bytes(f"{base_url}/")
+    assert h_st == 200
+    html = h_raw.decode("utf-8")
+    for elem_id in (
+        "hif-pref-card-q",
+        "hif-pref-card-type",
+        "hif-pref-card-cat",
+        "hif-pref-card-rarity",
+        "hif-pref-card-up",
+        "hif-pref-card-effect",
+        "hif-pref-card-status",
+        "hif-pref-card-sort",
+        "btn-hif-pref-bulk-avoid",
+        "btn-hif-pref-reset-filter",
+    ):
+        assert elem_id in html, f"Missing filter control {elem_id} in index.html"
+
+
+
 
 

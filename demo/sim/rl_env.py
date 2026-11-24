@@ -172,6 +172,10 @@ class GakumasActionCodec:
                 action_map[aid] = ("card", h_idx)
 
         for d_idx, dr in enumerate(sim.available_drinks):
+            # Core engine legality rule (always active, even when prune_dominated=False):
+            # never allow wasting tutor (#22) or pure-draw drinks at 5-card hand cap.
+            if not sim.can_use_drink(dr):
+                continue
             if prune_dominated and (
                 not sim.can_use_active_retrigger_drink_now(dr)
                 or sim.should_defer_drink_for_hand_cap(dr)
@@ -182,8 +186,16 @@ class GakumasActionCodec:
                 mask[aid] = True
                 action_map[aid] = ("drink", d_idx)
 
-        mask[self.end_turn_action_id] = True
-        action_map[self.end_turn_action_id] = ("end_turn", -1)
+        # Core engine legality rule (always active, even when prune_dominated=False):
+        # if a playable trouble card (#23 眠気) is in hand on a non-final turn without 2x/retrigger armed,
+        # blank END_TURN (SKIP) is illegal — exile the trouble card instead of skipping!
+        has_playable_trouble_card = any(
+            k == "card" and sim.is_trouble_card(sim.hand[idx].cfg)
+            for k, idx in action_map.values()
+        )
+        if not (has_playable_trouble_card and sim.is_trouble_exile_mandatory()):
+            mask[self.end_turn_action_id] = True
+            action_map[self.end_turn_action_id] = ("end_turn", -1)
 
         if prune_dominated:
             if self.finisher_play_max_turns_remaining > 0 and sim.double_card_effect_cards == 0:
