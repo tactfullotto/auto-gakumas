@@ -1,5 +1,7 @@
 # auto-gakumas
 
+[中文](README.zh.md) | **English** | [日本語](README.ja.md)
+
 > **Zero-LLM** end-to-end automation for the **学園アイドルマスター (Gakumas) H.I.F 本戦** card game — from produce schedule to final battle, fully automated via ADB + local vision + PPO/ISMCTS planner.
 
 ---
@@ -147,7 +149,7 @@ Logs are written to `live<N>_run_log.csv`. Debug frames are saved under `debug_f
 python -m pytest demo/tests/ -k "not test_live_xai_llm_decision_e2e" -q
 ```
 
-Expected: **298 passed, 2 skipped** in ~91s.
+Expected: **176+ passed** in ~260s (offline suite, no live-device tests).
 
 ---
 

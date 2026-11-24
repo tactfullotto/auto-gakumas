@@ -767,3 +767,115 @@ def test_stacked_hatsuboshi_drinks_trigger_separate_active_cards_only():
         sim.end_turn()
         assert sim.turn == 4
         assert sim.buffs["doubleCostTurns"] == 0
+
+
+def test_sense_independent_score_buff_multiplier_and_drink_22_tutor():
+    from demo.sim.battle_simulator import _make_drink_config
+
+    with GakumasDB("gakumas_library.db") as db:
+        sim = _new_clean_sim(db, enable_404=False, enable_509=False)
+        sim.plan = "sense"
+        sim.turn_schedule = [TurnMultiplierSpec("Vo", 2.0) for _ in range(12)]
+        sim.buffs["goodConditionTurns"] = 10
+        sim.buffs["perfectConditionTurns"] = 2
+        sim.buffs["concentration"] = 0
+        sim.in_unfresh_phase = False
+
+        # 1. Play #776 話題沸騰+: goodConditionTurnsMultiplier=2.5 scales ONLY the 好調/絶好調 bracket,
+        # and grants independent timed setScoreBuff(0.3, 1) afterwards.
+        # cond_bonus = 0.5 + 0.1*10 = 1.5 -> cond_mult = 1.0 + 1.5*2.5 = 4.75 -> ceil(50*4.75)=238 -> x2 = 476
+        c776 = _spawn_test_card(sim, db, 776, sim.hand)
+        sim.card_uses_remaining = 3
+        sim.play_card(sim.hand.index(c776))
+        assert sim.score == 476
+        assert abs(sim.total_score_buff() - 0.3) < 1e-6
+        assert sim.good_condition_multiplier == 1.0  # Reset after card finishes
+
+        # 2. Drink #12 (+0.3, 3t) and #14 (+0.1, 5t): independent multiplier stacks to +70% (0.3+0.3+0.1),
+        # completely separate from cond_mult (1.0 + 0.5 + 0.1*10 = 2.5)!
+        # score+=50 at gc=10, pc=1, mult=2.0 -> ceil(ceil(50 * 2.5) * 1.7) * 2 = ceil(125 * 1.7) * 2 = 213 * 2 = 426
+        sim.available_drinks = [_make_drink_config(db, 12), _make_drink_config(db, 14)]
+        sim.use_drink(0)  # #12 (+0.3, 3t)
+        sim.use_drink(0)  # #14 (+0.1, 5t)
+        assert abs(sim.total_score_buff() - 0.7) < 1e-6
+        sim.score = 0
+        assert sim._compute_final_score_gain(50, apply_sense_mods=True) == 426
+
+        # 3. #22 初星黒酢 tutor priority: avoids #23 眠気, holds back #814 at rem>2, tutors #814 at rem<=2
+        sim_t = _new_clean_sim(db, enable_404=False, enable_509=False)
+        sim_t.plan = "sense"
+        sim_t.in_unfresh_phase = False
+        _spawn_test_card(sim_t, db, 23, sim_t.draw_pile)
+        _spawn_test_card(sim_t, db, 814, sim_t.draw_pile)
+        _spawn_test_card(sim_t, db, 812, sim_t.discard_pile)
+        sim_t.turns_remaining = 6
+        sim_t.available_drinks = [_make_drink_config(db, 22)]
+        sim_t.use_drink(0)
+        assert [c.cfg.card_id for c in sim_t.hand] == [812]
+
+        sim_t.hand.clear()
+        sim_t.turns_remaining = 2
+        sim_t.available_drinks = [_make_drink_config(db, 22)]
+        sim_t.use_drink(0)
+        assert [c.cfg.card_id for c in sim_t.hand] == [814]
+        assert 23 not in [c.cfg.card_id for c in sim_t.hand]
+
+
+def test_hand_cap_5_defers_overflow_drinks_and_exiles_nemuki_over_blank_skip():
+    from demo.sim.battle_simulator import _make_drink_config
+    from demo.sim.rl_env import GakumasActionCodec
+
+    with GakumasDB("gakumas_library.db") as db:
+        sim = _new_clean_sim(db, enable_404=False, enable_509=False)
+        sim.plan = "sense"
+        d14 = _make_drink_config(db, 14)
+        d22 = _make_drink_config(db, 22)
+        assert sim.drink_draw_count(d14) == 2
+        assert sim.drink_draw_count(d22) == 1
+
+        # 5 cards -> #22 deferred; 4 cards with playable non-finisher -> #14 deferred; 3 cards -> #14 allowed
+        sim.turns_remaining = 3
+        sim.stamina = 40
+        sim.card_uses_remaining = 1
+        sim.hand.clear()
+        for cid in (812, 814, 162, 105):
+            _spawn_test_card(sim, db, cid, sim.hand)
+        assert sim.should_defer_drink_for_hand_cap(d14) is True
+        _spawn_test_card(sim, db, 113, sim.hand)
+        assert sim.should_defer_drink_for_hand_cap(d22) is True
+        sim.hand = sim.hand[:3]
+        assert sim.should_defer_drink_for_hand_cap(d14) is False
+
+        # On rem>=2 with #23 眠気 playable and #814/#162 held, prune_dominated removes blank SKIP -> forces #23 exile
+        sim2 = _new_clean_sim(db, enable_404=False, enable_509=False)
+        sim2.plan = "sense"
+        sim2.available_drinks.clear()
+        sim2.turns_remaining = 6
+        sim2.stamina = 40
+        sim2.card_uses_remaining = 1
+        sim2.hand.clear()
+        for cid in (814, 162, 23):
+            inst = _spawn_test_card(sim2, db, cid, sim2.hand)
+            sim2.config.deck.append(inst.cfg)
+        codec = GakumasActionCodec(sim2.config, db=db, finisher_play_max_turns_remaining=2)
+        _, amap = codec.legal_mask_and_map(sim2, prune_dominated=True)
+        assert codec.end_turn_action_id not in amap
+        assert list(amap.values()) == [("card", 2)]
+
+        # Playing #23 眠気 sends it cleanly to exhaust_pile
+        idx_23 = amap[next(iter(amap))][1]
+        sim2.step("card", idx_23)
+        assert any(c.cfg.card_id == 23 for c in sim2.exhaust_pile)
+        assert all(c.cfg.card_id != 23 for c in sim2.discard_pile)
+
+        # When 2x is armed (double_card_effect_cards > 0), #23 must NOT be forced over SKIP/hold
+        sim2.hand.clear()
+        _spawn_test_card(sim2, db, 23, sim2.hand)
+        sim2.draw_pile.clear()
+        _spawn_test_card(sim2, db, 814, sim2.draw_pile)
+        sim2.turns_remaining = 2
+        sim2.stamina = 40
+        sim2.card_uses_remaining = 1
+        sim2.double_card_effect_cards = 1
+        _, amap2 = codec.legal_mask_and_map(sim2, prune_dominated=True)
+        assert codec.end_turn_action_id in amap2

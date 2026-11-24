@@ -27,6 +27,8 @@ EOT_DECREMENT_FIELDS = (
     "halfCostTurns",
     "doubleCostTurns",
     "goodConditionTurns",
+    "perfectConditionTurns",
+    "poorConditionTurns",
 )
 DEBUFF_FIELDS = frozenset({
     "doubleCostTurns",
@@ -128,6 +130,13 @@ class PItemConfig:
     grant_perm_gi_effect_buff: float = 0.0
     pad_deck_to_min_cards: int = 0
     max_triggers: Optional[int] = None
+    trigger_every_n_gc_cards: int = 0
+    require_min_gc: int = 0
+    grant_perfect_condition: int = 0
+    grant_card_uses: int = 0
+    grant_draw_cards: int = 0
+    trigger_attr_turn: str = ""
+    grant_genki: int = 0
 
 
 def generate_stage_turn_schedule(
@@ -196,6 +205,7 @@ class BattleConfig:
     initial_good_impression: int = 0
     initial_motivation: int = 0
     initial_good_condition: int = 0
+    initial_perfect_condition: int = 0
     initial_concentration: int = 0
     initial_full_power_charge: int = 0
     initial_score_buff: float = 0.0
@@ -755,6 +765,56 @@ def _build_hif_p_items(*, include_cheering_stick: bool = True) -> List[PItemConf
     return items
 
 
+def _build_sense_hif_p_items() -> List[PItemConfig]:
+    """Build Sense H.I.F P-items ([ガラクタロード] 姫崎 莉波 & common Sense support items)."""
+    return [
+        PItemConfig(
+            item_id=9139,
+            name="憧れ続けた輝き",
+            rarity="SSR",
+            mode="stage",
+            source_type="pIdol",
+            description="好調8T以上時、好調効果スキルカード4回使用毎: 絶好調1T & 使用数+1 & 1ドロー & 固定体力-1",
+            trigger_every_n_gc_cards=4,
+            require_min_gc=8,
+            grant_perfect_condition=1,
+            grant_card_uses=1,
+            grant_draw_cards=1,
+            stamina_cost_on_trigger=1,
+            max_triggers=None,
+        ),
+        PItemConfig(
+            item_id=9140,
+            name="包まれるやさしさ",
+            rarity="SSR",
+            mode="stage",
+            source_type="support",
+            description="【Viターン開始時】好調10T以上の場合: 絶好調4T & 元気+10 (レッスン内1回)",
+            trigger_attr_turn="Vi",
+            require_min_gc=10,
+            grant_perfect_condition=4,
+            grant_genki=10,
+            max_triggers=1,
+        ),
+        PItemConfig(
+            item_id=9141,
+            name="ひとりだちシューズ",
+            rarity="SSR",
+            mode="stage",
+            source_type="support",
+            description="【Daターン】体力50%以下時発動（サポートPアイテム）",
+        ),
+        PItemConfig(
+            item_id=9142,
+            name="ほっこりまんぶく",
+            rarity="SSR",
+            mode="produce",
+            source_type="support",
+            description="好調効果スキルカード獲得時ランダムPドリンク獲得 [育成期専用・戦中不触発]",
+        ),
+    ]
+
+
 def build_last_run_hif_preset(
     db: Optional[GakumasDB] = None,
     stage: str = "round2",
@@ -954,17 +1014,30 @@ class HeadlessBattleSimulator:
             "doubleCostTurns": 0,
             "nullifyDebuff": 0,
             "goodConditionTurns": config.initial_good_condition,
+            "perfectConditionTurns": config.initial_perfect_condition,
+            "poorConditionTurns": 0,
             "concentration": config.initial_concentration,
+            "nullifyCostCards": 0,
+            "nullifyCostActiveCards": 0,
         }
         if config.initial_full_power_charge > 0:
             self.buffs["fullPowerCharge"] = int(config.initial_full_power_charge)
         self.perm_gi_effect_buff = 0.0
         self.perm_score_buff = config.initial_score_buff
+        self.concentration_multiplier: float = 1.0
+        self.good_condition_multiplier: float = 1.0
+        self.perm_conc_effect_buff: float = 0.0
+        self.perm_gc_gain_buff: float = 0.0
+        self.perm_conc_gain_buff: float = 0.0
         # Timed buffs store (amount, remaining_turns, fresh) matching BuffManager.js
         self.timed_gi_effect_buffs: List[Tuple[float, int, bool]] = []
         self.timed_gi_gain_buffs: List[Tuple[float, int, bool]] = []
         self.timed_score_buffs: List[Tuple[float, int, bool]] = []
         self.timed_extra_gi_eot: List[Tuple[int, int, bool]] = []
+        self.timed_conc_effect_buffs: List[Tuple[float, int, bool]] = []
+        self.timed_gc_gain_buffs: List[Tuple[float, int, bool]] = []
+        self.timed_gc_addition_buffs: List[Tuple[int, int, bool]] = []
+        self.timed_conc_gain_buffs: List[Tuple[float, int, bool]] = []
         self.fresh_turn_stat_buffs: set[str] = set()
         self.in_unfresh_phase: bool = True
 
@@ -980,6 +1053,7 @@ class HeadlessBattleSimulator:
         self._buff_cost_consumed: bool = False
 
         self.p_item_gi_counters: Dict[int, int] = {it.item_id: 0 for it in config.p_items}
+        self.p_item_sense_gc_counters: Dict[int, int] = {it.item_id: 0 for it in config.p_items}
         self.p_item_trigger_counts: Dict[int, int] = {it.item_id: 0 for it in config.p_items}
         # Once-per-memory-card-instance (uid) and stage-wide base_id tracking
         self.memory_extra_used_uids: set[int] = set()
@@ -1186,6 +1260,18 @@ class HeadlessBattleSimulator:
     def extra_gi_eot_triggers(self) -> int:
         return sum(v for v, _, _ in self.timed_extra_gi_eot)
 
+    def total_conc_effect_buff(self) -> float:
+        return self.perm_conc_effect_buff + sum(v for v, _, _ in self.timed_conc_effect_buffs)
+
+    def total_gc_gain_buff(self) -> float:
+        return self.perm_gc_gain_buff + sum(v for v, _, _ in self.timed_gc_gain_buffs)
+
+    def total_gc_addition_buff(self) -> int:
+        return sum(int(v) for v, _, _ in self.timed_gc_addition_buffs)
+
+    def total_conc_gain_buff(self) -> float:
+        return self.perm_conc_gain_buff + sum(v for v, _, _ in self.timed_conc_gain_buffs)
+
     def _set_buff_value(self, key: str, new_val: int) -> None:
         prev = int(self.buffs.get(key, 0) or 0)
         clamped = max(0, int(new_val))
@@ -1204,12 +1290,34 @@ class HeadlessBattleSimulator:
                 out.append((val, turns - 1, False))
         return out
 
-    def _compute_final_score_gain(self, raw_score: float) -> int:
-        if raw_score <= 0:
+    def _compute_final_score_gain(self, raw_score: float, *, apply_sense_mods: bool = False) -> int:
+        if raw_score <= 0 and not apply_sense_mods:
             return 0
         spec = self.current_turn_spec()
-        step1 = _safe_ceil(raw_score)
-        step2 = _safe_ceil(step1 * (1.0 + max(0.0, self.total_score_buff())))
+        if not apply_sense_mods:
+            step1 = _safe_ceil(raw_score)
+            step2 = _safe_ceil(step1 * (1.0 + max(0.0, self.total_score_buff())))
+            return _safe_ceil(step2 * spec.multiplier)
+
+        conc = max(0, int(self.buffs.get("concentration", 0) or 0))
+        conc_eff = 1.0 + max(0.0, self.total_conc_effect_buff())
+        base = float(raw_score) + float(conc) * float(self.concentration_multiplier) * conc_eff
+        if base <= 0:
+            return 0
+        step1 = _safe_ceil(base)
+        gc = max(0, int(self.buffs.get("goodConditionTurns", 0) or 0))
+        pc = max(0, int(self.buffs.get("perfectConditionTurns", 0) or 0))
+        poor = max(0, int(self.buffs.get("poorConditionTurns", 0) or 0))
+        cond_bonus = 0.0
+        if gc > 0:
+            cond_bonus += 0.5
+            if pc > 0:
+                cond_bonus += 0.1 * gc
+        cond_mult = 1.0 + cond_bonus * float(self.good_condition_multiplier)
+        if poor > 0:
+            cond_mult = max(0.1, cond_mult - 0.33)
+        step_cond = _safe_ceil(step1 * cond_mult)
+        step2 = _safe_ceil(step_cond * (1.0 + max(0.0, self.total_score_buff())))
         return _safe_ceil(step2 * spec.multiplier)
 
     def _active_instances(self) -> Dict[int, CardInstance]:
@@ -1285,17 +1393,22 @@ class HeadlessBattleSimulator:
             self._fire_phase("cardMovedToHand", is_direct=True)
         return drawn
 
-    def _effective_cost(self, cfg: CardConfig) -> Tuple[str, int]:
+    def _effective_cost_with_nullify(self, cfg: CardConfig) -> Tuple[str, int, Optional[str]]:
         cost_clauses = cfg.parsed_effects.get("cost") or []
         if not cost_clauses:
-            return ("cost", 0)
+            return ("cost", 0, None)
         act_list = cost_clauses[0].get("actions") or []
         if not act_list:
-            return ("cost", 0)
+            return ("cost", 0, None)
         act = act_list[0]
         lhs = str(act.get("lhs") or "cost")
         amt = int(float(self._eval_expr(act.get("rhs", 0))))
         if lhs in ("cost", "stamina"):
+            if amt > 0:
+                if cfg.card_type == "active" and int(self.buffs.get("nullifyCostActiveCards", 0) or 0) > 0:
+                    return (lhs, 0, "nullifyCostActiveCards")
+                if int(self.buffs.get("nullifyCostCards", 0) or 0) > 0:
+                    return (lhs, 0, "nullifyCostCards")
             eff_float = -float(amt)
             if self.buffs.get("halfCostTurns", 0) > 0:
                 eff_float *= 0.5
@@ -1305,10 +1418,14 @@ class HeadlessBattleSimulator:
             if lhs == "cost":
                 eff -= int(self.buffs.get("costReduction", 0) or 0)
                 eff += int(self.buffs.get("costIncrease", 0) or 0)
-            return (lhs, max(0, eff))
+            return (lhs, max(0, eff), None)
         if self.buffs.get("doubleBuffCostTurns", 0) > 0 and lhs in CONSUMABLE_BUFF_FIELDS:
             amt *= 2
-        return (lhs, max(0, amt))
+        return (lhs, max(0, amt), None)
+
+    def _effective_cost(self, cfg: CardConfig) -> Tuple[str, int]:
+        lhs, eff_amt, _ = self._effective_cost_with_nullify(cfg)
+        return (lhs, eff_amt)
 
     def can_play_card(self, inst: CardInstance) -> bool:
         if self.card_uses_remaining <= 0:
@@ -1467,13 +1584,166 @@ class HeadlessBattleSimulator:
                 self.buffs["doubleCostTurns"] = orig_double_cost
         return False
 
+    @staticmethod
+    def is_late_scaling_finisher(cfg: CardConfig) -> bool:
+        """Return True for limit=1 finishers whose score scales with total cardsUsed (e.g. #813/#814)."""
+        return cfg.limit_count == 1 and (
+            cfg.base_id == 813 or "cardsUsed" in (cfg.dsl_actions or "")
+        )
+
+    @staticmethod
+    def is_double_effect_enabler(cfg: CardConfig) -> bool:
+        """Return True for cards that grant doubleCardEffectCards+= (e.g. #162/#163)."""
+        return cfg.base_id == 162 or "doubleCardEffectCards+=" in (cfg.dsl_actions or "")
+
+    @staticmethod
+    def is_score_buff_drink(drink: DrinkConfig) -> bool:
+        """Return True for drinks granting independent score-gain multiplier (`setScoreBuff`, e.g. #12, #14)."""
+        return drink.drink_id in (12, 14) or "setscorebuff(" in (drink.dsl_actions or "").lower()
+
+    @staticmethod
+    def score_buff_drink_duration(drink: DrinkConfig) -> int:
+        """Return timed turn duration for `setScoreBuff(amount, turns)` drinks (#12=3t, #14=5t)."""
+        dsl_l = (drink.dsl_actions or "").lower()
+        m_dur = re.search(r"setscorebuff\([^,]+,\s*(\d+)\)", dsl_l)
+        if m_dur:
+            return max(1, int(m_dur.group(1)))
+        if drink.drink_id == 12:
+            return 3
+        if drink.drink_id == 14:
+            return 5
+        return 0
+
+    @staticmethod
+    def is_timed_score_buff_card(cfg: CardConfig) -> bool:
+        """Return True for single-use burst cards granting timed `setScoreBuff` (e.g. #775/#776 話題沸騰)."""
+        if cfg.base_id == 775:
+            return True
+        if cfg.limit_count == 1:
+            return bool(re.search(r"setscorebuff\([^,]+,\s*(\d+)\)", (cfg.dsl_actions or "").lower()))
+        return False
+
+    @staticmethod
+    def is_tutor_drink(drink: DrinkConfig) -> bool:
+        """Return True for drinks that move a chosen card from draw/discard to hand (e.g. #22 初星黒酢)."""
+        return drink.drink_id == 22 or "moveselectedtohand" in (drink.dsl_actions or "").lower()
+
+    @staticmethod
+    def is_trouble_card(card_cfg: CardConfig) -> bool:
+        """Return True for trouble/interference cards (e.g. #23 眠気)."""
+        return card_cfg.card_type == "trouble" or card_cfg.base_id == 23 or card_cfg.card_id == 23
+
+    @staticmethod
+    def drink_draw_count(drink: DrinkConfig) -> int:
+        """Count immediate cards added/drawn to hand by a drink (ignoring delayed `at:` triggers)."""
+        dsl_l = (drink.dsl_actions or "").lower()
+        if HeadlessBattleSimulator.is_tutor_drink(drink) or "moveselectedtohand" in dsl_l:
+            return 1
+        top_part = re.split(r"\bat\s*:", re.sub(r"\{[^}]*\}", "", dsl_l), maxsplit=1)[0]
+        total = sum(int(m) for m in re.findall(r"drawcard\s*\(\s*(\d+)\s*\)", top_part))
+        rem_top = re.sub(r"drawcard\s*\([^)]*\)", "", top_part)
+        total += len(re.findall(r"\bdrawcard\b", rem_top))
+        return total
+
+    def should_defer_drink_for_hand_cap(
+        self,
+        drink_cfg: DrinkConfig,
+        *,
+        hand_size: Optional[int] = None,
+        has_playable_non_finisher: Optional[bool] = None,
+    ) -> bool:
+        """Defer draw/tutor drinks that would overflow the 5-card hand cap when cards can be played first."""
+        h_sz = len(self.hand) if hand_size is None else int(hand_size)
+        need = self.drink_draw_count(drink_cfg)
+        if need <= 0:
+            return False
+        if self.is_tutor_drink(drink_cfg):
+            return h_sz >= self.MAX_HAND_SIZE
+        if h_sz + need <= self.MAX_HAND_SIZE:
+            return False
+        can_play_first = (
+            bool(has_playable_non_finisher)
+            if has_playable_non_finisher is not None
+            else any(
+                self.can_play_card(inst)
+                and not self.is_late_scaling_finisher(inst.cfg)
+                and not self.is_trouble_card(inst.cfg)
+                for inst in self.hand
+            )
+        )
+        if self.is_score_buff_drink(drink_cfg) and self.turns_remaining <= 1:
+            return bool(can_play_first)
+        return bool(h_sz >= self.MAX_HAND_SIZE or can_play_first)
+
+    def should_prune_blank_end_turn(
+        self,
+        *,
+        has_non_trouble_card: bool,
+        has_trouble_card: bool,
+        stamina: Optional[int] = None,
+        turns_remaining: Optional[int] = None,
+    ) -> bool:
+        """Return True when blank SKIP/end_turn must be pruned because useful plays or trouble exile exist."""
+        if self.double_card_effect_cards != 0 or self.has_armed_active_retrigger(same_turn_only=True):
+            return False
+        st = self.stamina if stamina is None else int(stamina)
+        rem = self.turns_remaining if turns_remaining is None else int(turns_remaining)
+        if has_non_trouble_card and (st >= 6 or rem <= 1):
+            return True
+        if has_trouble_card and rem >= 2 and st >= 4:
+            return True
+        return False
+
+    def should_hold_for_finisher(
+        self,
+        *,
+        card_cfg: Optional[CardConfig] = None,
+        drink_cfg: Optional[DrinkConfig] = None,
+        fin_window: int,
+        has_813: Optional[bool] = None,
+    ) -> bool:
+        """Hold finishers, 2x enablers, tutor drinks, and timed score-buff multipliers until the late burst window."""
+        if fin_window <= 0 or self.double_card_effect_cards > 0:
+            return False
+        has_fin = has_813 if has_813 is not None else self.has_unexhausted_card_family(813)
+        if card_cfg is not None:
+            if self.turns_remaining > fin_window:
+                if self.is_late_scaling_finisher(card_cfg):
+                    return True
+                if has_fin and self.is_double_effect_enabler(card_cfg):
+                    return True
+            if has_fin and self.is_timed_score_buff_card(card_cfg) and self.turns_remaining > max(3, fin_window + 1):
+                return True
+        if drink_cfg is not None and has_fin:
+            if self.is_tutor_drink(drink_cfg) and self.turns_remaining > fin_window:
+                return True
+            if self.is_score_buff_drink(drink_cfg):
+                dur = self.score_buff_drink_duration(drink_cfg)
+                if dur > 0 and self.turns_remaining > dur:
+                    return True
+        return False
+
+    def has_unexhausted_card_family(self, base_id: int) -> bool:
+        """Return True if any card with `base_id` remains in hand, draw pile, or discard pile."""
+        bid = int(base_id)
+        for zone in (self.hand, self.draw_pile, self.discard_pile):
+            if any(c.cfg.base_id == bid for c in zone):
+                return True
+        return False
+
     def is_safe_dominating_free_card(self, inst: CardInstance) -> bool:
         """Return True when playing `inst` now strictly dominates spending the final action on a turn-ending card."""
         if not self.can_play_card(inst) or not self.is_free_action_card(inst):
             return False
         cfg_c = inst.cfg
-        # Do not force a lower-value Active card to consume #25 double_card_effect_cards
-        if (self.double_card_effect_cards > 0 or self.has_armed_active_retrigger()) and cfg_c.card_type == "active" and cfg_c.rarity != "L":
+        # Any non-L card (Mental or Active) consumes double_card_effect_cards in _use_card
+        if self.double_card_effect_cards > 0 and cfg_c.rarity != "L":
+            return False
+        # Do not force a lower-value Active card to consume #25 Active-only retrigger
+        if self.has_armed_active_retrigger() and cfg_c.card_type == "active" and cfg_c.rarity != "L":
+            return False
+        # Never auto-force #162/#163 double-effect enablers prematurely
+        if self.is_double_effect_enabler(cfg_c):
             return False
         # Do not force a limit_count==1 card early when one of its conditional bonus blocks is currently False
         if cfg_c.limit_count == 1 and self.turns_remaining > 2:
@@ -1507,13 +1777,18 @@ class HeadlessBattleSimulator:
             if o.uid != inst.uid and self.can_play_card(o) and not self.is_free_action_card(o)
         ]
         if non_free_playable and c_amt > 0:
-            if c_var in ("motivation", "goodImpressionTurns"):
+            if c_var in ("motivation", "goodImpressionTurns", "concentration", "goodConditionTurns"):
                 rem_val = int(self.buffs.get(c_var, 0) or 0) - c_amt
                 if not any(
                     (ov := self._effective_cost(o.cfg))[0] != c_var or rem_val >= ov[1]
                     for o in non_free_playable
                 ):
                     return False
+                if c_var == "goodConditionTurns":
+                    for o in non_free_playable:
+                        m_gc = re.search(r"goodConditionTurns\s*>=\s*(\d+)", o.cfg.dsl_conditions or "")
+                        if m_gc and rem_val < int(m_gc.group(1)):
+                            return False
             elif c_var == "stamina":
                 rem_hp = self.stamina - c_amt
                 if not any(
@@ -1565,7 +1840,9 @@ class HeadlessBattleSimulator:
                 outer_phase = self.phase
                 self.phase = "processCost"
                 try:
-                    cost_var, eff_amt = self._effective_cost(cfg)
+                    cost_var, eff_amt, nullify_key = self._effective_cost_with_nullify(cfg)
+                    if nullify_key is not None:
+                        self._set_buff_value(nullify_key, int(self.buffs.get(nullify_key, 0) or 0) - 1)
                     if cost_var == "cost" and eff_amt > 0:
                         shield_used = min(self.genki, eff_amt)
                         self.genki -= shield_used
@@ -1628,6 +1905,8 @@ class HeadlessBattleSimulator:
                         self._trigger_action_blocks(actions, owner=inst, is_from_card=True)
                     self._trigger_action_blocks(actions, owner=inst, is_from_card=True)
                 finally:
+                    self.concentration_multiplier = 1.0
+                    self.good_condition_multiplier = 1.0
                     self.phase = outer_phase
 
             self.cards_used += 1
@@ -1725,6 +2004,10 @@ class HeadlessBattleSimulator:
         self.timed_gi_gain_buffs = self._step_timed_buffs(self.timed_gi_gain_buffs)
         self.timed_score_buffs = self._step_timed_buffs(self.timed_score_buffs)
         self.timed_extra_gi_eot = self._step_timed_buffs(self.timed_extra_gi_eot)
+        self.timed_conc_effect_buffs = self._step_timed_buffs(self.timed_conc_effect_buffs)
+        self.timed_gc_gain_buffs = self._step_timed_buffs(self.timed_gc_gain_buffs)
+        self.timed_gc_addition_buffs = self._step_timed_buffs(self.timed_gc_addition_buffs)
+        self.timed_conc_gain_buffs = self._step_timed_buffs(self.timed_conc_gain_buffs)
 
         # 4. Reset one-turn fields & update trigger ttl/delay & prune expired triggers (ttl < 0)
         self.card_uses_remaining = 0
@@ -1902,6 +2185,56 @@ class HeadlessBattleSimulator:
                                     (it.grant_gi_effect_buff, max(1, it.grant_gi_effect_ttl), is_fresh)
                                 )
 
+            # Stage P-items firing at startOfTurn (e.g. 包まれるやさしさ: Vi turn & 好調>=10)
+            if phase == "startOfTurn":
+                for it in self.config.p_items:
+                    if it.mode != "stage" or not it.trigger_attr_turn:
+                        continue
+                    if not self.current_turn_spec().attribute.lower().startswith(it.trigger_attr_turn.lower()):
+                        continue
+                    if int(self.buffs.get("goodConditionTurns", 0) or 0) < it.require_min_gc:
+                        continue
+                    if it.max_triggers is not None and self.p_item_trigger_counts[it.item_id] >= it.max_triggers:
+                        continue
+                    self.p_item_trigger_counts[it.item_id] += 1
+                    if it.grant_perfect_condition > 0:
+                        self._set_buff_value(
+                            "perfectConditionTurns",
+                            int(self.buffs.get("perfectConditionTurns", 0) or 0) + it.grant_perfect_condition,
+                        )
+                    if it.grant_genki > 0:
+                        self.genki += it.grant_genki
+
+            # Stage P-items firing at afterCardUsed (e.g. 憧れ続けた輝き: 好調>=8, every 4th 好調 card)
+            if phase == "afterCardUsed" and self.used_card is not None:
+                used_dsl = self.used_card.cfg.dsl_actions or ""
+                if "goodConditionTurns" in used_dsl:
+                    cur_gc = int(self.buffs.get("goodConditionTurns", 0) or 0)
+                    for it in self.config.p_items:
+                        if it.mode != "stage" or it.trigger_every_n_gc_cards <= 0:
+                            continue
+                        if cur_gc < it.require_min_gc:
+                            continue
+                        if it.max_triggers is not None and self.p_item_trigger_counts[it.item_id] >= it.max_triggers:
+                            continue
+                        self.p_item_sense_gc_counters[it.item_id] = self.p_item_sense_gc_counters.get(it.item_id, 0) + 1
+                        if (
+                            self.p_item_sense_gc_counters[it.item_id] % it.trigger_every_n_gc_cards == 0
+                            and self.stamina >= it.stamina_cost_on_trigger
+                        ):
+                            self.p_item_trigger_counts[it.item_id] += 1
+                            if it.stamina_cost_on_trigger > 0:
+                                self.stamina = max(0, self.stamina - it.stamina_cost_on_trigger)
+                            if it.grant_perfect_condition > 0:
+                                self._set_buff_value(
+                                    "perfectConditionTurns",
+                                    int(self.buffs.get("perfectConditionTurns", 0) or 0) + it.grant_perfect_condition,
+                                )
+                            if it.grant_card_uses > 0:
+                                self.card_uses_remaining += it.grant_card_uses
+                            if it.grant_draw_cards > 0:
+                                self.draw_cards(it.grant_draw_cards)
+
             for tr in snapshot_triggers:
                 if tr.phase != phase:
                     continue
@@ -1931,6 +2264,8 @@ class HeadlessBattleSimulator:
                                 cond_snap=cond_snap,
                             )
                 finally:
+                    self.concentration_multiplier = 1.0
+                    self.good_condition_multiplier = 1.0
                     self._active_reservation_is_card = prev_res
         finally:
             self.phase = outer_phase
@@ -1984,7 +2319,25 @@ class HeadlessBattleSimulator:
                     return
 
             if lhs == "score" and op == "+=":
-                self.score += self._compute_final_score_gain(val)
+                self.score += self._compute_final_score_gain(val, apply_sense_mods=True)
+                return
+
+            if lhs == "concentrationMultiplier":
+                if op == "=":
+                    self.concentration_multiplier = max(0.0, float(val))
+                elif op == "+=":
+                    self.concentration_multiplier = max(0.0, self.concentration_multiplier + float(val))
+                elif op == "*=":
+                    self.concentration_multiplier = max(0.0, self.concentration_multiplier * float(val))
+                return
+
+            if lhs == "goodConditionTurnsMultiplier":
+                if op == "=":
+                    self.good_condition_multiplier = max(0.0, float(val))
+                elif op == "+=":
+                    self.good_condition_multiplier = max(0.0, self.good_condition_multiplier + float(val))
+                elif op == "*=":
+                    self.good_condition_multiplier = max(0.0, self.good_condition_multiplier * float(val))
                 return
 
             if lhs == "fixedGenki" and op == "+=":
@@ -2047,8 +2400,49 @@ class HeadlessBattleSimulator:
                 self.double_card_effect_cards += int(val)
                 return
 
+            if lhs == "goodConditionTurns":
+                cur = int(self.buffs.get("goodConditionTurns", 0) or 0)
+                is_direct = (self.phase in DIRECT_CHANGE_PHASES) or self._active_reservation_is_card
+                if op == "+=":
+                    if int(val) > 0:
+                        gain_mult = 1.0 + max(0.0, self.total_gc_gain_buff())
+                        add_b = self.total_gc_addition_buff() if is_direct else 0
+                        gained = _safe_ceil((int(val) + add_b) * gain_mult)
+                        self._set_buff_value("goodConditionTurns", cur + gained)
+                        if is_direct:
+                            self._fire_phase("goodConditionTurnsIncreased", is_direct=True)
+                elif op == "-=":
+                    self._set_buff_value("goodConditionTurns", cur - int(val))
+                elif op == "=":
+                    self._set_buff_value("goodConditionTurns", int(val))
+                elif op == "*=":
+                    self._set_buff_value("goodConditionTurns", _safe_ceil(cur * val))
+                    if val > 1.0 and is_direct:
+                        self._fire_phase("goodConditionTurnsIncreased", is_direct=True)
+                return
+
+            if lhs == "concentration":
+                cur = int(self.buffs.get("concentration", 0) or 0)
+                is_direct = (self.phase in DIRECT_CHANGE_PHASES) or self._active_reservation_is_card
+                if op == "+=":
+                    if int(val) > 0:
+                        gain_mult = 1.0 + max(0.0, self.total_conc_gain_buff())
+                        gained = _safe_ceil(int(val) * gain_mult)
+                        self._set_buff_value("concentration", cur + gained)
+                        if is_direct:
+                            self._fire_phase("concentrationIncreased", is_direct=True)
+                elif op == "-=":
+                    self._set_buff_value("concentration", cur - int(val))
+                elif op == "=":
+                    self._set_buff_value("concentration", int(val))
+                elif op == "*=":
+                    self._set_buff_value("concentration", _safe_ceil(cur * val))
+                    if val > 1.0 and is_direct:
+                        self._fire_phase("concentrationIncreased", is_direct=True)
+                return
+
             if (
-                lhs in ("motivation", "nullifyDebuff", "concentration", "costReduction", "costIncrease")
+                lhs in ("motivation", "nullifyDebuff", "costReduction", "costIncrease", "nullifyCostCards", "nullifyCostActiveCards")
                 or lhs in EOT_DECREMENT_FIELDS
                 or lhs in DEBUFF_FIELDS
                 or lhs in CONSUMABLE_BUFF_FIELDS
@@ -2089,6 +2483,31 @@ class HeadlessBattleSimulator:
                     self.perm_score_buff += b_val
                 else:
                     self.timed_score_buffs.append((b_val, ttl, is_fresh))
+            elif cname == "setConcentrationEffectBuff":
+                b_val = float(args[0])
+                ttl = int(args[1]) if len(args) >= 2 else None
+                if ttl is None:
+                    self.perm_conc_effect_buff += b_val
+                else:
+                    self.timed_conc_effect_buffs.append((b_val, ttl, is_fresh))
+            elif cname == "setConcentrationBuff":
+                b_val = float(args[0])
+                ttl = int(args[1]) if len(args) >= 2 else None
+                if ttl is None:
+                    self.perm_conc_gain_buff += b_val
+                else:
+                    self.timed_conc_gain_buffs.append((b_val, ttl, is_fresh))
+            elif cname == "setGoodConditionTurnsBuff":
+                b_val = float(args[0])
+                ttl = int(args[1]) if len(args) >= 2 else None
+                if ttl is None:
+                    self.perm_gc_gain_buff += b_val
+                else:
+                    self.timed_gc_gain_buffs.append((b_val, ttl, is_fresh))
+            elif cname == "setGoodConditionTurnsAdditionBuff":
+                b_val = int(round(float(args[0])))
+                ttl = int(args[1]) if len(args) >= 2 else 999
+                self.timed_gc_addition_buffs.append((b_val, ttl, is_fresh))
             elif cname == "drawCard":
                 n_draw = int(args[0]) if args else 1
                 self.draw_cards(n_draw)
@@ -2118,6 +2537,111 @@ class HeadlessBattleSimulator:
                     self.hand.append(moved_inst)
                     self.moved_card = moved_inst
                     self._fire_phase("cardMovedToHand", is_direct=True)
+            elif cname == "moveSelectedToHand":
+                n_move = int(args[0]) if args else 1
+                tgt = act.get("target")
+                owner_uid = owner.uid if owner else (trig.owner_uid if trig else None)
+                matching_uids = self._eval_target_ast(tgt, owner_uid=owner_uid)
+                candidates = []
+                for zlist in (self.draw_pile, self.discard_pile):
+                    for inst in zlist:
+                        if inst.uid in matching_uids:
+                            candidates.append((zlist, inst))
+                rarity_rank = {"SSR": 5, "SR": 4, "L": 3, "R": 2, "N": 1, "T": 0}
+                has_fin_in_hand = any(self.is_late_scaling_finisher(c.cfg) for c in self.hand)
+                has_162_in_hand = any(self.is_double_effect_enabler(c.cfg) for c in self.hand)
+                fin_unexhausted = self.has_unexhausted_card_family(813)
+                in_fin_window = (self.turns_remaining <= 2) or (self.double_card_effect_cards > 0)
+
+                def _tutor_key(item: Tuple[List[CardInstance], CardInstance]) -> Tuple[Any, ...]:
+                    c = item[1].cfg
+                    if c.card_type == "trouble":
+                        return (-1, 0, 0, 0, 0, 0)
+                    tier = 2
+                    if in_fin_window:
+                        if self.is_late_scaling_finisher(c) and not has_fin_in_hand:
+                            tier = 6
+                        elif (
+                            self.is_double_effect_enabler(c)
+                            and self.double_card_effect_cards == 0
+                            and not has_162_in_hand
+                            and fin_unexhausted
+                        ):
+                            tier = 5
+                        elif self.is_timed_score_buff_card(c):
+                            tier = 4
+                        elif c.base_id == 811:
+                            tier = 3
+                    else:
+                        if self.is_late_scaling_finisher(c):
+                            tier = 0
+                        elif c.base_id == 811:
+                            tier = 5
+                        elif "cardUsesRemaining+=" in (c.dsl_actions or ""):
+                            tier = 4
+                        elif self.is_timed_score_buff_card(c):
+                            tier = 3
+                    return (
+                        1,
+                        tier,
+                        1 if c.is_signature else 0,
+                        rarity_rank.get(c.rarity, 1),
+                        1 if ("score+=" in c.dsl_actions or "cardUsesRemaining+=" in c.dsl_actions) else 0,
+                        1 if c.upgraded else 0,
+                        c.card_id,
+                    )
+
+                for _ in range(max(0, n_move)):
+                    if not candidates or len(self.hand) >= self.MAX_HAND_SIZE:
+                        break
+                    candidates.sort(key=_tutor_key, reverse=True)
+                    zlist, moved_inst = candidates.pop(0)
+                    zlist.remove(moved_inst)
+                    self.hand.append(moved_inst)
+                    self.moved_card = moved_inst
+                    if moved_inst.cfg.base_id == 813:
+                        has_fin_in_hand = True
+                    elif moved_inst.cfg.base_id == 162:
+                        has_162_in_hand = True
+                    self._fire_phase("cardMovedToHand", is_direct=True)
+            elif cname == "removeRandom":
+                n_rem = int(args[0]) if args else 1
+                tgt = act.get("target")
+                owner_uid = owner.uid if owner else (trig.owner_uid if trig else None)
+                matching_uids = self._eval_target_ast(tgt, owner_uid=owner_uid)
+                candidates = []
+                for zlist in (self.hand, self.draw_pile, self.discard_pile):
+                    for inst in zlist:
+                        if inst.uid in matching_uids:
+                            candidates.append((zlist, inst))
+                for _ in range(max(0, n_rem)):
+                    if not candidates:
+                        break
+                    pick_idx = self.rng.randrange(len(candidates))
+                    zlist, rem_inst = candidates.pop(pick_idx)
+                    zlist.remove(rem_inst)
+                    self.exhaust_pile.append(rem_inst)
+                    self._fire_phase("cardRemoved", is_direct=False)
+            elif cname == "removeDebuffs":
+                n_clr = int(args[0]) if args else 1
+                active_debuffs = [dk for dk in sorted(DEBUFF_FIELDS) if int(self.buffs.get(dk, 0) or 0) > 0]
+                for dk in active_debuffs[: max(0, n_clr)]:
+                    self.buffs[dk] = 0
+            elif cname == "upgradeRandomCardInHand":
+                n_up = int(args[0]) if args else 1
+                elig = [inst for inst in self.hand if not inst.cfg.upgraded and inst.cfg.upgraded_id]
+                self.rng.shuffle(elig)
+                for inst in elig[: max(0, n_up)]:
+                    inst.cfg = self._get_card_config_cached(
+                        inst.cfg.upgraded_id,
+                        force_initial_hand_override=inst.cfg.force_initial_hand,
+                        exiles_trouble_on_play=inst.cfg.exiles_trouble_on_play,
+                        free_extra_use_first_play=inst.cfg.free_extra_use_first_play,
+                        memory_extra_use_limit=inst.cfg.memory_extra_use_limit,
+                        memory_draw_on_play=inst.cfg.memory_draw_on_play,
+                        customizations=inst.cfg.customizations,
+                        custom_modifiers=inst.cfg.custom_modifiers,
+                    )
             elif cname in ("useRandomCardFree", "useRandomFree"):
                 owner_uid = owner.uid if owner else (trig.owner_uid if trig else None)
                 matching_uids = self._eval_target_ast(act.get("target"), owner_uid=owner_uid)
@@ -2506,10 +3030,19 @@ class HeadlessBattleSimulator:
         cloned.buffs = dict(self.buffs)
         cloned.perm_gi_effect_buff = self.perm_gi_effect_buff
         cloned.perm_score_buff = self.perm_score_buff
+        cloned.concentration_multiplier = self.concentration_multiplier
+        cloned.good_condition_multiplier = self.good_condition_multiplier
+        cloned.perm_conc_effect_buff = self.perm_conc_effect_buff
+        cloned.perm_gc_gain_buff = self.perm_gc_gain_buff
+        cloned.perm_conc_gain_buff = self.perm_conc_gain_buff
         cloned.timed_gi_effect_buffs = list(self.timed_gi_effect_buffs)
         cloned.timed_gi_gain_buffs = list(self.timed_gi_gain_buffs)
         cloned.timed_score_buffs = list(self.timed_score_buffs)
         cloned.timed_extra_gi_eot = list(self.timed_extra_gi_eot)
+        cloned.timed_conc_effect_buffs = list(self.timed_conc_effect_buffs)
+        cloned.timed_gc_gain_buffs = list(self.timed_gc_gain_buffs)
+        cloned.timed_gc_addition_buffs = list(self.timed_gc_addition_buffs)
+        cloned.timed_conc_gain_buffs = list(self.timed_conc_gain_buffs)
         cloned.fresh_turn_stat_buffs = set(self.fresh_turn_stat_buffs)
         cloned.in_unfresh_phase = self.in_unfresh_phase
 
@@ -2525,6 +3058,7 @@ class HeadlessBattleSimulator:
         cloned._buff_cost_consumed = self._buff_cost_consumed
 
         cloned.p_item_gi_counters = dict(self.p_item_gi_counters)
+        cloned.p_item_sense_gc_counters = dict(self.p_item_sense_gc_counters)
         cloned.p_item_trigger_counts = dict(self.p_item_trigger_counts)
         cloned.memory_extra_used_uids = set(self.memory_extra_used_uids)
         cloned.memory_exile_used_uids = set(self.memory_exile_used_uids)

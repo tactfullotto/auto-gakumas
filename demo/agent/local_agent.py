@@ -99,6 +99,8 @@ class LocalHybridDecisionAgent:
     - Battle Turn: Maskable PPO + Online SO-ISMCTS via `LiveBattlePlanner`
     """
 
+    MIN_STAT_FLOOR: int = 1150
+
     def __init__(
         self,
         db: Optional[GakumasDB] = None,
@@ -435,6 +437,7 @@ class LocalHybridDecisionAgent:
         est_gain: int = 240,
         is_sp: bool = False,
         prefer_non_highest: bool = False,
+        enforce_floor: bool = False,
     ) -> int:
         attr: Optional[str] = None
         if "vo" in text_l or "ボーカル" in text_l:
@@ -462,6 +465,14 @@ class LocalHybridDecisionAgent:
             if useful_gain < int(est_gain * 0.55):
                 return -3_200 - overflow * 6
             return -1_200 - overflow * 4
+        if enforce_floor:
+            below_floor = [(k, v) for k, v in vals.items() if v < cls.MIN_STAT_FLOOR]
+            if below_floor and val < cls.MIN_STAT_FLOOR:
+                min_below = min(v for _, v in below_floor)
+                deficit = min(cls.MIN_STAT_FLOOR, cls.MIN_STAT_FLOOR - val)
+                if val == min_below:
+                    return 1_500 + deficit
+                return 900 + deficit
         if prefer_non_highest:
             return {3: 0, 2: 120, 1: 80}.get(ranks.get(attr, 0), 0)
         return ranks.get(attr, 0) * 40
@@ -658,17 +669,14 @@ class LocalHybridDecisionAgent:
             if not is_unique_card:
                 score += 400
 
+        from demo.core.idol_guides import resolve_card_family_meta
+
         tracker_hooks = (getattr(self.tracker, "card_memory_hooks", None) or {}) if self.tracker is not None else {}
-        hook_meta = (
-            tracker_hooks.get(int(card_id))
-            or tracker_hooks.get(str(card_id))
-            or tracker_hooks.get(base_id)
-            or tracker_hooks.get(str(base_id))
-            or {}
-        ) if card_id else {}
+        hook_meta = resolve_card_family_meta(tracker_hooks, card_id, db=self.db)
         has_real_hook = bool(
             hook_meta.get("force_initial_hand")
             or hook_meta.get("free_extra_use_first_play")
+            or int(hook_meta.get("extra_use_limit") or 0) > 0
             or (hook_meta.get("exiles_trouble_on_play") and base_id != 426)
             or base_id in (126, 128, 136, 296, 298)
         )
@@ -867,6 +875,7 @@ class LocalHybridDecisionAgent:
                 est_gain=self._estimate_schedule_gain(combined, is_sp),
                 is_sp=is_sp,
                 prefer_non_highest=is_jugyo,
+                enforce_floor=is_jugyo,
             )
             if is_sp:
                 return 10_000 + attr_bonus
@@ -954,11 +963,15 @@ class LocalHybridDecisionAgent:
                 est_gain=80,
                 is_sp=False,
                 prefer_non_highest=is_jugyo_event,
+                enforce_floor=is_jugyo_event,
             )
             if attr_bonus < 0:
                 score += attr_bonus
             elif is_jugyo_event:
-                score += 180 if attr_bonus >= 120 else (120 if attr_bonus > 0 else 0)
+                if attr_bonus >= 900:
+                    score += attr_bonus
+                else:
+                    score += 180 if attr_bonus >= 120 else (120 if attr_bonus > 0 else 0)
             else:
                 score += (attr_bonus // 40) * 60
             if "削除" in combined or "強化" in combined:
@@ -1002,11 +1015,15 @@ class LocalHybridDecisionAgent:
         for a in legal_actions:
             p = a.payload or {}
             nm = str(p.get("name") or "")
-            if nm.startswith("破棄候補_") and self._is_banned_drink(
-                p.get("drink_id"),
-                str(p.get("title") or nm),
-                str(a.description or ""),
-            ):
+            if not nm.startswith("破棄候補_"):
+                continue
+            did = p.get("drink_id")
+            if did is None:
+                m_did = re.match(r"^破棄候補_(\d+)$", nm)
+                if m_did:
+                    did = int(m_did.group(1))
+            # Check only the held slot's drink_id & title; a.description lists reward candidates.
+            if self._is_banned_drink(did, str(p.get("title") or nm), ""):
                 return a
         return None
 
@@ -1065,6 +1082,12 @@ class LocalHybridDecisionAgent:
             score += 1200
         elif (drink_id == 21) or ("厳選初星ティー" in text_l):
             score += 950 if target_effect == "goodImpressionTurns" else 550
+        elif (drink_id == 22) or ("初星黒酢" in text_l) or ("手札に移動" in text_l):
+            score += 750
+        elif (drink_id == 12) or ("ブーストエキス" in text_l):
+            score += 700
+        elif (drink_id == 14) or ("センブリソーダ" in text_l):
+            score += 650
 
         # Effect alignment
         if target_effect:
@@ -1109,6 +1132,63 @@ class LocalHybridDecisionAgent:
         missing_slots = sorted(set(range(total_slots)) - set(prev_slots))
         return missing_slots[0] if missing_slots else 0
 
+    def _score_battle_tutor_card(
+        self,
+        *,
+        card_id: Optional[int],
+        title: str,
+        desc: str,
+        obs: Optional[ScreenObservation],
+        target_effect: Optional[str],
+        guide: Optional[PIdolGuide],
+        plan: str,
+        p_idol_id: Optional[int],
+    ) -> int:
+        """Score a candidate in #22 初星黒酢 move-to-hand modal: #814 -> #162 -> #776 -> #812, strictly avoid trouble."""
+        cid_i = int(card_id or 0)
+        row = self.db.get_card_by_id(cid_i) if cid_i > 0 else None
+        cname = str(row.get("name") or "") if row else ""
+        ctype = str(row.get("type") or "").lower() if row else ""
+        text_all = f"{cname} {title} {desc}".lower()
+        if ctype == "trouble" or cid_i == 23 or any(tk in text_all for tk in ("眠気", "トラブル", "トラプル")):
+            return -100_000
+        base_id = int(row.get("base_id") or cid_i) if row else cid_i
+        planner = getattr(self, "battle_planner", None)
+        sim = getattr(planner, "_sim", None) if planner is not None else None
+        planner_week = getattr(planner, "_last_week", None) if planner is not None else None
+        obs_week = int(getattr(obs, "week", 0) or 0) if obs is not None else 0
+        same_battle_sim = sim is not None and (planner_week is None or obs_week <= 0 or int(planner_week) == obs_week)
+        double_armed = bool(same_battle_sim and getattr(sim, "double_card_effect_cards", 0) > 0)
+        rem_turns = int(getattr(obs, "turns_remaining", 10) or 10) if obs is not None else 10
+        if same_battle_sim and getattr(sim, "turns_remaining", None) is not None:
+            rem_turns = min(rem_turns, int(sim.turns_remaining))
+        late_window = rem_turns <= 3 or double_armed
+        if base_id == 813 or "自然体の魅力" in text_all:
+            return 20_000 if late_window else 9_000
+        if base_id == 162 or "国民的アイドル" in text_all:
+            return 18_500 if late_window else 8_500
+        if base_id == 775 or "話題沸騰" in text_all:
+            return 14_000
+        if base_id == 811 or "お姉さんの感覚" in text_all:
+            return 11_500
+        base_s = self._score_skill_card(
+            card_id=cid_i if cid_i > 0 else None,
+            title=title,
+            desc=desc,
+            target_effect=target_effect,
+            guide=guide,
+            plan=plan,
+            for_removal=False,
+            p_idol_id=p_idol_id,
+            check_same_card=False,
+        )
+        if row:
+            dsl_l = str(row.get("dsl_actions") or "").lower()
+            rarity = str(row.get("rarity") or "").upper()
+            if "cardusesremaining+=" in dsl_l or rarity == "SSR":
+                base_s += 1_500
+        return base_s
+
     def _is_non_exhaust_mental_card(
         self,
         card_id: Optional[int],
@@ -1128,12 +1208,13 @@ class LocalHybridDecisionAgent:
         if self._is_priority_card(cid_i):
             return False
         base_id = int(row.get("base_id") or cid_i)
-        dsl = str(row.get("effect_dsl") or "").lower()
+        dsl = f"{row.get('dsl_actions') or ''} {row.get('dsl_effects') or ''}".lower()
         if (
             cid_i in _CORE_KEEP_CARD_IDS
             or base_id in _CORE_KEEP_BASE_IDS
             or row.get("is_signature")
             or "extra_turn" in dsl
+            or "turnsremaining+=" in dsl
             or "追加ターン" in text_all
             or "cardusesremaining+=" in dsl
             or "使用数追加" in text_all
@@ -1287,7 +1368,7 @@ class LocalHybridDecisionAgent:
         claim_act = next(
             (
                 a for a in legal_actions
-                if str((a.payload or {}).get("name") or "") in ("受け取る", "強化する", "削除する", "チェンジする", "カスタマイズする", "次へ", "スキップ")
+                if str((a.payload or {}).get("name") or "") in ("受け取る", "強化する", "削除する", "チェンジする", "カスタマイズする", "移動する", "次へ", "スキップ")
             ),
             None,
         )
@@ -1320,7 +1401,7 @@ class LocalHybridDecisionAgent:
             or (
                 not has_3choice_previews
                 and "チェンジで獲得" not in raw_txt
-                and claim_name_peek not in ("受け取る", "強化する", "カスタマイズする", "次へ")
+                and claim_name_peek not in ("受け取る", "強化する", "カスタマイズする", "移動する", "次へ")
                 and any(k in raw_txt for k in ("削除", "手放す", "チェンジ"))
             )
         )
@@ -1358,7 +1439,7 @@ class LocalHybridDecisionAgent:
         direct_card_opts = [
             a for a in legal_actions
             if (a.payload or {}).get("card_id") is not None and not is_preview_tok(str((a.payload or {}).get("name") or ""))
-            and str((a.payload or {}).get("name") or "") not in ("受け取る", "強化する", "削除する", "チェンジする", "カスタマイズする", "次へ")
+            and str((a.payload or {}).get("name") or "") not in ("受け取る", "強化する", "削除する", "チェンジする", "カスタマイズする", "移動する", "次へ")
         ]
         if direct_card_opts:
             best_direct = max(
@@ -1684,24 +1765,54 @@ class LocalHybridDecisionAgent:
                     source="local_hybrid",
                 )
 
-            # Skill card 3-choice reward: inspect all candidates before picking globally highest score
+            # Skill card 3-choice reward / Upgrade / #22 Tutor: inspect candidates cleanly
             if preview_acts and not is_removal:
                 parsed_cid = int(claim_cid) if claim_cid else None
-                in_chg_pick = is_change_pickup and (claim_name != "強化する")
-                cur_score = self._score_skill_card(
-                    card_id=parsed_cid,
-                    title=claim_title,
-                    desc=str(claim_act.description or ""),
-                    target_effect=target_eff,
-                    guide=guide,
-                    plan=plan,
-                    for_removal=False,
-                    p_idol_id=resolved_pid,
-                    in_change_pickup=in_chg_pick,
-                    has_removable_unwanted=has_removable_unwanted if in_chg_pick else None,
+                in_chg_pick = is_change_pickup and (claim_name not in ("強化する", "移動する"))
+                if claim_name == "移動する":
+                    cur_score = self._score_battle_tutor_card(
+                        card_id=parsed_cid,
+                        title=claim_title,
+                        desc=str(claim_act.description or ""),
+                        obs=obs,
+                        target_effect=target_eff,
+                        guide=guide,
+                        plan=plan,
+                        p_idol_id=resolved_pid,
+                    )
+                else:
+                    cur_score = self._score_skill_card(
+                        card_id=parsed_cid,
+                        title=claim_title,
+                        desc=str(claim_act.description or ""),
+                        target_effect=target_eff,
+                        guide=guide,
+                        plan=plan,
+                        for_removal=False,
+                        p_idol_id=resolved_pid,
+                        in_change_pickup=in_chg_pick,
+                        has_removable_unwanted=has_removable_unwanted if in_chg_pick else None,
+                    )
+                claim_slot = (claim_act.payload or {}).get("slot_idx")
+                prev_slots = [s for s in (self._extract_reward_slot_idx(p) for p in preview_acts) if s is not None]
+                is_full_grid_previews = has_grid_previews or (
+                    len(prev_slots) >= 4 and set(prev_slots) == set(range(len(prev_slots)))
                 )
-                cur_slot = self._infer_current_reward_slot(preview_acts)
+                if claim_slot is not None:
+                    cur_slot = int(claim_slot)
+                elif is_full_grid_previews:
+                    cur_slot = int(self._last_clicked_grid_slot) if self._last_clicked_grid_slot is not None else 0
+                else:
+                    cur_slot = self._infer_current_reward_slot(preview_acts)
                 self._reward_seen_slots[cur_slot] = (cur_score, parsed_cid, claim_title)
+
+                if claim_name == "移動する" and cur_score >= 18_000:
+                    self._clear_reward_scan_state()
+                    return DecisionResult(
+                        choice_id=claim_act.choice_id,
+                        reason=f"LocalAgent(tutor): Found priority combo card (score={cur_score}) -> {claim_act.description}",
+                        source="local_hybrid",
+                    )
 
                 unvisited_prevs = [
                     p for p in preview_acts
@@ -1711,11 +1822,17 @@ class LocalHybridDecisionAgent:
                 ]
                 if claim_name == "強化する" and len(self._reward_seen_slots) >= 4:
                     unvisited_prevs = []
+                elif claim_name == "移動する":
+                    max_seen_score = max(v[0] for v in self._reward_seen_slots.values())
+                    max_tutor_scans = 12 if max_seen_score <= -50_000 else 6
+                    if len(self._reward_seen_slots) >= max_tutor_scans:
+                        unvisited_prevs = []
                 if unvisited_prevs:
                     nxt = unvisited_prevs[0]
                     nslot = self._extract_reward_slot_idx(nxt)
                     if nslot is not None:
                         self._reward_slot_attempts[nslot] = self._reward_slot_attempts.get(nslot, 0) + 1
+                        self._last_clicked_grid_slot = nslot
                     return DecisionResult(
                         choice_id=nxt.choice_id,
                         reason=f"LocalAgent(reward): Scanning unseen card slot (cur={cur_slot}, score={cur_score}, seen={sorted(self._reward_seen_slots)})",
@@ -1725,7 +1842,7 @@ class LocalHybridDecisionAgent:
                 if self._reward_seen_slots:
                     best_slot = max(self._reward_seen_slots, key=lambda k: self._reward_seen_slots[k][0])
                     best_seen_score, best_seen_cid, best_seen_title = self._reward_seen_slots[best_slot]
-                    if (not in_chg_pick) and claim_name != "強化する" and best_seen_score <= -3_000:
+                    if (not in_chg_pick) and claim_name not in ("強化する", "移動する") and best_seen_score <= -3_000:
                         skip_or_reject = next(
                             (
                                 a for a in legal_actions
@@ -1764,6 +1881,7 @@ class LocalHybridDecisionAgent:
                         )
                         if best_prev is not None:
                             self._reward_slot_attempts[best_slot] = self._reward_slot_attempts.get(best_slot, 0) + 1
+                            self._last_clicked_grid_slot = best_slot
                             return DecisionResult(
                                 choice_id=best_prev.choice_id,
                                 reason=(
@@ -1772,7 +1890,7 @@ class LocalHybridDecisionAgent:
                                 ),
                                 source="local_hybrid",
                             )
-                if (not in_chg_pick) and claim_name != "強化する" and cur_score <= -3_000:
+                if (not in_chg_pick) and claim_name not in ("強化する", "移動する") and cur_score <= -3_000:
                     skip_or_reject = next(
                         (
                             a for a in legal_actions
@@ -2222,8 +2340,36 @@ class LocalHybridDecisionAgent:
             k in raw_l for k in ("リタイア", "中断", "あきらめる", "プロデュース終了", "プロデュースを", "データ削除")
         )
         has_banned_name_in_raw = any(bnm and bnm in raw_l for bnm in self._banned_drink_names)
-        if (not is_retire_or_quit) and (
-            self._expecting_drink_discard or has_banned_name_in_raw or ("捨てますか" in raw_l)
+        is_discard_confirm = ("捨てますか" in raw_l) or ("廃棄確認" in raw_l) or ("破棄しますか" in raw_l)
+        if (not is_retire_or_quit) and is_discard_confirm:
+            confirm_del = next(
+                (a for a in safe_acts if str((a.payload or {}).get("name") or "") in ("決定", "はい", "OK", "確認")),
+                None,
+            )
+            cancel_del = next(
+                (
+                    a for a in safe_acts
+                    if str((a.payload or {}).get("name") or "") in ("いいえ", "キャンセル", "閉じる", "とじる")
+                ),
+                None,
+            )
+            if self._expecting_drink_discard or has_banned_name_in_raw:
+                if confirm_del is not None:
+                    self._expecting_drink_discard = False
+                    return DecisionResult(
+                        choice_id=confirm_del.choice_id,
+                        reason=f"LocalAgent(popup): Confirming P-drink discard via {confirm_del.description}",
+                        source="local_hybrid",
+                    )
+            elif cancel_del is not None:
+                return DecisionResult(
+                    choice_id=cancel_del.choice_id,
+                    reason=f"LocalAgent(popup): Cancelling unintended drink discard via {cancel_del.description}",
+                    source="local_hybrid",
+                )
+
+        if (not is_retire_or_quit) and (not is_discard_confirm) and (
+            self._expecting_drink_discard or has_banned_name_in_raw
         ):
             discard_btn = next(
                 (a for a in safe_acts if str((a.payload or {}).get("name") or "") in ("捨てる", "破棄する", "破棄")),
@@ -2235,23 +2381,11 @@ class LocalHybridDecisionAgent:
                     reason=f"LocalAgent(popup): Discarding P-drink via {discard_btn.description}",
                     source="local_hybrid",
                 )
-            if ("捨てますか" in raw_l) or ("破棄" in raw_l):
-                confirm_del = next(
-                    (a for a in safe_acts if str((a.payload or {}).get("name") or "") in ("決定", "はい", "OK", "確認")),
-                    None,
-                )
-                if confirm_del is not None:
-                    self._expecting_drink_discard = False
-                    return DecisionResult(
-                        choice_id=confirm_del.choice_id,
-                        reason=f"LocalAgent(popup): Confirming P-drink discard via {confirm_del.description}",
-                        source="local_hybrid",
-                    )
             has_use_or_buy = any(
                 str((a.payload or {}).get("name") or "") in ("使う", "使用する", "交換", "交換する")
                 for a in safe_acts
             )
-            if has_use_or_buy and (has_banned_name_in_raw or self._expecting_drink_discard):
+            if has_use_or_buy:
                 close_or_cancel = next(
                     (
                         a for a in safe_acts
@@ -2294,6 +2428,9 @@ class LocalHybridDecisionAgent:
             "強化する",
             "削除する",
             "カスタマイズする",
+            "強化",
+            "削除",
+            "チェンジ",
             "はい",
             "確認",
             "OK",
@@ -2311,6 +2448,8 @@ class LocalHybridDecisionAgent:
             combined = f"{nm} {desc}"
             if any(bad in combined for bad in forbid_tokens):
                 return -10_000
+            if nm in ("捨てる", "破棄する", "破棄") or "捨てる" in combined or "破棄" in combined:
+                return -5_000
             for idx, tok in enumerate(confirm_order):
                 if tok in nm or tok in desc:
                     return 2_000 - idx * 25
@@ -2344,7 +2483,7 @@ class LocalHybridDecisionAgent:
             )
 
         scene = obs.scene_type if obs is not None else "unknown"
-        if scene != "popup":
+        if scene not in ("popup", "loading", "skip"):
             self._expecting_drink_discard = False
             if obs is not None and not any(
                 self._is_banned_drink(

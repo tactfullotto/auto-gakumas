@@ -82,7 +82,8 @@ def build_local_hif_runner(
         mode_l = "auto"
 
     prefs_obj = ProducePreferences.from_dict(preferences)
-    scanner = None if mode_l == "manual" else HifLoadoutScanner(db=db)
+    init_plan_hint = str(((initial_loadout_dict or {}).get("plan")) or plan or "logic").lower()
+    scanner = None if mode_l == "manual" else HifLoadoutScanner(db=db, plan=init_plan_hint)
     if scanner is not None and hasattr(scanner.reco, "set_banned_drink_ids"):
         scanner.reco.set_banned_drink_ids(prefs_obj.banned_drink_ids)
 
@@ -122,6 +123,9 @@ def build_local_hif_runner(
             "target_score",
             "good_impression",
             "motivation",
+            "good_condition",
+            "perfect_condition",
+            "concentration",
             "buff_hud_occluded",
             "p_points",
             "vocal",
@@ -185,6 +189,9 @@ def build_local_hif_runner(
                 obs.target_score if obs is not None else "",
                 buffs.get("goodImpressionTurns", ""),
                 buffs.get("motivation", ""),
+                buffs.get("goodConditionTurns", ""),
+                buffs.get("perfectConditionTurns", ""),
+                buffs.get("concentration", ""),
                 bool(getattr(obs, "buff_hud_occluded", False)) if obs is not None else "",
                 obs.p_points if obs is not None else "",
                 stats.get("vocal", ""),

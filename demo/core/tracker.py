@@ -212,6 +212,8 @@ class GameStateTracker:
 
     def export_produce_library(self, db: Optional[Any] = None) -> Dict[str, Any]:
         """Return a structured snapshot of this run's initial + current cards, P-items, and idol metadata."""
+        from demo.core.idol_guides import resolve_card_family_meta
+
         card_entries: List[Dict[str, Any]] = []
         for cid in self.produce_deck:
             row = db.get_card_by_id(cid) if db is not None else None
@@ -221,8 +223,8 @@ class GameStateTracker:
                 "card_type": str(row.get("type") or "") if row else "",
                 "rarity": str(row.get("rarity") or "") if row else "",
                 "upgraded": bool(row.get("upgraded")) if row else False,
-                "memory_hooks": dict(self.card_memory_hooks.get(int(cid), {})),
-                "customizations": dict(self.card_customizations.get(int(cid), {})),
+                "memory_hooks": resolve_card_family_meta(self.card_memory_hooks, cid, db=db, row=row),
+                "customizations": resolve_card_family_meta(self.card_customizations, cid, db=db, row=row),
             })
         return {
             "p_idol_id": self.p_idol_id,
@@ -797,10 +799,10 @@ class GameStateTracker:
             limit_count = row.get("limit_count")
         if base_id is None and row is not None:
             base_id = row.get("base_id")
-        cust_meta = self.card_customizations.get(int(card_id)) or (
-            self.card_customizations.get(int(base_id)) if base_id else None
-        )
-        if isinstance(cust_meta, dict):
+        from demo.core.idol_guides import get_memory_card_custom_meta, resolve_card_family_meta
+
+        cust_meta = resolve_card_family_meta(self.card_customizations, card_id, db=db, row=row)
+        if isinstance(cust_meta, dict) and cust_meta:
             mods = cust_meta.get("modifiers") if isinstance(cust_meta.get("modifiers"), dict) else cust_meta
             lvls = cust_meta.get("levels") if isinstance(cust_meta.get("levels"), dict) else {}
             if bool(mods.get("remove_limit")) or int(lvls.get("37", lvls.get(37, 0)) or 0) > 0:
@@ -818,8 +820,6 @@ class GameStateTracker:
             dsl_cost = row.get("dsl_cost") or ""
         dsl_cost = (dsl_cost or "").strip()
 
-        from demo.core.idol_guides import get_memory_card_custom_meta
-
         fam = self._family_id(card_id, base_id=base_id, db=db)
         prev_fam_plays = self.battle_played_counts.get(fam, 0)
         custom_meta = get_memory_card_custom_meta(
@@ -827,6 +827,8 @@ class GameStateTracker:
             self.p_idol_id,
             card_id,
             battle_played_counts={fam: prev_fam_plays},
+            card_memory_hooks=self.card_memory_hooks,
+            db=db,
         )
         self.battle_played_counts[fam] = prev_fam_plays + 1
 

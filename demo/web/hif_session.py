@@ -420,13 +420,11 @@ class HifWorkbenchSession:
         return res
 
     def _enrich_card_summary(self, cid: int) -> Dict[str, Any]:
+        from demo.core.idol_guides import resolve_card_family_meta
+
         row = self.db.get_card_by_id(int(cid))
-        hooks = dict(self.card_memory_hooks.get(int(cid), {}))
-        if not hooks and row and row.get("base_id"):
-            hooks = dict(self.card_memory_hooks.get(int(row["base_id"]), {}))
-        custs = dict(self.card_customizations.get(int(cid), {}))
-        if not custs and row and row.get("base_id"):
-            custs = dict(self.card_customizations.get(int(row["base_id"]), {}))
+        hooks = resolve_card_family_meta(self.card_memory_hooks, cid, db=self.db, row=row)
+        custs = resolve_card_family_meta(self.card_customizations, cid, db=self.db, row=row)
         avail_cust_ids: List[int] = []
         if row and row.get("available_customization_ids_json"):
             try:

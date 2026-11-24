@@ -159,6 +159,7 @@ class PromptBuilder:
                 hand_cards=obs.cards,
             )
             battle_played_counts = getattr(tracker, "battle_played_counts", None) if tracker is not None else None
+            tracker_hooks = getattr(tracker, "card_memory_hooks", None) if tracker is not None else None
 
             # 1. Evaluate cards
             for card in obs.cards:
@@ -247,8 +248,13 @@ class PromptBuilder:
                         resolved_battle_pid,
                         card.card_id,
                         battle_played_counts=battle_played_counts,
+                        card_memory_hooks=tracker_hooks,
+                        db=self.db,
                     )
                     has_mem_free_extra = bool(custom_meta.get("grant_extra_use_now"))
+                    mem_extra_lim = int(custom_meta.get("extra_use_limit") or (1 if has_mem_free_extra else 0))
+                    mem_extra_rem = int(custom_meta.get("extra_use_remaining") or (1 if has_mem_free_extra else 0))
+                    mem_draw_on_play = int(custom_meta.get("draw_on_play") or 0)
                     is_sig = bool(card_data.get("is_signature") == 1 or card_data.get("force_initial_hand") == 1)
                     dsl_act_out = raw_dsl_actions
                     if has_mem_free_extra and "cardusesremaining+=" not in dsl_act_out.lower():
@@ -265,7 +271,9 @@ class PromptBuilder:
                         elif has_dsl_free_extra:
                             desc += " [⚡免费+1使用次数(不耗行动点)]"
                         elif has_mem_free_extra:
-                            desc += " [⚡メモリー免费再动+1使用次数(不耗行动点)]"
+                            draw_seg = f"+抽{mem_draw_on_play}张" if mem_draw_on_play > 0 else ""
+                            rem_seg = f"({mem_extra_rem}/{mem_extra_lim})" if mem_extra_lim > 1 else ""
+                            desc += f" [⚡メモリー免费再动+1使用次数(不耗行动点){draw_seg}{rem_seg}]"
                         if custom_meta.get("exiles_trouble"):
                             desc += " [🧹免费除外1张眠気]"
                         if card.cost_type == "red":
@@ -293,6 +301,9 @@ class PromptBuilder:
                                 "card_type": (card_dict.get("type") if card_dict else None) or card.type or "active",
                                 "dsl_actions": dsl_act_out,
                                 "name": card.name,
+                                "memory_extra_use_limit": mem_extra_lim,
+                                "memory_extra_use_remaining": mem_extra_rem,
+                                "memory_draw_on_play": mem_draw_on_play,
                                 "upgraded": card.upgraded,
                                 "hp_loss": card.hp_loss,
                             },
@@ -601,6 +612,7 @@ class PromptBuilder:
         scenario_id: Optional[str] = None,
         p_idol_id: Optional[int] = None,
         battle_played_counts: Optional[Dict[int, int]] = None,
+        card_memory_hooks: Optional[Dict[Any, Dict[str, Any]]] = None,
     ) -> str:
         full_dsl = (c_row.get("dsl_actions") or "") if c_row else ""
         card_id = (c_row.get("id") if c_row else None) or (obs_card.card_id if obs_card else None)
@@ -616,6 +628,8 @@ class PromptBuilder:
             p_idol_id,
             card_id,
             battle_played_counts=battle_played_counts,
+            card_memory_hooks=card_memory_hooks,
+            db=self.db,
         )
         if custom_meta.get("tag"):
             parts.append(str(custom_meta["tag"]))
@@ -641,6 +655,7 @@ class PromptBuilder:
         scenario_id: Optional[str] = None,
         p_idol_id: Optional[int] = None,
         battle_played_counts: Optional[Dict[int, int]] = None,
+        card_memory_hooks: Optional[Dict[Any, Dict[str, Any]]] = None,
     ) -> str:
         lines: List[str] = []
         for idx, c in enumerate(cards, 1):
@@ -666,7 +681,7 @@ class PromptBuilder:
                 f"  手牌{idx}: 《{c.name}》(#{c.card_id}){' [已强化+]' if c.upgraded else ''}{sel_mark}"
                 f"{self._card_role_label(c_row, c.type)}"
                 f"{self._card_reuse_label(c_row)}"
-                f"{self._card_priority_tag(c_row, obs_card=c, is_exam_stage=is_exam_stage, scenario_id=scenario_id, p_idol_id=p_idol_id, battle_played_counts=battle_played_counts)}"
+                f"{self._card_priority_tag(c_row, obs_card=c, is_exam_stage=is_exam_stage, scenario_id=scenario_id, p_idol_id=p_idol_id, battle_played_counts=battle_played_counts, card_memory_hooks=card_memory_hooks)}"
                 f"{cond_seg} -> {status_txt}"
             )
         return "\n".join(lines) or "  - 当前手牌为空"
@@ -692,6 +707,7 @@ class PromptBuilder:
         idol_guide: Optional[Any] = None,
         scenario_id: Optional[str] = None,
         p_idol_id: Optional[int] = None,
+        card_memory_hooks: Optional[Dict[Any, Dict[str, Any]]] = None,
     ) -> str:
         c_row = self._get_card_dict(card_id)
         name = (c_row.get("name") if c_row else None) or (obs_card.name if obs_card else f"#{card_id}")
@@ -716,9 +732,16 @@ class PromptBuilder:
             c_row,
             scenario_id=scenario_id,
             p_idol_id=p_idol_id,
+            card_memory_hooks=card_memory_hooks,
         )
         guide_tag = get_card_guide_annotation(idol_guide, card_id=card_id, card_name=str(name))
-        mem_meta = get_memory_card_custom_meta(scenario_id, p_idol_id, card_id)
+        mem_meta = get_memory_card_custom_meta(
+            scenario_id,
+            p_idol_id,
+            card_id,
+            card_memory_hooks=card_memory_hooks,
+            db=self.db,
+        )
         mem_note = f" | {mem_meta['archive_note']}" if mem_meta.get("archive_note") else ""
         suffix = f" {note}" if note else ""
         return (
@@ -920,6 +943,7 @@ class PromptBuilder:
                     idol_guide=idol_guide,
                     scenario_id=obs.scenario_id,
                     p_idol_id=resolved_pid,
+                    card_memory_hooks=active_tracker.card_memory_hooks,
                 )
                 for cid in ordered_cids
             ) or "  - 暂无卡牌档案"
@@ -952,6 +976,7 @@ class PromptBuilder:
                     scenario_id=obs.scenario_id,
                     p_idol_id=resolved_pid,
                     battle_played_counts=active_tracker.battle_played_counts,
+                    card_memory_hooks=active_tracker.card_memory_hooks,
                 )
                 drinks_brief = self._format_session_drink_lines(obs.drinks, obs, is_exam_stage)
                 shield_summary = active_tracker.get_shield_prompt_summary()
@@ -1078,6 +1103,7 @@ class PromptBuilder:
                         idol_guide=idol_guide,
                         scenario_id=obs.scenario_id,
                         p_idol_id=resolved_pid,
+                        card_memory_hooks=active_tracker.card_memory_hooks,
                     )
                     for cid in new_card_ids
                 ))
@@ -1112,6 +1138,7 @@ class PromptBuilder:
                     scenario_id=obs.scenario_id,
                     p_idol_id=resolved_pid,
                     battle_played_counts=active_tracker.battle_played_counts,
+                    card_memory_hooks=active_tracker.card_memory_hooks,
                 )
                 drinks_concise = self._format_session_drink_lines(obs.drinks, obs, is_exam_stage)
                 shield_summary = active_tracker.get_shield_prompt_summary()
@@ -1253,6 +1280,7 @@ class PromptBuilder:
                 scenario_id=obs.scenario_id,
                 p_idol_id=resolved_pid,
                 battle_played_counts=getattr(tracker, "battle_played_counts", None) if tracker is not None else None,
+                card_memory_hooks=getattr(tracker, "card_memory_hooks", None) if tracker is not None else None,
             )
 
             status_str = (

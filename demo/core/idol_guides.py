@@ -374,13 +374,66 @@ def resolve_p_idol_id(
     return p_idol_id
 
 
-def get_memory_card_custom_meta(
+def resolve_card_family_meta(
+    meta_map: Optional[Dict[Any, Dict[str, Any]]],
+    card_id: Optional[int],
+    *,
+    db: Optional[Any] = None,
+    row: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Resolve card hooks or customizations across exact card_id and its base/upgraded siblings."""
+    if not meta_map or card_id is None:
+        return {}
+    try:
+        cid = int(card_id)
+    except (TypeError, ValueError):
+        return {}
+    if cid <= 0:
+        return {}
+
+    if row is None and db is not None and hasattr(db, "get_card_by_id"):
+        row = db.get_card_by_id(cid)
+
+    candidates: List[int] = [cid]
+    if row:
+        for fk in ("base_id", "upgraded_id"):
+            fv = row.get(fk)
+            if fv is not None:
+                try:
+                    fi = int(fv)
+                except (TypeError, ValueError):
+                    fi = 0
+                if fi > 0 and fi not in candidates:
+                    candidates.append(fi)
+        base_v = row.get("base_id")
+        if base_v and db is not None and hasattr(db, "get_card_by_id"):
+            try:
+                brow = db.get_card_by_id(int(base_v))
+                upg_v = brow.get("upgraded_id") if brow else None
+                if upg_v is not None:
+                    ui = int(upg_v)
+                    if ui > 0 and ui not in candidates:
+                        candidates.append(ui)
+            except (TypeError, ValueError):
+                pass
+
+    merged: Dict[str, Any] = {}
+    for cand in reversed(candidates):
+        raw = meta_map.get(cand)
+        if not isinstance(raw, dict):
+            raw = meta_map.get(str(cand))
+        if isinstance(raw, dict) and raw:
+            merged.update(raw)
+    return merged
+
+
+def _get_legacy_163_memory_meta(
     scenario_id: Optional[str],
     p_idol_id: Optional[int],
     card_id: Optional[int],
     battle_played_counts: Optional[Dict[int, int]] = None,
 ) -> Dict[str, Any]:
-    """Return H.I.F 選抜メモリー / カスタム per-card mechanics for the active build."""
+    """Built-in H.I.F 選抜メモリー defaults for #163 [ガラクタロード] 秦谷 美鈴."""
     if card_id is None:
         return {}
     sc = (scenario_id or "").lower()
@@ -403,12 +456,18 @@ def get_memory_card_custom_meta(
             return {
                 "exiles_trouble": False,
                 "grant_extra_use_now": True,
+                "extra_use_limit": 1,
+                "extra_use_remaining": 1,
+                "draw_on_play": 0,
                 "tag": " 【⚡メモリー首次免费再动(+1使用数)：不耗行动点，先打进除外！】",
                 "archive_note": "【編入メモリー/カスタム効果】每场战斗首次打出附带『スキルカード使用数追加+1』(1次免费再动·不耗行动点)，务必在普通耗点卡之前先打出送入【除外】压缩牌库！",
             }
         return {
             "exiles_trouble": False,
             "grant_extra_use_now": False,
+            "extra_use_limit": 1,
+            "extra_use_remaining": 0,
+            "draw_on_play": 0,
             "tag": " [メモリー再动已用]",
             "archive_note": "【編入メモリー/カスタム効果】每场首次打出享1次免费再动",
         }
@@ -421,6 +480,88 @@ def get_memory_card_custom_meta(
             "archive_note": "干扰卡，勿主动消耗行动点打出，交由メモリー效果免费除外",
         }
     return {}
+
+
+def get_memory_card_custom_meta(
+    scenario_id: Optional[str],
+    p_idol_id: Optional[int],
+    card_id: Optional[int],
+    battle_played_counts: Optional[Dict[int, int]] = None,
+    *,
+    card_memory_hooks: Optional[Dict[Any, Dict[str, Any]]] = None,
+    db: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Return H.I.F 選抜メモリー / カスタム per-card mechanics from configured hooks or legacy idol rules."""
+    if card_id is None:
+        return {}
+    cid = int(card_id)
+    row = db.get_card_by_id(cid) if (db is not None and hasattr(db, "get_card_by_id")) else None
+    base_id = int(row.get("base_id") or cid) if row else cid
+    fam_ids = {cid, base_id}
+    if row and row.get("upgraded_id"):
+        fam_ids.add(int(row["upgraded_id"]))
+
+    h_meta = resolve_card_family_meta(card_memory_hooks, cid, db=db, row=row)
+    legacy = _get_legacy_163_memory_meta(scenario_id, p_idol_id, cid, battle_played_counts)
+    if not h_meta:
+        return legacy
+
+    counts = battle_played_counts or {}
+    played = sum(int(counts.get(k, counts.get(str(k), 0)) or 0) for k in fam_ids)
+
+    has_extra_key = ("free_extra_use_first_play" in h_meta) or ("extra_use_limit" in h_meta)
+    has_exile_key = "exiles_trouble_on_play" in h_meta
+    draw_on_play = max(0, int(h_meta.get("draw_on_play") or legacy.get("draw_on_play") or 0))
+
+    if has_extra_key:
+        raw_free = h_meta.get("free_extra_use_first_play")
+        extra_lim = int(h_meta.get("extra_use_limit") or (1 if raw_free else 0))
+        if raw_free is False and int(h_meta.get("extra_use_limit") or 0) <= 0:
+            extra_lim = 0
+        rem_extra = max(0, extra_lim - played)
+        grant_now = rem_extra > 0
+    else:
+        extra_lim = int(legacy.get("extra_use_limit") or 0)
+        rem_extra = int(legacy.get("extra_use_remaining") or 0)
+        grant_now = bool(legacy.get("grant_extra_use_now"))
+
+    if has_exile_key:
+        exiles = bool(h_meta.get("exiles_trouble_on_play")) and base_id != 426 and played == 0
+    else:
+        exiles = bool(legacy.get("exiles_trouble"))
+
+    if not (has_extra_key or has_exile_key or draw_on_play > 0):
+        return legacy
+
+    tags: List[str] = []
+    archive_notes: List[str] = []
+    if extra_lim > 0:
+        draw_seg = f"+抽{draw_on_play}张" if draw_on_play > 0 else ""
+        if grant_now:
+            lim_note = f"(剩余{rem_extra}/{extra_lim})" if extra_lim > 1 else ""
+            tags.append(f" 【⚡メモリー免费再动(+1使用数){draw_seg}{lim_note}：不耗行动点，先打进除外！】")
+        else:
+            tags.append(f" [メモリー再动已用({min(played, extra_lim)}/{extra_lim})]")
+        archive_notes.append(
+            f"【編入メモリー/カスタム効果】每场前{extra_lim}次打出附带『スキルカード使用数追加+1』{draw_seg}(免费再动·不耗行动点)"
+        )
+    elif draw_on_play > 0:
+        tags.append(f" 【🃏メモリー抽{draw_on_play}张】")
+        archive_notes.append(f"【編入メモリー/カスタム効果】打出时额外抽{draw_on_play}张")
+
+    if exiles or (has_exile_key and bool(h_meta.get("exiles_trouble_on_play")) and base_id != 426):
+        tags.append(" 【🧹メモリー効果：打出后免费将1张《眠気》移至除外】")
+        archive_notes.append("【編入メモリー効果】打出后免费将1张《眠気》移动至【除外】区")
+
+    return {
+        "exiles_trouble": exiles,
+        "grant_extra_use_now": grant_now,
+        "extra_use_limit": extra_lim,
+        "extra_use_remaining": rem_extra,
+        "draw_on_play": draw_on_play,
+        "tag": "".join(tags) or str(legacy.get("tag") or ""),
+        "archive_note": " | ".join(archive_notes) or str(legacy.get("archive_note") or ""),
+    }
 
 
 def get_card_guide_annotation(

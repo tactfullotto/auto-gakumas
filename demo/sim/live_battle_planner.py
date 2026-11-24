@@ -14,6 +14,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 from demo.core.db import GakumasDB
+from demo.core.idol_guides import resolve_card_family_meta
 from demo.schemas import LegalAction, RecognizedCard, RecognizedDrink, ScreenObservation
 from demo.sim.battle_simulator import (
     BattleConfig,
@@ -24,6 +25,7 @@ from demo.sim.battle_simulator import (
     PItemConfig,
     TurnMultiplierSpec,
     _build_hif_p_items,
+    _build_sense_hif_p_items,
     _make_card_config,
     _make_drink_config,
     generate_stage_turn_schedule,
@@ -34,7 +36,8 @@ from demo.sim.rl_env import GakumasActionCodec, GakumasBattleEnv, GakumasFeature
 
 
 _KNOWN_STAGE_P_ITEMS: Dict[int, PItemConfig] = {
-    it.item_id: it for it in _build_hif_p_items(include_cheering_stick=True)
+    it.item_id: it
+    for it in (_build_hif_p_items(include_cheering_stick=True) + _build_sense_hif_p_items())
 }
 _BANNED_DRINK_IDS = frozenset({19})  # #19 初星スペシャル青汁 (banned)
 
@@ -109,12 +112,16 @@ def build_p_items_from_loadout(
     scenario_id: str = "hif_honsen",
     total_turns: int = 12,
     week: int = 0,
+    plan: str = "logic",
 ) -> List[PItemConfig]:
     """Convert scanned produce library P-items into battle simulator PItemConfig objects."""
     is_r2 = total_turns >= 11 or int(week or 0) >= 8
+    plan_l = (plan or "logic").lower()
     if not equipped_p_items:
         if scenario_id in ("hif_honsen", "hif"):
-            return _build_hif_p_items(include_cheering_stick=is_r2)
+            if plan_l == "logic":
+                return _build_hif_p_items(include_cheering_stick=is_r2)
+            return [_KNOWN_STAGE_P_ITEMS[429]] if is_r2 else []
         return []
 
     out: List[PItemConfig] = []
@@ -156,6 +163,65 @@ def build_p_items_from_loadout(
     return out
 
 
+def _build_card_config_with_hooks(
+    db: GakumasDB,
+    card_id: int,
+    *,
+    hooks: Optional[Dict[Any, Dict[str, Any]]] = None,
+    custs: Optional[Dict[Any, Dict[str, Any]]] = None,
+    use_misuzu_legacy: bool = False,
+) -> Optional[CardConfig]:
+    """Construct a CardConfig with family-resolved memory hooks and customizations."""
+    row = db.get_card_by_id(int(card_id))
+    if row is None:
+        return None
+    cid_int = int(card_id)
+    base_id = int(row.get("base_id") or cid_int)
+    h_meta = resolve_card_family_meta(hooks, cid_int, db=db, row=row)
+    if "force_initial_hand" in h_meta:
+        force_init: Optional[bool] = bool(h_meta.get("force_initial_hand"))
+    elif use_misuzu_legacy and cid_int in (127, 129, 159):
+        force_init = True
+    else:
+        force_init = None
+
+    # Only genuine trouble-exile memories trigger exiles_trouble_on_play (ignore #426/#427 キセキの魔法 condition text).
+    if base_id == 426:
+        exile_once = False
+    elif "exiles_trouble_on_play" in h_meta:
+        exile_once = bool(h_meta.get("exiles_trouble_on_play"))
+    else:
+        exile_once = bool(use_misuzu_legacy and base_id in (128, 296, 298))
+
+    if "free_extra_use_first_play" in h_meta:
+        extra_once = bool(h_meta.get("free_extra_use_first_play"))
+    elif "extra_use_limit" in h_meta:
+        extra_once = int(h_meta.get("extra_use_limit") or 0) > 0
+    else:
+        extra_once = bool(use_misuzu_legacy and base_id == 136)
+
+    extra_limit = int(h_meta.get("extra_use_limit") or (1 if extra_once else 0))
+    if extra_limit > 0:
+        extra_once = True
+    draw_on_play = max(0, int(h_meta.get("draw_on_play") or 0))
+
+    c_meta = resolve_card_family_meta(custs, cid_int, db=db, row=row)
+    cust_levels = c_meta.get("levels") if isinstance(c_meta, dict) else None
+    cust_mods = c_meta.get("modifiers") if isinstance(c_meta, dict) else None
+
+    return _make_card_config(
+        db,
+        cid_int,
+        force_initial_hand_override=force_init,
+        exiles_trouble_on_play=exile_once,
+        free_extra_use_first_play=extra_once,
+        memory_extra_use_limit=extra_limit,
+        memory_draw_on_play=draw_on_play,
+        customizations=cust_levels,
+        custom_modifiers=cust_mods,
+    )
+
+
 def build_live_battle_config(
     *,
     db: GakumasDB,
@@ -194,61 +260,21 @@ def build_live_battle_config(
     use_misuzu_legacy = p_idol_id in (None, 163) and str(plan or "").lower() == "logic"
     deck_cfgs: List[CardConfig] = []
     for cid in deck_card_ids:
-        row = db.get_card_by_id(int(cid))
-        if row is None:
-            continue
-        cid_int = int(cid)
-        base_id = int(row.get("base_id") or cid_int)
-        h_meta = hooks.get(cid_int) or hooks.get(str(cid_int)) or hooks.get(base_id) or hooks.get(str(base_id)) or {}
-        if "force_initial_hand" in h_meta:
-            force_init: Optional[bool] = bool(h_meta.get("force_initial_hand"))
-        elif use_misuzu_legacy and cid_int in (127, 129, 159):
-            force_init = True
-        else:
-            force_init = None
-
-        # Only genuine trouble-exile memories trigger exiles_trouble_on_play (ignore #426/#427 キセキの魔法 condition text).
-        # Stage-wide once per base_id is enforced dynamically in HeadlessBattleSimulator across duplicate copies.
-        if base_id == 426:
-            exile_once = False
-        elif "exiles_trouble_on_play" in h_meta:
-            exile_once = bool(h_meta.get("exiles_trouble_on_play"))
-        else:
-            exile_once = bool(use_misuzu_legacy and base_id in (128, 296, 298))
-
-        if "free_extra_use_first_play" in h_meta:
-            extra_once = bool(h_meta.get("free_extra_use_first_play"))
-        elif "extra_use_limit" in h_meta:
-            extra_once = int(h_meta.get("extra_use_limit") or 0) > 0
-        else:
-            extra_once = bool(use_misuzu_legacy and base_id == 136)
-
-        extra_limit = int(h_meta.get("extra_use_limit") or (1 if extra_once else 0))
-        if extra_limit > 0:
-            extra_once = True
-        draw_on_play = max(0, int(h_meta.get("draw_on_play") or 0))
-
-        c_meta = custs.get(cid_int) or custs.get(str(cid_int)) or custs.get(base_id) or custs.get(str(base_id)) or {}
-        cust_levels = c_meta.get("levels") if isinstance(c_meta, dict) else None
-        cust_mods = c_meta.get("modifiers") if isinstance(c_meta, dict) else None
-
-        deck_cfgs.append(
-            _make_card_config(
-                db,
-                cid_int,
-                force_initial_hand_override=force_init,
-                exiles_trouble_on_play=exile_once,
-                free_extra_use_first_play=extra_once,
-                memory_extra_use_limit=extra_limit,
-                memory_draw_on_play=draw_on_play,
-                customizations=cust_levels,
-                custom_modifiers=cust_mods,
-            )
+        cfg_item = _build_card_config_with_hooks(
+            db,
+            int(cid),
+            hooks=hooks,
+            custs=custs,
+            use_misuzu_legacy=use_misuzu_legacy,
         )
+        if cfg_item is not None:
+            deck_cfgs.append(cfg_item)
 
+    plan_l = (plan or "logic").lower()
     if not deck_cfgs:
-        # Fallback starter logic deck if scan wasn't available
-        for fallback_cid in (920, 922, 159, 129, 127, 137, 23):
+        # Fallback starter deck if scan wasn't available
+        fallback_ids = (812, 814, 159, 105, 113, 75, 23) if plan_l == "sense" else (920, 922, 159, 129, 127, 137, 23)
+        for fallback_cid in fallback_ids:
             if db.get_card_by_id(fallback_cid) is not None:
                 deck_cfgs.append(_make_card_config(db, fallback_cid))
 
@@ -290,6 +316,7 @@ def build_live_battle_config(
     init_gi = max(0, int(live_buffs.get("goodImpressionTurns", 0) or 0))
     init_mot = max(0, int(live_buffs.get("motivation", 0) or 0))
     init_gc = max(0, int(live_buffs.get("goodConditionTurns", 0) or 0))
+    init_pc = max(0, int(live_buffs.get("perfectConditionTurns", 0) or 0))
     init_conc = max(0, int(live_buffs.get("concentration", 0) or 0))
     init_fpc = max(0, int(live_buffs.get("fullPowerCharge", 0) or 0))
     eff_init_genki = max(0, int(initial_genki))
@@ -324,24 +351,41 @@ def build_live_battle_config(
         or "花ロボ" in str(it.get("canonical_name") or it.get("name") or "")
         for it in (equipped_p_items or ())
     ):
-        if not live_buffs:
-            init_gi = max(init_gi, 6)
-            init_mot = max(init_mot, 6)
-        else:
-            raw_gi, raw_mot = init_gi, init_mot
-            init_gi = max(init_gi, 3)
-            init_mot = max(init_mot, 3)
-            if raw_mot >= 6 and raw_gi < 3:
-                init_gi = 6
-            if raw_gi >= 6 and raw_mot < 3:
-                init_mot = 6
+        if plan_l == "sense":
+            if not live_buffs:
+                init_gc = max(init_gc, 6)
+                init_conc = max(init_conc, 6)
+            else:
+                raw_gc, raw_conc = init_gc, init_conc
+                init_gc = max(init_gc, 3)
+                init_conc = max(init_conc, 3)
+                if raw_conc >= 6 and raw_gc < 3:
+                    init_gc = 6
+                if raw_gc >= 6 and raw_conc < 3:
+                    init_conc = 6
+        elif plan_l == "logic":
+            if not live_buffs:
+                init_gi = max(init_gi, 6)
+                init_mot = max(init_mot, 6)
+            else:
+                raw_gi, raw_mot = init_gi, init_mot
+                init_gi = max(init_gi, 3)
+                init_mot = max(init_mot, 3)
+                if raw_mot >= 6 and raw_gi < 3:
+                    init_gi = 6
+                if raw_gi >= 6 and raw_mot < 3:
+                    init_mot = 6
+
+    eff_idol_name = idol_name
+    if plan_l == "sense" and eff_idol_name == "[ガラクタロード] 秦谷 美鈴":
+        eff_idol_name = "[ガラクタロード] 姫崎 莉波"
 
     return BattleConfig(
         scenario_id=scenario_id,
         stage_name=stage_name,
-        p_idol_id=int(p_idol_id or 163),
-        idol_name=idol_name or "秦谷 美鈴",
-        plan=(plan or "logic").lower(),
+        p_idol_id=int(p_idol_id) if p_idol_id is not None else (139 if plan_l == "sense" else 163),
+        idol_name=eff_idol_name or ("姫崎 莉波" if plan_l == "sense" else "秦谷 美鈴"),
+        plan=plan_l,
         idol_stats=stats,
         initial_stamina=max(1, int(stamina)),
         max_stamina=max(1, int(max_stamina)),
@@ -349,6 +393,7 @@ def build_live_battle_config(
         initial_good_impression=init_gi,
         initial_motivation=init_mot,
         initial_good_condition=init_gc,
+        initial_perfect_condition=init_pc,
         initial_concentration=init_conc,
         initial_full_power_charge=init_fpc,
         total_turns=t_total,
@@ -358,7 +403,13 @@ def build_live_battle_config(
         turn_schedule_counts=sched_counts,
         deck=deck_cfgs,
         drinks=drink_cfgs,
-        p_items=build_p_items_from_loadout(equipped_p_items, scenario_id=scenario_id, total_turns=t_total, week=week),
+        p_items=build_p_items_from_loadout(
+            equipped_p_items,
+            scenario_id=scenario_id,
+            total_turns=t_total,
+            week=week,
+            plan=plan_l,
+        ),
     )
 
 
@@ -371,6 +422,8 @@ class LiveBattlePlannerConfig:
     ppo_episodes_per_update: int = 32
     ismcts_simulations: int = 64
     seed: int = 2026
+    finisher_hold_min_turns_remaining: int = 3
+    prefer_double_effect_before_finisher: bool = True
 
 
 class LiveBattlePlanner:
@@ -398,6 +451,8 @@ class LiveBattlePlanner:
         self._net: Optional[PolicyValueNet] = None
         self._ismcts: Optional[ISMCTSAgent] = None
         self._sim: Optional[HeadlessBattleSimulator] = None
+        self._card_memory_hooks: Dict[Any, Dict[str, Any]] = {}
+        self._card_customizations: Dict[Any, Dict[str, Any]] = {}
         self._trained_policy_cache: Dict[
             Tuple[Any, ...],
             Tuple[GakumasActionCodec, GakumasFeatureEncoder, PolicyValueNet, Dict[str, Any]],
@@ -424,6 +479,8 @@ class LiveBattlePlanner:
         self._net = None
         self._ismcts = None
         self._sim = None
+        self._card_memory_hooks = {}
+        self._card_customizations = {}
 
     def _is_new_battle(self, obs: ScreenObservation, tracker: Any) -> bool:
         if self._sim is None or self._battle_initial_turns is None:
@@ -497,6 +554,8 @@ class LiveBattlePlanner:
         ]
         card_hooks = getattr(tracker, "card_memory_hooks", None)
         card_custs = getattr(tracker, "card_customizations", None)
+        self._card_memory_hooks = {k: dict(v) for k, v in (card_hooks or {}).items() if isinstance(v, dict)}
+        self._card_customizations = {k: dict(v) for k, v in (card_custs or {}).items() if isinstance(v, dict)}
         mem_passives = getattr(tracker, "memory_passives", None)
         self._battle_cfg = build_live_battle_config(
             db=self.db,
@@ -521,6 +580,11 @@ class LiveBattlePlanner:
             live_top_multiplier=live_top_mult,
         )
 
+        finisher_window = (
+            max(1, int(self.cfg.finisher_hold_min_turns_remaining) - 1)
+            if self.cfg.prefer_double_effect_before_finisher
+            else 0
+        )
         hooks_sig = tuple(
             sorted((str(k), tuple(sorted(v.items()))) for k, v in (card_hooks or {}).items())
         )
@@ -529,22 +593,38 @@ class LiveBattlePlanner:
         )
         cache_key = (
             obs.scenario_id,
+            str(obs.plan or "").lower(),
+            p_idol_id,
             int(obs.week),
             total_turns,
             tuple(deck_ids),
             hooks_sig,
             custs_sig,
+            tuple(it.item_id for it in self._battle_cfg.p_items),
+            (
+                self._battle_cfg.initial_good_impression,
+                self._battle_cfg.initial_motivation,
+                self._battle_cfg.initial_good_condition,
+                self._battle_cfg.initial_concentration,
+            ),
             tuple(d.drink_id for d in self._battle_cfg.drinks),
             tuple(sorted(self._battle_cfg.idol_stats.items())),
             int(self.cfg.ppo_episodes),
             int(self.cfg.ppo_hidden_dim),
+            int(self.cfg.finisher_hold_min_turns_remaining),
+            bool(self.cfg.prefer_double_effect_before_finisher),
         )
         cached_policy = self._trained_policy_cache.get(cache_key)
         cache_hit = cached_policy is not None
         if cached_policy is not None:
             codec, encoder, net, summary = cached_policy
         else:
-            env = GakumasBattleEnv(self._battle_cfg, db=self.db, score_scale=1_000_000.0)
+            env = GakumasBattleEnv(
+                self._battle_cfg,
+                db=self.db,
+                score_scale=1_000_000.0,
+                finisher_play_max_turns_remaining=finisher_window,
+            )
             ppo_cfg = MaskablePPOConfig(
                 hidden_dim=self.cfg.ppo_hidden_dim,
                 total_episodes=self.cfg.ppo_episodes,
@@ -629,7 +709,19 @@ class LiveBattlePlanner:
         # Mid-battle generated card (e.g. #23 眠気) or unseen reward card
         new_uid = self._sim.next_uid
         self._sim.next_uid += 1
-        inst = CardInstance(uid=new_uid, cfg=_make_card_config(self.db, cid))
+        use_legacy = (
+            self._battle_cfg is not None
+            and self._battle_cfg.p_idol_id in (None, 163)
+            and str(self._battle_cfg.plan or "").lower() == "logic"
+        )
+        cfg_new = _build_card_config_with_hooks(
+            self.db,
+            cid,
+            hooks=self._card_memory_hooks,
+            custs=self._card_customizations,
+            use_misuzu_legacy=use_legacy,
+        ) or _make_card_config(self.db, cid)
+        inst = CardInstance(uid=new_uid, cfg=cfg_new)
         self._sim._all_instances[new_uid] = inst
         return inst
 
@@ -648,9 +740,19 @@ class LiveBattlePlanner:
         actual_turn = max(1, self._battle_initial_turns - live_rem + 1)
         is_new_turn = actual_turn != sim.turn
         if is_new_turn:
+            if actual_turn > sim.turn:
+                for _ in range(actual_turn - sim.turn):
+                    sim.timed_gi_effect_buffs = sim._step_timed_buffs(sim.timed_gi_effect_buffs)
+                    sim.timed_gi_gain_buffs = sim._step_timed_buffs(sim.timed_gi_gain_buffs)
+                    sim.timed_score_buffs = sim._step_timed_buffs(sim.timed_score_buffs)
+                    sim.timed_extra_gi_eot = sim._step_timed_buffs(sim.timed_extra_gi_eot)
+                    sim.timed_conc_effect_buffs = sim._step_timed_buffs(sim.timed_conc_effect_buffs)
+                    sim.timed_gc_gain_buffs = sim._step_timed_buffs(sim.timed_gc_gain_buffs)
+                    sim.timed_gc_addition_buffs = sim._step_timed_buffs(sim.timed_gc_addition_buffs)
+                    sim.timed_conc_gain_buffs = sim._step_timed_buffs(sim.timed_conc_gain_buffs)
             sim.turn_cards_used = 0
             sim.fresh_turn_stat_buffs.clear()
-            sim.in_unfresh_phase = True
+        sim.in_unfresh_phase = False
         sim.turn = actual_turn
         sim.turns_elapsed = max(0, actual_turn - 1)
         sim.turns_remaining = live_rem
@@ -685,12 +787,20 @@ class LiveBattlePlanner:
         self._last_turns_remaining = live_rem
 
         has_grey_mot_card = False
+        has_grey_conc_card = False
+        has_grey_gc_card = False
         for c in (obs.cards or ()):
             if getattr(c, "visual_playable", None) is False and int(getattr(c, "card_id", 0) or 0) > 0:
                 crow = self.db.get_card_by_id(int(c.card_id))
-                if crow and "motivation-=" in str(crow.get("dsl_cost") or ""):
-                    has_grey_mot_card = True
-                    break
+                if crow:
+                    c_cost_s = str(crow.get("dsl_cost") or "")
+                    c_cond_s = str(crow.get("dsl_conditions") or "")
+                    if "motivation-=" in c_cost_s:
+                        has_grey_mot_card = True
+                    if "concentration-=" in c_cost_s:
+                        has_grey_conc_card = True
+                    if "goodConditionTurns-=" in c_cost_s or "goodConditionTurns>=" in c_cond_s:
+                        has_grey_gc_card = True
 
         for k in (
             "goodImpressionTurns",
@@ -710,6 +820,10 @@ class LiveBattlePlanner:
                     continue
                 if k == "motivation" and (not has_grey_mot_card) and prev_val >= 4 and obs_val < prev_val - 4:
                     # Single-digit OCR truncation (e.g. 14 -> 1) should not overwrite higher tracked buff value
+                    continue
+                if k == "concentration" and (not has_grey_conc_card) and prev_val >= 4 and obs_val < prev_val - 4:
+                    continue
+                if k == "goodConditionTurns" and (not has_grey_gc_card) and prev_val >= 3 and obs_val < prev_val - 2:
                     continue
                 sim.buffs[k] = obs_val
 
@@ -735,7 +849,7 @@ class LiveBattlePlanner:
                     cost_var, eff_amt = sim._effective_cost(inst.cfg)
                     vis_play = getattr(card, "visual_playable", None)
                     if cost_var not in ("cost", "stamina") and int(sim.buffs.get(cost_var, 0) or 0) < eff_amt:
-                        if cost_var == "motivation" and vis_play is not True:
+                        if cost_var in ("motivation", "concentration", "goodConditionTurns") and vis_play is not True:
                             continue
                         sim.buffs[cost_var] = int(eff_amt)
                     elif (
@@ -747,11 +861,17 @@ class LiveBattlePlanner:
                         sim.stamina = max(sim.stamina, int(eff_amt))
                     row = self.db.get_card_by_id(inst.cfg.card_id)
                     if row:
-                        cond_txt = f"{row.get('dsl_actions', '')} {row.get('dsl_effects', '')}"
+                        cond_txt = (
+                            f"{row.get('dsl_conditions', '')} "
+                            f"{row.get('dsl_actions', '')} "
+                            f"{row.get('dsl_effects', '')}"
+                        )
                         for bk, req_s in re.findall(
                             r"(goodImpressionTurns|motivation|goodConditionTurns|concentration)\s*>=\s*(\d+)",
                             cond_txt,
                         ):
+                            if bk in ("goodConditionTurns", "concentration") and vis_play is not True:
+                                continue
                             if int(sim.buffs.get(bk, 0) or 0) < int(req_s):
                                 sim.buffs[bk] = int(req_s)
         elif not any(a.action_type == "play_card" for a in legal_actions):
@@ -821,6 +941,28 @@ class LiveBattlePlanner:
             and str(crow.get("rarity") or "").upper() != "L"
         )
 
+    def _is_late_scaling_finisher_card(self, card_id: int) -> bool:
+        """Return True for limit=1 finishers whose score scales with total cardsUsed (e.g. #813/#814)."""
+        if int(card_id or 0) <= 0:
+            return False
+        crow = self.db.get_card_by_id(int(card_id))
+        if not crow:
+            return False
+        base_id = int(crow.get("base_id") or card_id)
+        return crow.get("limit_count") == 1 and (
+            base_id == 813 or "cardsUsed" in str(crow.get("dsl_actions") or "")
+        )
+
+    def _is_double_effect_enabler_card(self, card_id: int) -> bool:
+        """Return True for cards that grant doubleCardEffectCards+= (e.g. #162/#163)."""
+        if int(card_id or 0) <= 0:
+            return False
+        crow = self.db.get_card_by_id(int(card_id))
+        if not crow:
+            return False
+        base_id = int(crow.get("base_id") or card_id)
+        return base_id == 162 or "doubleCardEffectCards+=" in str(crow.get("dsl_actions") or "")
+
     def _is_active_retrigger_drink(self, drink_id: int) -> bool:
         """Return True if drink grants a same-turn Active-only card effect retrigger (e.g. #25 特製ハツボシエキス)."""
         if int(drink_id or 0) == 25:
@@ -828,6 +970,49 @@ class LiveBattlePlanner:
         if int(drink_id or 0) > 0:
             drow = self.db.get_drink_by_id(int(drink_id))
             if drow and "doublecardeffectcards" in str(drow.get("dsl_actions") or "").lower():
+                return True
+        return False
+
+    def _is_timed_score_buff_card_id(self, card_id: int) -> bool:
+        """Return True for cards granting timed `setScoreBuff` burst (e.g. #775/#776 話題沸騰)."""
+        if int(card_id or 0) <= 0:
+            return False
+        crow = self.db.get_card_by_id(int(card_id))
+        if not crow:
+            return False
+        base_id = int(crow.get("base_id") or card_id)
+        if base_id == 775:
+            return True
+        return crow.get("limit_count") == 1 and bool(
+            re.search(r"setscorebuff\([^,]+,\s*(\d+)\)", str(crow.get("dsl_actions") or "").lower())
+        )
+
+    def _score_buff_drink_info(self, drink_id: int) -> Tuple[bool, int, float]:
+        """Return `(is_score_buff, duration_turns, amount)` for drinks such as #12 and #14."""
+        did = int(drink_id or 0)
+        if did <= 0:
+            return False, 0, 0.0
+        drow = self.db.get_drink_by_id(did)
+        dsl_l = str(drow.get("dsl_actions") or "").lower() if drow else ""
+        m = re.search(r"setscorebuff\(\s*([0-9.]+)\s*(?:,\s*(\d+))?\s*\)", dsl_l)
+        if m:
+            amt = float(m.group(1))
+            dur = int(m.group(2)) if m.group(2) else 999
+            return True, dur, amt
+        if did == 12:
+            return True, 3, 0.3
+        if did == 14:
+            return True, 5, 0.1
+        return False, 0, 0.0
+
+    def _is_tutor_drink(self, drink_id: int) -> bool:
+        """Return True for drinks that move a chosen card from draw/discard to hand (e.g. #22 初星黒酢)."""
+        did = int(drink_id or 0)
+        if did == 22:
+            return True
+        if did > 0:
+            drow = self.db.get_drink_by_id(did)
+            if drow and "moveselectedtohand" in str(drow.get("dsl_actions") or "").lower():
                 return True
         return False
 
@@ -843,6 +1028,13 @@ class LiveBattlePlanner:
 
         if self._is_new_battle(obs, tracker):
             self._train_for_battle(obs, tracker)
+        elif tracker is not None:
+            tr_hooks = getattr(tracker, "card_memory_hooks", None)
+            tr_custs = getattr(tracker, "card_customizations", None)
+            if tr_hooks:
+                self._card_memory_hooks = {k: dict(v) for k, v in tr_hooks.items() if isinstance(v, dict)}
+            if tr_custs:
+                self._card_customizations = {k: dict(v) for k, v in tr_custs.items() if isinstance(v, dict)}
 
         assert self._sim is not None and self._codec is not None
         assert self._encoder is not None and self._net is not None and self._ismcts is not None
@@ -883,30 +1075,123 @@ class LiveBattlePlanner:
                 )
                 return u_act.choice_id, reason_u, {"best_q_score": float(self._sim.score), "unmapped_override": True}
 
+        live_rem_turns = int(obs.turns_remaining or 1)
+        has_unexhausted_813 = self._sim.has_unexhausted_card_family(813) or any(
+            self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0))
+            for a in legal_actions
+            if a.action_type == "play_card"
+        )
+        fin_window = (
+            max(1, int(self.cfg.finisher_hold_min_turns_remaining) - 1)
+            if self.cfg.prefer_double_effect_before_finisher
+            else 0
+        )
+        hold_for_final_turns = (
+            self.cfg.prefer_double_effect_before_finisher
+            and live_rem_turns >= self.cfg.finisher_hold_min_turns_remaining
+            and self._sim.double_card_effect_cards == 0
+        )
+
         has_playable_non_l_active = any(
             act.action_type == "play_card"
             and self._is_non_l_active_card_id(int((act.payload or {}).get("card_id") or 0))
             for act in legal_actions
         )
 
+        live_hand_size = len(obs.cards)
+        has_playable_non_fin = any(
+            a.action_type == "play_card"
+            and not self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0))
+            and int((a.payload or {}).get("card_id") or 0) != 23
+            for a in legal_actions
+        )
         allowed_root: Optional[set[int]] = set(aid_to_ui.keys()) if aid_to_ui else None
         if aid_to_ui:
             def _allow_root_aid(act: LegalAction) -> bool:
                 if act.action_type == "use_drink":
                     did = int((act.payload or {}).get("drink_id") or 0)
+                    dr_cfg = next((d for d in self._sim.available_drinks if d.drink_id == did), None)
+                    if self._is_tutor_drink(did) and live_hand_size >= self._sim.MAX_HAND_SIZE:
+                        return False
+                    if dr_cfg is not None and self._sim.should_defer_drink_for_hand_cap(
+                        dr_cfg,
+                        hand_size=live_hand_size,
+                        has_playable_non_finisher=has_playable_non_fin,
+                    ):
+                        return False
                     if self._is_active_retrigger_drink(did):
                         if not has_playable_non_l_active:
                             return False
-                        dr_cfg = next((d for d in self._sim.available_drinks if d.drink_id == did), None)
                         if dr_cfg is not None and not self._sim.can_use_active_retrigger_drink_now(dr_cfg):
                             return False
+                    if fin_window > 0 and self._sim.double_card_effect_cards == 0 and has_unexhausted_813:
+                        if self._is_tutor_drink(did) and live_rem_turns >= self.cfg.finisher_hold_min_turns_remaining:
+                            return False
+                        is_sb, sb_dur, _amt = self._score_buff_drink_info(did)
+                        if is_sb and 0 < sb_dur < 999 and live_rem_turns > sb_dur:
+                            return False
+                elif act.action_type == "play_card" and fin_window > 0 and self._sim.double_card_effect_cards == 0:
+                    cid = int((act.payload or {}).get("card_id") or 0)
+                    if hold_for_final_turns and (
+                        self._is_late_scaling_finisher_card(cid)
+                        or (self._is_double_effect_enabler_card(cid) and has_unexhausted_813)
+                    ):
+                        return False
+                    if (
+                        has_unexhausted_813
+                        and self._is_timed_score_buff_card_id(cid)
+                        and live_rem_turns > max(3, self.cfg.finisher_hold_min_turns_remaining)
+                    ):
+                        return False
                 return True
 
             filtered_aids = {aid for aid, act in aid_to_ui.items() if _allow_root_aid(act)}
             if filtered_aids:
                 allowed_root = filtered_aids
+            if allowed_root and len(allowed_root) > 1 and self._codec.end_turn_action_id in allowed_root:
+                has_root_non_trouble = any(
+                    aid != self._codec.end_turn_action_id
+                    and aid_to_ui[aid].action_type == "play_card"
+                    and int((aid_to_ui[aid].payload or {}).get("card_id") or 0) != 23
+                    for aid in allowed_root
+                )
+                has_root_trouble = any(
+                    aid != self._codec.end_turn_action_id
+                    and aid_to_ui[aid].action_type == "play_card"
+                    and int((aid_to_ui[aid].payload or {}).get("card_id") or 0) == 23
+                    for aid in allowed_root
+                )
+                if self._sim.should_prune_blank_end_turn(
+                    has_non_trouble_card=has_root_non_trouble,
+                    has_trouble_card=has_root_trouble,
+                    stamina=int(obs.stamina or 0),
+                    turns_remaining=live_rem_turns,
+                ):
+                    allowed_root.discard(self._codec.end_turn_action_id)
 
-            if self._sim.has_armed_active_retrigger(same_turn_only=True) and allowed_root:
+            locked_fin_2x = False
+            if self._sim.double_card_effect_cards > 0 and allowed_root:
+                fin_root_aids = {
+                    aid
+                    for aid in allowed_root
+                    if aid_to_ui[aid].action_type == "play_card"
+                    and self._is_late_scaling_finisher_card(int((aid_to_ui[aid].payload or {}).get("card_id") or 0))
+                }
+                if fin_root_aids:
+                    fin_pool = {
+                        aid
+                        for aid in allowed_root
+                        if aid in fin_root_aids
+                        or (
+                            aid_to_ui[aid].action_type == "use_drink"
+                            and not self._is_active_retrigger_drink(int((aid_to_ui[aid].payload or {}).get("drink_id") or 0))
+                        )
+                    }
+                    if fin_pool:
+                        allowed_root = fin_pool
+                        locked_fin_2x = True
+
+            if (not locked_fin_2x) and self._sim.has_armed_active_retrigger(same_turn_only=True) and allowed_root:
                 active_root_aids = {
                     aid
                     for aid in allowed_root
@@ -1003,6 +1288,11 @@ class LiveBattlePlanner:
                 u_cid = int((u_act.payload or {}).get("card_id") or 0)
                 if u_cid == 23:
                     continue
+                if hold_for_final_turns and (
+                    self._is_late_scaling_finisher_card(u_cid)
+                    or (self._is_double_effect_enabler_card(u_cid) and has_unexhausted_813)
+                ):
+                    continue
                 if require_armed_active and not self._is_non_l_active_card_id(u_cid):
                     continue
                 matched_u = _match_unmapped_hand(u_act)
@@ -1023,19 +1313,53 @@ class LiveBattlePlanner:
                         best_u_eval = (avg_u_q, u_act, u_inst)
             if best_u_eval is not None:
                 best_u_q, best_u_act, best_u_inst = best_u_eval
+                u_cid_best = int((best_u_act.payload or {}).get("card_id") or 0)
+                hold_unmapped_for_late = (
+                    chosen_ui.action_type == "end_turn"
+                    and int(obs.turns_remaining or 1) >= self.cfg.finisher_hold_min_turns_remaining
+                    and (
+                        self._is_late_scaling_finisher_card(u_cid_best)
+                        or self._is_double_effect_enabler_card(u_cid_best)
+                    )
+                    and best_u_q <= best_q
+                )
                 if (
-                    best_u_q > best_q
-                    or (self._sim.is_safe_dominating_free_card(best_u_inst) and best_u_q >= best_q * 0.95)
-                    or chosen_ui.action_type == "end_turn"
+                    not hold_unmapped_for_late
+                    and (
+                        best_u_q > best_q
+                        or (self._sim.is_safe_dominating_free_card(best_u_inst) and best_u_q >= best_q * 0.95)
+                        or chosen_ui.action_type == "end_turn"
+                    )
                 ):
                     chosen_ui = best_u_act
                     mcts_stats["best_q_score"] = max(best_q, best_u_q)
                     override_note += f" [Unmapped fallback simQ={best_u_q:,.0f}]"
-        if chosen_ui.action_type == "end_turn" and obs.stamina >= 6:
+        if chosen_ui.action_type == "end_turn" and obs.stamina >= 4:
             non_trouble_cards = [
                 a for a in legal_actions
                 if a.action_type == "play_card" and int((a.payload or {}).get("card_id") or 0) != 23
             ]
+            if self._sim.double_card_effect_cards > 0 and live_rem_turns > 1 and has_unexhausted_813:
+                non_trouble_cards = [
+                    a for a in non_trouble_cards
+                    if self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0))
+                ]
+            elif live_rem_turns >= self.cfg.finisher_hold_min_turns_remaining:
+                filtered_non_hold = []
+                for a in non_trouble_cards:
+                    a_cid = int((a.payload or {}).get("card_id") or 0)
+                    if self._is_double_effect_enabler_card(a_cid):
+                        continue
+                    if self._is_late_scaling_finisher_card(a_cid) and self._sim.double_card_effect_cards <= 0:
+                        continue
+                    if (
+                        has_unexhausted_813
+                        and self._is_timed_score_buff_card_id(a_cid)
+                        and live_rem_turns > max(3, self.cfg.finisher_hold_min_turns_remaining)
+                    ):
+                        continue
+                    filtered_non_hold.append(a)
+                non_trouble_cards = filtered_non_hold
             if non_trouble_cards:
                 aid_scores: Dict[int, float] = {}
                 try:
@@ -1061,13 +1385,198 @@ class LiveBattlePlanner:
 
                 has_unmapped = any(act.choice_id not in ui_to_aid for act in non_trouble_cards)
                 has_free_or_final = (
-                    obs.stamina >= 10
+                    obs.stamina >= 6
                     or int(obs.turns_remaining or 1) <= 1
                     or any("不耗行动点" in a.description or "🟢0消耗" in a.description for a in non_trouble_cards)
                 )
                 if has_unmapped or has_free_or_final:
                     chosen_ui = max(non_trouble_cards, key=_non_skip_rank)
                     override_note = " [Anti-SKIP override]"
+            if (
+                chosen_ui.action_type == "end_turn"
+                and self._sim.double_card_effect_cards == 0
+                and not self._sim.has_armed_active_retrigger(same_turn_only=True)
+                and live_rem_turns >= 2
+            ):
+                trouble_cards = [
+                    a for a in legal_actions
+                    if a.action_type == "play_card" and int((a.payload or {}).get("card_id") or 0) == 23
+                ]
+                if trouble_cards:
+                    chosen_ui = trouble_cards[0]
+                    override_note = " [Exile #23 眠気 instead of blank SKIP]"
+
+        if self.cfg.prefer_double_effect_before_finisher and chosen_ui is not None:
+            chosen_cid = int((chosen_ui.payload or {}).get("card_id") or 0)
+            playable_cards = [
+                a for a in legal_actions
+                if a.action_type == "play_card" and int((a.payload or {}).get("card_id") or 0) != 23
+            ]
+            top_q_map = {str(nm): float(qv) for nm, _cnt, qv in (mcts_stats.get("top_actions") or [])}
+            ui_to_aid_hold = {act.choice_id: aid for aid, act in aid_to_ui.items()}
+            end_act = aid_to_ui.get(self._codec.end_turn_action_id) or next(
+                (a for a in legal_actions if a.action_type == "end_turn"), None
+            )
+
+            if (
+                hold_for_final_turns
+                and chosen_ui.action_type == "play_card"
+                and (
+                    self._is_late_scaling_finisher_card(chosen_cid)
+                    or (self._is_double_effect_enabler_card(chosen_cid) and has_unexhausted_813)
+                )
+            ):
+                alt_cards = [
+                    a for a in playable_cards
+                    if not self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0))
+                    and not (
+                        self._is_double_effect_enabler_card(int((a.payload or {}).get("card_id") or 0))
+                        and has_unexhausted_813
+                    )
+                ]
+                if alt_cards:
+                    best_alt = max(
+                        alt_cards,
+                        key=lambda a: (
+                            1 if ("不耗行动点" in a.description or "🟢0消耗" in a.description) else 0,
+                            top_q_map.get(
+                                self._codec.action_name(ui_to_aid_hold[a.choice_id]), -1e9
+                            )
+                            if a.choice_id in ui_to_aid_hold
+                            else -1e9,
+                        ),
+                    )
+                    chosen_ui = best_alt
+                    override_note += " [Hold #814/#163 for last 2 turns]"
+                else:
+                    trouble_alt = next(
+                        (
+                            a for a in legal_actions
+                            if a.action_type == "play_card" and int((a.payload or {}).get("card_id") or 0) == 23
+                        ),
+                        None,
+                    )
+                    if (
+                        trouble_alt is not None
+                        and live_rem_turns >= 2
+                        and obs.stamina >= 4
+                        and self._sim.double_card_effect_cards == 0
+                        and not self._sim.has_armed_active_retrigger(same_turn_only=True)
+                    ):
+                        chosen_ui = trouble_alt
+                        override_note += " [Hold #814/#163 -> Exile #23 眠気]"
+                    elif end_act is not None:
+                        chosen_ui = end_act
+                        override_note += " [Hold #814/#163 for last 2 turns]"
+            elif (
+                chosen_ui.action_type == "play_card"
+                and self._is_late_scaling_finisher_card(chosen_cid)
+                and self._sim.double_card_effect_cards == 0
+            ):
+                combo_163 = next(
+                    (
+                        a for a in playable_cards
+                        if self._is_double_effect_enabler_card(int((a.payload or {}).get("card_id") or 0))
+                    ),
+                    None,
+                )
+                if combo_163 is not None and int(self._sim.buffs.get("goodConditionTurns", 0) or 0) >= 13:
+                    chosen_ui = combo_163
+                    override_note += " [Combo #162/#163->#814 2x]"
+            elif self._sim.double_card_effect_cards > 0:
+                already_finisher = (
+                    chosen_ui.action_type == "play_card"
+                    and self._is_late_scaling_finisher_card(chosen_cid)
+                )
+                finisher_act = next(
+                    (
+                        a for a in playable_cards
+                        if self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0))
+                    ),
+                    None,
+                )
+                chosen_did = int((chosen_ui.payload or {}).get("drink_id") or 0) if chosen_ui.action_type == "use_drink" else 0
+                chosen_is_safe_drink = (
+                    chosen_ui.action_type == "use_drink"
+                    and not self._is_active_retrigger_drink(chosen_did)
+                    and not _is_banned_drink(chosen_did, str(chosen_ui.description or ""), banned_ids=self.banned_drink_ids)
+                )
+                if not already_finisher and not chosen_is_safe_drink:
+                    if finisher_act is not None:
+                        chosen_ui = finisher_act
+                        override_note += " [Armed 2x->#814]"
+                    else:
+                        tutor_act = next(
+                            (
+                                a for a in legal_actions
+                                if a.action_type == "use_drink"
+                                and self._is_tutor_drink(int((a.payload or {}).get("drink_id") or 0))
+                                and not _is_banned_drink(
+                                    (a.payload or {}).get("drink_id"),
+                                    str((a.payload or {}).get("name") or ""),
+                                    str(a.description or ""),
+                                    banned_ids=self.banned_drink_ids,
+                                )
+                            ),
+                            None,
+                        )
+                        if (
+                            tutor_act is not None
+                            and len(obs.cards) < self._sim.MAX_HAND_SIZE
+                            and len(self._sim.hand) < self._sim.MAX_HAND_SIZE
+                            and any(c.cfg.base_id == 813 for z in (self._sim.draw_pile, self._sim.discard_pile) for c in z)
+                        ):
+                            chosen_ui = tutor_act
+                            override_note += " [Armed 2x->Tutor #814 via #22]"
+                        elif (
+                            live_rem_turns > 1
+                            and len(self._sim.draw_pile) <= 3
+                            and any(c.cfg.base_id == 813 for c in self._sim.draw_pile)
+                            and chosen_ui.action_type == "play_card"
+                            and end_act is not None
+                        ):
+                            crow_chosen = self.db.get_card_by_id(chosen_cid) if chosen_cid > 0 else None
+                            chosen_rarity = str(crow_chosen.get("rarity") or "") if crow_chosen else ""
+                            if chosen_rarity != "L":
+                                chosen_ui = end_act
+                                override_note += " [Carry 2x->rem1 #814]"
+
+            final_chosen_cid = int((chosen_ui.payload or {}).get("card_id") or 0) if chosen_ui.action_type == "play_card" else 0
+            if (
+                chosen_ui.action_type == "play_card"
+                and self._is_late_scaling_finisher_card(final_chosen_cid)
+            ):
+                sb_drinks = []
+                for a in legal_actions:
+                    if a.action_type != "use_drink":
+                        continue
+                    did = int((a.payload or {}).get("drink_id") or 0)
+                    if _is_banned_drink(
+                        did,
+                        str((a.payload or {}).get("name") or ""),
+                        str(a.description or ""),
+                        banned_ids=self.banned_drink_ids,
+                    ):
+                        continue
+                    is_sb, _dur, amt = self._score_buff_drink_info(did)
+                    if is_sb:
+                        dr_cfg_sb = next((d for d in self._sim.available_drinks if d.drink_id == did), None)
+                        if (
+                            dr_cfg_sb is not None
+                            and live_rem_turns > 1
+                            and self._sim.should_defer_drink_for_hand_cap(
+                                dr_cfg_sb,
+                                hand_size=live_hand_size,
+                                has_playable_non_finisher=has_playable_non_fin,
+                            )
+                        ):
+                            continue
+                        sb_drinks.append((amt, did, a))
+                if sb_drinks:
+                    sb_drinks.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+                    _, sb_did, sb_act = sb_drinks[0]
+                    chosen_ui = sb_act
+                    override_note += f" [Pre-#814 ScoreBuff Drink #{sb_did}]"
 
         q_best = float(mcts_stats.get("best_q_score", 0.0))
         reason = (

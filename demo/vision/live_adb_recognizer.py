@@ -558,15 +558,29 @@ class LiveScreenRecognizer:
         p_points = self._last_p_points
         p_found = False
 
+        def _is_digit_subseq(sub: str, full: str) -> bool:
+            if len(sub) >= len(full):
+                return False
+            it = iter(full)
+            return all(ch in it for ch in sub)
+
         def _is_truncated_p_points(val: int) -> bool:
-            return (
-                self._last_p_points >= 50
-                and val < self._last_p_points // 3
-                and (
-                    str(self._last_p_points).startswith(str(val))
-                    or (self._last_p_points >= 100 and val < 10 and (self._last_p_points % 5 == 0) and (val % 5 != 0))
-                )
-            )
+            prev = self._last_p_points
+            if prev < 50 or val >= prev // 3:
+                return False
+            s_val, s_prev = str(val), str(prev)
+            if s_prev.startswith(s_val):
+                return True
+            if prev >= 100 and val < 10 and (prev % 5 == 0) and (val % 5 != 0):
+                return True
+            # Guard middle-digit / suffix drops on high P-point counts (e.g. 449->49, 439->49),
+            # while still allowing legitimate single-step ~100-150P spends (105->5, 120->20).
+            if (prev - val) > 220 and (
+                _is_digit_subseq(s_val, s_prev)
+                or (val < 100 and (s_val[0] == s_prev[0] or s_val[-1] == s_prev[-1]))
+            ):
+                return True
+            return False
 
         if hp_found or ("Pポイント" in full_text):
             p_radius = max(3, int(round(w / 240.0)))
@@ -916,6 +930,10 @@ class LiveScreenRecognizer:
                 "再挑戦確認",
                 "交換確認",
                 "交換しますか",
+                "強化しますか",
+                "削除しますか",
+                "チェンジしますか",
+                "Pポイントを使用して",
                 "使用しますか",
                 "カスタマイズしますか",
                 "おまかせ編成",
@@ -1002,7 +1020,12 @@ class LiveScreenRecognizer:
             and not any(k in joined for k in ("詳細", "破棄", "捨てる", "捨てますか", "進みますか", "よろしいですか", "確認"))
         )
         norm_joined_early = _normalize_katakana_ocr(joined)
-        is_early_reward_or_change = any(
+        has_move_to_hand_btn_early = any(
+            ln["text"].strip().lstrip("ノ") in ("移動", "移動する")
+            and ln["bbox"][1] > int(h * 0.74)
+            for ln in lines
+        ) and ("移動中" not in norm_joined_early)
+        is_early_reward_or_change = has_move_to_hand_btn_early or any(
             k in norm_joined_early
             for k in (
                 "スキルカードを選",
@@ -1012,6 +1035,9 @@ class LiveScreenRecognizer:
                 "カスタマイズするスキルカード",
                 "カスタマイズを選",
                 "ドリンクを選",
+                "手札に移動",
+                "移動するスキルカード",
+                "山札か捨札",
                 "受け取らない",
                 "再抽選",
             )
@@ -1142,7 +1168,17 @@ class LiveScreenRecognizer:
             and ("Pポイントと交換" not in joined)
             and (not has_shop_exit_btn)
         )
-        is_reward_or_change_modal = is_shop_submodal_grid or any(
+        has_move_to_hand_btn = (
+            any(
+                ln["text"].strip().lstrip("ノ") in ("移動", "移動する")
+                and ln["bbox"][1] > int(h * 0.74)
+                for ln in lines
+            )
+            and (not is_home_screen)
+            and (not is_produce_setup)
+            and ("移動中" not in norm_joined)
+        )
+        is_reward_or_change_modal = is_shop_submodal_grid or has_move_to_hand_btn or any(
             k in norm_joined
             for k in (
                 "スキルカードを選",
@@ -1155,6 +1191,9 @@ class LiveScreenRecognizer:
                 "カスタマイズメニュー",
                 "カスタマイズを選",
                 "カスタマイズする",
+                "手札に移動",
+                "移動するスキルカード",
+                "山札か捨札",
                 "ドリンクを選",
                 "ドリンク獲得",
                 "Pドリンク所持上限",
@@ -1171,11 +1210,23 @@ class LiveScreenRecognizer:
             and any(k in norm_joined for k in ("メニューを選択", "ーユーを選択", "一覧に戻る", "実行する", "合計あと"))
             and ("カスタマイズ可能スキルカード" not in norm_joined)
         )
+        is_schedule_home_hud = (
+            ("行動を選択" in joined)
+            or ("P手帳" in joined)
+            or ("Pポイントがありますね" in joined)
+            or ("先生に相談して" in joined)
+            or any(
+                "休む" in ln["text"] and ln["bbox"][1] > int(h * 0.65) and ln["bbox"][0] > int(w * 0.70)
+                for ln in lines
+            )
+        )
         is_shop_like = (
             not is_customize_menu_screen
             and not is_shop_submodal_grid
+            and not is_schedule_home_hud
             and (
                 ("Pポイントと交換" in joined)
+                or ("Pポイントで利用するもの" in joined)
                 or ("強化や削除ができます" in joined)
                 or ("スキルカードの強化や削除" in joined)
                 or ("リフレッシュ" in joined and any(k in joined for k in ("強化", "削除", "チェンジ", "カスタマイズ", "終了", "交換")))
@@ -1241,8 +1292,42 @@ class LiveScreenRecognizer:
             return self._parse_battle_screen(frame, lines, active_plan, meta, turn_box_txt=turn_box_txt)
 
         # Guard against 授業/おでかけ option tooltips mentioning "スキルカードを選択...セレクトチェンジ"
+        has_orange_reward_confirm = False
+        if (
+            (not is_shop_like)
+            and (not is_produce_home)
+            and (not is_customize_menu_screen)
+            and not any(
+                k in norm_joined
+                for k in ("受け取る", "チェンジする", "強化する", "削除する", "カスタマイズする", "移動する")
+            )
+        ):
+            orange_reward_btn = self._ocr_bottom_orange_button(frame, w, h)
+            oc_reward_name = str((orange_reward_btn or {}).get("name") or "").strip().lstrip("ノ")
+            has_orange_reward_confirm = (
+                oc_reward_name
+                in (
+                    "受け取る",
+                    "チェンジする",
+                    "チェンジ",
+                    "強化する",
+                    "削除する",
+                    "カスタマイズする",
+                    "移動する",
+                    "移動",
+                    "受け取らない",
+                )
+                or (
+                    oc_reward_name == "決定"
+                    and any(
+                        k in norm_joined
+                        for k in ("スキルカード", "重複不可", "レッスン中1回", "再抽選", "ドリンク")
+                    )
+                )
+            )
         is_event_tooltip_hud = (
             ("審査基準" in joined or "授業" in hdr_label or "おでかけ" in hdr_label)
+            and (not has_orange_reward_confirm)
             and not any(
                 k in norm_joined
                 for k in (
@@ -1252,6 +1337,9 @@ class LiveScreenRecognizer:
                     "カスタマイズする",
                     "削除する",
                     "強化する",
+                    "重複不可",
+                    "レッスン中1回",
+                    "再抽選",
                     "キャンセル",
                     "受け取らない",
                     "スキルカードが選択されていません",
@@ -1268,7 +1356,8 @@ class LiveScreenRecognizer:
             return self._parse_customize_menu_screen(frame, lines, active_plan, meta)
 
         if (not is_event_tooltip_hud) and (
-            is_shop_submodal_grid
+            has_orange_reward_confirm
+            or is_shop_submodal_grid
             or "スキルカードを選択" in norm_joined
             or "スキルカード獲得" in norm_joined
             or "スキルカードを選" in norm_joined
@@ -1463,11 +1552,32 @@ class LiveScreenRecognizer:
                     return "Vi.", "Visual(Vi)属性提升"
             return "", ""
 
-        def _is_sp_tile(cx: int, by1: int, norm_txt: str) -> bool:
-            if "SP" in norm_txt.upper() or "ＳＰ" in norm_txt:
+        _sp_text_pat = re.compile(r"(?<![A-Z])(?:SP|ＳＰ)(?![A-Z])")
+        _sp_crop_pat = re.compile(r"(?<![A-Z0-9])(?:SP|ＳＰ)(?![A-Z])")
+
+        def _is_sp_tile(
+            cx: int,
+            by1: int,
+            norm_txt: str,
+            *,
+            allow_ocr_fallback: bool = False,
+        ) -> bool:
+            up_txt = norm_txt.upper()
+            if "SKIP" not in up_txt and _sp_text_pat.search(up_txt):
                 return True
-            sy_p1, sy_p2 = max(0, by1 - int(h * 0.135)), max(1, by1 - int(h * 0.065))
-            sx_p1, sx_p2 = max(0, cx - int(w * 0.105)), min(w, cx + int(w * 0.02))
+            sp_x1, sp_x2 = cx - int(w * 0.130), cx + int(w * 0.110)
+            sp_y1, sp_y2 = by1 - int(h * 0.155), by1 - int(h * 0.025)
+            for src_ln in lines + clusters:
+                stxt = str(src_ln.get("text") or "").upper()
+                if not stxt or "SKIP" in stxt or not _sp_text_pat.search(stxt):
+                    continue
+                sb_box = src_ln["bbox"]
+                lcx = (sb_box[0] + sb_box[2]) // 2
+                lcy = (sb_box[1] + sb_box[3]) // 2
+                if sp_x1 <= lcx <= sp_x2 and sp_y1 <= lcy <= sp_y2:
+                    return True
+            sy_p1, sy_p2 = max(0, by1 - int(h * 0.145)), max(1, by1 - int(h * 0.045))
+            sx_p1, sx_p2 = max(0, cx - int(w * 0.120)), min(w, cx + int(w * 0.100))
             if sy_p2 > sy_p1 + 4 and sx_p2 > sx_p1 + 8:
                 sp_patch = frame[sy_p1:sy_p2, sx_p1:sx_p2]
                 if sp_patch.size > 0:
@@ -1478,17 +1588,31 @@ class LiveScreenRecognizer:
                     mag_px = int(((sr > 215) & (sg < 115) & (sb > 175)).sum())
                     if gold_px >= 45 and mag_px >= 25:
                         return True
-                    if h >= 400 and w >= 300 and (gold_px >= 25 or mag_px >= 25):
+                    if h >= 400 and w >= 300 and (gold_px >= 25 or mag_px >= 25 or allow_ocr_fallback):
+                        ocr_box = (sx_p1, sy_p1, sx_p2, max(sy_p1 + 6, by1 - int(h * 0.040)))
                         sp_up = self._ocr_crop_upscaled(
                             frame,
-                            (max(0, cx - int(w * 0.105)), max(0, by1 - int(h * 0.138)), min(w, cx + int(w * 0.06)), max(1, by1 - int(h * 0.045))),
+                            ocr_box,
                             scale=2,
                             use_en=True,
                             mode="white",
                             pad=10,
                         )
-                        if "SP" in sp_up.upper():
+                        up_w = sp_up.upper()
+                        if "SKIP" not in up_w and _sp_crop_pat.search(up_w):
                             return True
+                        if allow_ocr_fallback:
+                            sp_raw = self._ocr_crop_upscaled(
+                                frame,
+                                ocr_box,
+                                scale=2,
+                                use_en=True,
+                                mode="raw",
+                                pad=10,
+                            )
+                            up_r = sp_raw.upper()
+                            if "SKIP" not in up_r and _sp_crop_pat.search(up_r):
+                                return True
             return False
 
         def _is_dup_tile(cx: int, cy: int) -> bool:
@@ -1538,7 +1662,12 @@ class LiveScreenRecognizer:
                                 }[attr_pfx]
                             else:
                                 attr_pfx, attr_note = _classify_tile_attr(cx, by1)
-                            is_sp = _is_sp_tile(cx, by1, norm_txt)
+                            is_sp = _is_sp_tile(
+                                cx,
+                                by1,
+                                norm_txt,
+                                allow_ocr_fallback=(kw in ("公開レッスン", "レッスン")),
+                            )
                             sp_tok = "SP" if is_sp else ""
                             opt_title = f"{attr_pfx}{sp_tok}{kw}"
                             if is_sp:
@@ -1623,8 +1752,13 @@ class LiveScreenRecognizer:
                     if lesson_by1_map
                     else max(int(h * 0.78), ymax_ref - int(h * 0.030))
                 )
-                has_right_rest = any(o["name"] == "休む" and o["bbox"]["xmin"] > int(w * 0.68) for o in options)
-                if has_right_rest:
+                has_same_row_rest = any(
+                    o["name"] == "休む"
+                    and o["bbox"]["xmin"] > int(w * 0.68)
+                    and o["bbox"]["ymax"] >= ymin_ref + int(h * 0.010)
+                    for o in options
+                )
+                if has_same_row_rest:
                     slot_specs = (
                         ("Vo.", "Vocal(Vo)属性提升", int(w * 0.165)),
                         ("Da.", "Dance(Da)属性提升", int(w * 0.385)),
@@ -1632,10 +1766,27 @@ class LiveScreenRecognizer:
                     )
                     slot_hw = int(w * 0.088)
                 else:
+                    vo_cx, da_cx, vi_cx = int(w * 0.240), int(w * 0.500), int(w * 0.760)
+                    detected_cx: Dict[str, int] = {}
+                    for lo in lesson_opts:
+                        for ap in ("Vo.", "Da.", "Vi."):
+                            if lo["name"].startswith(ap):
+                                lb = lo["bbox"]
+                                detected_cx[ap] = (lb["xmin"] + lb["xmax"]) // 2
+                    if "Vo." in detected_cx and "Vi." in detected_cx and "Da." not in detected_cx:
+                        da_cx = (detected_cx["Vo."] + detected_cx["Vi."]) // 2
+                    elif "Da." in detected_cx and "Vi." in detected_cx and "Vo." not in detected_cx:
+                        vo_cx = max(int(w * 0.12), 2 * detected_cx["Da."] - detected_cx["Vi."])
+                    elif "Vo." in detected_cx and "Da." in detected_cx and "Vi." not in detected_cx:
+                        vi_cx = min(int(w * 0.88), 2 * detected_cx["Da."] - detected_cx["Vo."])
+                    elif len(lesson_opts) == 2:
+                        cxs = sorted((o["bbox"]["xmin"] + o["bbox"]["xmax"]) // 2 for o in lesson_opts)
+                        if (cxs[1] - cxs[0]) >= int(w * 0.36):
+                            da_cx = (cxs[0] + cxs[1]) // 2
                     slot_specs = (
-                        ("Vo.", "Vocal(Vo)属性提升", int(w * 0.235)),
-                        ("Da.", "Dance(Da)属性提升", int(w * 0.500)),
-                        ("Vi.", "Visual(Vi)属性提升", int(w * 0.765)),
+                        ("Vo.", "Vocal(Vo)属性提升", vo_cx),
+                        ("Da.", "Dance(Da)属性提升", da_cx),
+                        ("Vi.", "Visual(Vi)属性提升", vi_cx),
                     )
                     slot_hw = int(w * 0.105)
                 cy_ref = (ymin_ref + ymax_ref) // 2
@@ -1647,7 +1798,12 @@ class LiveScreenRecognizer:
                         max(0, slot_cx - int(w * 0.075)) : min(w, slot_cx + int(w * 0.075)),
                     ]
                     if tile_patch.size > 0 and float(tile_patch.mean()) >= 145.0:
-                        is_sp = _is_sp_tile(slot_cx, by1_ref, "")
+                        is_sp = _is_sp_tile(
+                            slot_cx,
+                            by1_ref,
+                            "",
+                            allow_ocr_fallback=(base_kw in ("公開レッスン", "レッスン")),
+                        )
                         opt_title = f"{attr_pfx}{'SP' if is_sp else ''}{base_kw}"
                         opt_desc = (
                             f"【🌟SP発生·最優先必選！】{opt_title}（{attr_note}·SP属性与奖励大幅倍增，无条件优先于普通课！）"
@@ -1680,7 +1836,7 @@ class LiveScreenRecognizer:
                     if _is_dup_tile(cx, (ymin + ymax) // 2):
                         continue
                     attr_pfx, attr_note = _classify_tile_attr(cx, by1)
-                    is_sp = _is_sp_tile(cx, by1, norm_txt)
+                    is_sp = _is_sp_tile(cx, by1, norm_txt, allow_ocr_fallback=True)
                     sp_tok = "SP" if is_sp else ""
                     opt_title = f"{attr_pfx}{sp_tok}{norm_txt}" if (attr_pfx and not norm_txt.startswith(("Vo", "Da", "Vi"))) else norm_txt
                     options.append({
@@ -1836,6 +1992,14 @@ class LiveScreenRecognizer:
             "親愛度",
             "条件",
             "育成して",
+            "重複不可",
+            "レッスン中1回",
+            "レッスン中",
+            "カスタマイズ",
+            "強化確認",
+            "スキルカード",
+            "受け取る",
+            "再抽選",
             "トラブル",
             "トチェンジ",
             "セレクトチェンジ",
@@ -1862,7 +2026,7 @@ class LiveScreenRecognizer:
         def _collect_pills(cand_lines: List[Dict[str, Any]], min_x_frac: float = 0.12) -> None:
             for ln in cand_lines:
                 bx1, by1, bx2, by2 = ln["bbox"]
-                txt = re.sub(r"^[の◎○〇・]\s*", "", ln["text"]).strip()
+                txt = re.sub(r"^[の◎○〇・)\]\(\[「『.,、。]+\s*", "", ln["text"]).strip()
                 cy = (by1 + by2) // 2
                 if any(ig in txt for ig in ignore_tokens) or len(txt) < 3 or not re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", txt):
                     continue
@@ -2434,10 +2598,10 @@ class LiveScreenRecognizer:
         elif any(k in full_joined for k in ("Pドリンク詳細", "ドリンク詳細", "ンク詳細", "ドリンク詳")):
             confirm_tokens = ("使用する", "使う", "決定", "確認", "はい", "OK", "閉じる")
         elif allow_drink_discard:
-            base_tokens = ("再開する", "再開", "続きから", "プロデュース開始", "開始する", "レギュラー", "使用する", "使う", "交換", "強化する", "削除する", "破棄する", "破棄", "受け取らない", "スキップ", "プロデュース完了", "完了", "ホームへ", "閉じる", "決定", "確認", "はい", "OK", "タイトルへ", "受け取る", "次へ")
+            base_tokens = ("再開する", "再開", "続きから", "プロデュース開始", "開始する", "レギュラー", "使用する", "使う", "交換", "強化する", "強化", "削除する", "削除", "チェンジ", "カスタマイズする", "破棄する", "破棄", "受け取らない", "スキップ", "プロデュース完了", "完了", "ホームへ", "閉じる", "決定", "確認", "はい", "OK", "タイトルへ", "受け取る", "次へ")
             confirm_tokens = base_tokens if has_use_action else ("捨てる",) + base_tokens
         else:
-            confirm_tokens = ("再開する", "再開", "続きから", "プロデュース開始", "開始する", "レギュラー", "使用する", "使う", "交換", "強化する", "削除する", "スキップ", "プロデュース完了", "完了", "ホームへ", "閉じる", "決定", "確認", "はい", "OK", "タイトルへ", "受け取る", "次へ")
+            confirm_tokens = ("再開する", "再開", "続きから", "プロデュース開始", "開始する", "レギュラー", "使用する", "使う", "交換", "強化する", "強化", "削除する", "削除", "チェンジ", "カスタマイズする", "スキップ", "プロデュース完了", "完了", "ホームへ", "閉じる", "決定", "確認", "はい", "OK", "タイトルへ", "受け取る", "次へ")
         options: List[Dict[str, Any]] = []
         seen_names = set()
         if fg_discard_btn is not None and not has_use_action:
@@ -2451,7 +2615,15 @@ class LiveScreenRecognizer:
             for ln in lines:
                 txt = ln["text"].strip()
                 # Ignore modal headers like "交換確認" / "最終確認" / "Pドリンク詳細" or upper body text above button row
-                is_header_title = ("確認" in txt and txt != "確認") or ("しますか" in txt) or ("捨てますか" in txt) or ("案内" in txt) or ("詳細" in txt)
+                is_header_title = (
+                    ("確認" in txt and txt != "確認")
+                    or ("しますか" in txt)
+                    or ("捨てますか" in txt)
+                    or ("案内" in txt)
+                    or ("詳細" in txt)
+                    or ("スキルカード" in txt)
+                    or ("Pポイント" in txt)
+                )
                 if (
                     tok in txt
                     and not is_header_title
@@ -2888,6 +3060,30 @@ class LiveScreenRecognizer:
             else:
                 split_segs.append((x_left + seg_s, x_left + seg_e))
 
+        if len(split_segs) == 2:
+            w0 = split_segs[0][1] - split_segs[0][0]
+            w1 = split_segs[1][1] - split_segs[1][0]
+            cx0 = (split_segs[0][0] + split_segs[0][1]) / 2.0
+            cx1 = (split_segs[1][0] + split_segs[1][1]) / 2.0
+            pitch = int(round(cx1 - cx0))
+            if int(w * 0.14) <= pitch <= int(w * 0.25) and abs(w0 - w1) <= 35:
+                cand_seg: Optional[Tuple[int, int]] = None
+                if 0.22 * w <= cx0 <= 0.36 * w and 0.44 * w <= cx1 <= 0.56 * w:
+                    cand_seg = (split_segs[1][0] + pitch, split_segs[1][1] + pitch)
+                elif 0.44 * w <= cx0 <= 0.56 * w and 0.64 * w <= cx1 <= 0.78 * w:
+                    cand_seg = (split_segs[0][0] - pitch, split_segs[0][1] - pitch)
+                if cand_seg is not None:
+                    cs, ce = cand_seg
+                    if cs >= int(w * 0.08) and ce <= int(w * 0.92):
+                        patch = frame[y_top:y_bot, cs:ce]
+                        if (
+                            patch.size > 0
+                            and float((np.min(patch, axis=2) < 228).mean()) > 0.25
+                            and float(patch.std()) > 18.0
+                        ):
+                            split_segs.append((cs, ce))
+                            split_segs.sort(key=lambda seg: seg[0])
+
         bracket_orange: List[Tuple[int, int, int, int, int]] = []
         for x1, x2 in split_segs:
             top_br = frame[max(0, y_top - 16) : min(h, y_top + 2), max(0, x1 + 4) : min(w, max(x1 + 5, x2 - 4))]
@@ -3141,9 +3337,20 @@ class LiveScreenRecognizer:
                 )
             )
         )
+        is_move_to_hand_flow = (
+            ("手札に移動" in norm_joined)
+            or ("移動するスキルカード" in norm_joined)
+            or ("山札か捨札" in norm_joined)
+            or any(
+                ln["text"].strip().lstrip("ノ") in ("移動", "移動する")
+                and ln["bbox"][1] > int(h * 0.74)
+                for ln in lines
+            )
+        ) and ("移動中" not in norm_joined)
         is_shop_delete_flow = (
             not is_customize_flow
             and not is_upgrade_flow
+            and not is_move_to_hand_flow
             and any(
                 ("削除" in ln["text"])
                 and len(ln["text"].strip()) <= 6
@@ -3152,12 +3359,12 @@ class LiveScreenRecognizer:
                 for ln in lines
             )
         )
-        want_deck_grid = want_deck_grid or is_upgrade_flow or is_shop_delete_flow
+        want_deck_grid = want_deck_grid or is_upgrade_flow or is_shop_delete_flow or is_move_to_hand_flow
         is_deck_trade_or_delete = (
             ("削除" in norm_joined)
             or ("手放す" in norm_joined)
             or ("チェンジ" in norm_joined and "チェンジで獲得" not in norm_joined)
-        ) and (not is_upgrade_flow) and (not is_customize_flow)
+        ) and (not is_upgrade_flow) and (not is_customize_flow) and (not is_move_to_hand_flow)
 
         # 1. Inspect confirm button ("受け取る" / "決定" / "チェンジ" / "カスタマイズする"), skip pill, reroll, cancel, and optional "受け取らない" checkbox
         receive_opt: Optional[Dict[str, Any]] = None
@@ -3178,6 +3385,7 @@ class LiveScreenRecognizer:
                     or (is_upgrade_flow and "強化" in norm_txt and "強化確認" not in norm_txt)
                     or "削除する" in norm_txt
                     or (is_shop_delete_flow and "削除" in norm_txt and "削除確認" not in norm_txt)
+                    or (is_move_to_hand_flow and norm_txt.lstrip("ノ") in ("移動", "移動する"))
                     or "チェンジ" in norm_txt
                     or "カスタマイズする" in norm_txt
                     or ("カスタマイズ" in norm_txt and "可能" not in norm_txt and "メニュー" not in norm_txt and "確認" not in norm_txt)
@@ -3191,8 +3399,13 @@ class LiveScreenRecognizer:
                 bx1, by1, bx2, by2 = ln["bbox"]
                 btn_patch = frame[max(0, by1 - 15) : min(h, by2 + 15), max(0, bx1 - 45) : min(w, bx2 + 45)]
                 mean_r = float(btn_patch[:, :, 0].mean()) if btn_patch.size else 0.0
-                receive_active = mean_r > (205.0 if is_shop_delete_flow else 218.0)
-                opt_name = "削除する" if (is_shop_delete_flow and "削除" in norm_txt) else txt
+                receive_active = mean_r > (205.0 if (is_shop_delete_flow or is_move_to_hand_flow) else 218.0)
+                if is_shop_delete_flow and "削除" in norm_txt:
+                    opt_name = "削除する"
+                elif is_move_to_hand_flow and norm_txt.lstrip("ノ") in ("移動", "移動する"):
+                    opt_name = "移動する"
+                else:
+                    opt_name = txt
                 receive_opt = {
                     "name": opt_name,
                     "title": opt_name,
@@ -3232,16 +3445,16 @@ class LiveScreenRecognizer:
 
         if (receive_opt is None or not receive_active) and not has_cap_text:
             orange_confirm = self._ocr_bottom_orange_button(frame, w, h)
-            if (
-                orange_confirm is not None
-                and orange_confirm["bbox"]["ymin"] >= int(h * 0.74)
-                and orange_confirm["name"] in ("決定", "受け取る", "強化する", "強化", "削除する", "削除", "チェンジする", "チェンジ", "カスタマイズする", "カスタマイズ", "次へ", "確認", "はい", "OK", "受け取らない")
-            ):
-                if is_shop_delete_flow and orange_confirm["name"] in ("削除", "決定"):
-                    receive_opt = dict(orange_confirm, name="削除する", title="削除する")
-                else:
-                    receive_opt = orange_confirm
-                receive_active = True
+            if orange_confirm is not None and orange_confirm["bbox"]["ymin"] >= int(h * 0.74):
+                oc_name = str(orange_confirm["name"] or "").strip().lstrip("ノ")
+                if oc_name in ("決定", "受け取る", "強化する", "強化", "削除する", "削除", "移動する", "移動", "チェンジする", "チェンジ", "カスタマイズする", "カスタマイズ", "次へ", "確認", "はい", "OK", "受け取らない"):
+                    if is_shop_delete_flow and oc_name in ("削除", "決定"):
+                        receive_opt = dict(orange_confirm, name="削除する", title="削除する")
+                    elif is_move_to_hand_flow and oc_name in ("移動", "移動する", "決定"):
+                        receive_opt = dict(orange_confirm, name="移動する", title="移動する")
+                    else:
+                        receive_opt = orange_confirm
+                    receive_active = True
 
         dont_take_bbox: Optional[Dict[str, int]] = None
         dont_take_checked = False
@@ -3298,6 +3511,28 @@ class LiveScreenRecognizer:
                         matched_pv = self.match_card_by_name(cleaned_pv, plan=plan)
                         if matched_pv:
                             break
+        else:
+            matched_pv = None
+        if is_move_to_hand_flow and not matched_pv:
+            pv2_patch = frame[int(h * 0.22) : int(h * 0.46), int(w * 0.14) : int(w * 0.92)]
+            pv2_res = self.ocr.recognize_array(pv2_patch)
+            pv2_lines = [
+                ln["text"].strip()
+                for ln in pv2_res.get("lines", [])
+                if ln["text"].strip() and "カスタマイズ" not in ln["text"] and "選択されていません" not in ln["text"]
+            ]
+            if pv2_lines and "選んでください" not in "".join(pv2_lines):
+                pv_lines = pv2_lines
+                preview_card_name = pv_lines[0]
+                matched_pv = self.match_card_by_name(preview_card_name, plan=plan)
+                if not matched_pv:
+                    for cand_pv in pv_lines[:4]:
+                        cleaned_pv = re.sub(r"^[\d\W_]+", "", cand_pv).strip()
+                        if len(cleaned_pv) >= 2:
+                            matched_pv = self.match_card_by_name(cleaned_pv, plan=plan)
+                            if matched_pv:
+                                break
+        if pv_lines and "選んでください" not in "".join(pv_lines) and "上限" not in "".join(pv_lines):
             matched_dr_pv = self.match_drink_by_name(preview_card_name, plan=plan) if not matched_pv else None
             if matched_pv and dont_take_ln is None and "ドリンク" not in full_joined:
                 preview_card_id = matched_pv["id"]
@@ -3337,7 +3572,7 @@ class LiveScreenRecognizer:
 
         # 3. Check modal square card/drink slots and P-Drink cap state (3 in Hajime, 4 in H.I.F) via visual/OCR cues
         cap_count = 4 if self.scenario_id in ("hif_honsen", "hif") else 3
-        allow_trouble = "削除" in norm_joined
+        allow_trouble = ("削除" in norm_joined) and (not is_move_to_hand_flow)
         grid_mode = "customize" if is_customize_flow else ("upgrade" if is_upgrade_flow else ("shop_delete" if is_shop_delete_flow else "default"))
         grid_slots = (
             self._scan_deck_grid_slots(
@@ -3480,7 +3715,10 @@ class LiveScreenRecognizer:
                 id_extra["card_id"] = preview_card_id
             elif preview_drink_id is not None:
                 id_extra["drink_id"] = preview_drink_id
-            if is_upgrade_flow:
+            if is_move_to_hand_flow:
+                act_name = "移動する"
+                act_title = f"确认移动当前选中卡至手牌: {sel_label}"
+            elif is_upgrade_flow:
                 act_name = "強化する"
                 act_title = f"确认強化当前选中卡: {sel_label}"
             elif is_deck_trade_or_delete or is_customize_flow:
@@ -3526,10 +3764,14 @@ class LiveScreenRecognizer:
                             else f"切换查看并选中第{idx + 1}瓶候选P饮料"
                         )
                     elif want_deck_grid:
-                        if is_upgrade_flow or is_customize_flow:
+                        if is_upgrade_flow or is_customize_flow or is_move_to_hand_flow:
                             sw_name = f"预览第{idx + 1}张待选卡"
                             sw_title = f"切换选中卡库第{idx + 1}张待选卡"
-                            sw_desc = "切换查看并选中该卡库技能卡进行強化/カスタマイズ"
+                            sw_desc = (
+                                "切换查看并选中该卡库技能卡加入手牌"
+                                if is_move_to_hand_flow
+                                else "切换查看并选中该卡库技能卡进行強化/カスタマイズ"
+                            )
                         else:
                             is_gray_low = idx < len(grid_gray_flags) and grid_gray_flags[idx]
                             sw_name = f"预览第{idx + 1}张待选卡"
@@ -3593,13 +3835,17 @@ class LiveScreenRecognizer:
                         "bbox": BoundingBox(xmin=x1, ymin=y1, xmax=x2, ymax=y2).model_dump(),
                     })
                 elif want_deck_grid:
-                    if is_upgrade_flow or is_customize_flow:
+                    if is_upgrade_flow or is_customize_flow or is_move_to_hand_flow:
                         options.append({
                             "choice_id": len(options),
                             "slot_idx": idx,
                             "name": f"待选卡{idx + 1}",
                             "title": f"待选卡 {idx + 1} (点击预览卡牌名称与效果)",
-                            "description": "点击预览并选中该卡库技能卡进行強化/カスタマイズ",
+                            "description": (
+                                "点击预览并选中该卡库技能卡加入手牌"
+                                if is_move_to_hand_flow
+                                else "点击预览并选中该卡库技能卡进行強化/カスタマイズ"
+                            ),
                             "bbox": BoundingBox(xmin=x1, ymin=y1, xmax=x2, ymax=y2).model_dump(),
                         })
                     else:
@@ -3770,6 +4016,7 @@ class LiveScreenRecognizer:
             scenario_id=self.scenario_id,
             week=meta["week"],
             total_weeks=meta["total_weeks"],
+            turns_remaining=int(self._last_turns_remaining) if (is_move_to_hand_flow and self._last_turns_remaining is not None) else 10,
             week_activity=f"{meta['week_label'] or ctx['week_node'].title} | 持有P点:{meta['p_points']}",
             stamina=meta["stamina"],
             max_stamina=meta["max_stamina"],
@@ -3782,12 +4029,82 @@ class LiveScreenRecognizer:
             raw_text="\n".join(ln["text"] for ln in lines),
         )
 
-    def _parse_shop_screen(self, frame: np.ndarray, lines: List[Dict[str, Any]], plan: str, meta: Dict[str, Any]) -> ScreenObservation:
+    @staticmethod
+    def _collect_shop_feature_lines(
+        frame: np.ndarray,
+        lines: List[Dict[str, Any]],
+        ocr_obj: Any,
+        *,
+        fy1_ratio: float,
+        fy2_ratio: float,
+        fx1_ratio: float,
+        fx2_ratio: float,
+    ) -> List[Dict[str, Any]]:
+        """Run multi-pass OCR (raw, dark-on-light, white-on-color) over the shop feature button band."""
+        h, w = frame.shape[:2]
+        feat_lines: List[Dict[str, Any]] = [
+            ln for ln in lines if int(h * 0.56) <= ((ln["bbox"][1] + ln["bbox"][3]) // 2) <= int(h * 0.83)
+        ]
+        if h >= 400 and w >= 300:
+            fy1, fx1 = int(h * fy1_ratio), int(w * fx1_ratio)
+            fy2, fx2 = int(h * fy2_ratio), int(w * fx2_ratio)
+            feat_crop = frame[fy1:fy2, fx1:fx2]
+            if feat_crop.size > 0:
+                from PIL import ImageOps
+                fgray = feat_crop.mean(axis=2)
+                sat_bg = (feat_crop.max(axis=2).astype(np.int16) - feat_crop.min(axis=2).astype(np.int16)) >= 30
+                dil_bg = cv2.dilate(sat_bg.astype(np.uint8), np.ones((11, 11), np.uint8)) > 0
+                white_on_color = (
+                    (feat_crop[:, :, 0] > 205)
+                    & (feat_crop[:, :, 1] > 205)
+                    & (feat_crop[:, :, 2] > 205)
+                    & dil_bg
+                )
+                pass_imgs = [
+                    Image.fromarray(feat_crop).resize((feat_crop.shape[1] * 2, feat_crop.shape[0] * 2), Image.Resampling.BICUBIC),
+                    Image.fromarray(
+                        np.where((fgray < 165)[:, :, None], 0, 255).astype(np.uint8).repeat(3, axis=2)
+                    ).resize((feat_crop.shape[1] * 2, feat_crop.shape[0] * 2), Image.Resampling.BICUBIC),
+                ]
+                if int(white_on_color.sum()) >= 25:
+                    pass_imgs.append(
+                        Image.fromarray(
+                            np.where(white_on_color[:, :, None], 0, 255).astype(np.uint8).repeat(3, axis=2)
+                        ).resize((feat_crop.shape[1] * 2, feat_crop.shape[0] * 2), Image.Resampling.BICUBIC)
+                    )
+                for fb2 in pass_imgs:
+                    fres = ocr_obj.recognize_array(np.array(ImageOps.expand(fb2, 12, (255, 255, 255))))
+                    for fln in fres.get("lines", []):
+                        bx1, by1, bx2, by2 = fln["bbox"]
+                        feat_lines.append({
+                            "text": fln["text"],
+                            "bbox": [
+                                fx1 + max(0, (bx1 - 12) // 2),
+                                fy1 + max(0, (by1 - 12) // 2),
+                                fx1 + max(0, (bx2 - 12) // 2),
+                                fy1 + max(0, (by2 - 12) // 2),
+                            ],
+                        })
+        return feat_lines
+
+    def _scan_shop_grid_and_confirm(
+        self,
+        frame: np.ndarray,
+        lines: List[Dict[str, Any]],
+        plan: str,
+        meta: Dict[str, Any],
+        *,
+        cols: List[Tuple[float, float]],
+        rows: List[Tuple[str, int, int, int, int]],
+        row2_split_cards_drinks: bool,
+        sold_out_p90_max: float,
+    ) -> Tuple[List[Dict[str, Any]], int, List[RecognizedDrink], Optional[Dict[str, Any]], str]:
+        """Scan shop grid slots, prices, selection rim, active 交換する preview, and Exit control."""
         h, w = frame.shape[:2]
         p_pts = int(meta.get("p_points") or 0)
         options: List[Dict[str, Any]] = []
+        full_joined_shop = "".join(ln["text"] for ln in lines)
 
-        # 1. Check active orange 交換する confirm button & selected preview
         exchange_opt: Optional[Dict[str, Any]] = None
         exchange_active = False
         exit_opt: Optional[Dict[str, Any]] = None
@@ -3810,29 +4127,13 @@ class LiveScreenRecognizer:
                     "bbox": BoundingBox(xmin=max(10, bx1 - 30), ymin=max(10, by1 - 20), xmax=min(w - 5, max(bx2 + 30, int(w * 0.96))), ymax=min(h - 10, by2 + 20)).model_dump(),
                 }
 
-        # 2. Scan shop grid items, prices (including SALE dark-on-light fallback), and active orange border
-        full_joined_shop = "".join(ln["text"] for ln in lines)
-        hdr_shop = str(meta.get("header_label") or "")
-        is_interval_shop = (
-            ("インターバル" in full_joined_shop)
-            or ("インターバル" in hdr_shop)
-            or ("リフレッシュ" in full_joined_shop)
-            or ("カスタマイズ可能" in full_joined_shop)
-            or ("強化可能" in full_joined_shop)
-            or (self.scenario_id in ("hif_honsen", "hif") and int(meta.get("week") or 0) == 8)
-        )
         px_scale = (w / 720.0) * (h / 1600.0)
         x_price_off = int(round(w * 0.035))
         rim_thresh = int(round(900 * px_scale))
-        cols = [(0.08, 0.27), (0.29, 0.48), (0.505, 0.695), (0.715, 0.91)]
-        rows = [
-            ("スキルカード", int(h * 0.395), int(h * 0.482), int(h * 0.485), int(h * 0.510)),
-            ("Pドリンク", int(h * 0.512), int(h * 0.598), int(h * 0.599), int(h * 0.638)),
-        ]
         grid_entries: List[Tuple[str, int, int, int, int, int, int, int, bool]] = []
         for row_idx, (row_kind, iy1, iy2, py1, py2) in enumerate(rows):
             for ci, (cx1f, cx2f) in enumerate(cols):
-                if is_interval_shop and row_idx == 1:
+                if row2_split_cards_drinks and row_idx == 1:
                     if ci in (0, 1):
                         kind, slot_idx = "スキルカード", 4 + ci
                     else:
@@ -3844,7 +4145,7 @@ class LiveScreenRecognizer:
                 if slot_interior.size > 0:
                     slot_mean = float(slot_interior.mean())
                     slot_p90 = float(np.percentile(slot_interior, 90))
-                    if slot_mean < 182.0 and slot_p90 < 230.0:
+                    if slot_mean < 182.0 and slot_p90 <= sold_out_p90_max:
                         continue
                 ptxt = self._ocr_crop_upscaled(frame, (x1 + x_price_off, py1, x2, py2), scale=2, use_en=True, mode="raw", pad=10)
                 nums = [int(n) for n in re.findall(r"\d{2,3}", ptxt) if 10 <= int(n) <= 500]
@@ -3875,7 +4176,6 @@ class LiveScreenRecognizer:
                         dark_px = int(((p_patch[:, :, 0] < 110) & (p_patch[:, :, 1] < 110) & (p_patch[:, :, 2] < 110)).sum())
                         if red_px >= int(round(25 * px_scale)) and dark_px <= int(round(5 * px_scale)):
                             is_red_unaffordable = True
-                # Measure outer orange corner ring pixels cleanly (excluding interior icon art)
                 rim_mask = np.zeros((h, w), dtype=bool)
                 rim_mask[max(0, iy1 - 8) : min(h, iy2 + 8), max(0, x1 - 8) : min(w, x2 + 8)] = True
                 rim_mask[iy1 + 10 : max(iy1 + 10, iy2 - 10), x1 + 10 : max(x1 + 10, x2 - 10)] = False
@@ -3984,7 +4284,6 @@ class LiveScreenRecognizer:
                 })
 
         for kind, ci, x1, iy1, x2, iy2, price, _rim, is_red_unaff in grid_entries:
-            # Never re-click an already-selected or already-previewed shop grid slot
             slot_key = f"{kind}:{ci}"
             if selected_key == (kind, ci) or slot_key in self._shop_visited_slots:
                 continue
@@ -4002,75 +4301,141 @@ class LiveScreenRecognizer:
                     "bbox": BoundingBox(xmin=x1, ymin=iy1, xmax=x2, ymax=iy2).model_dump(),
                 })
 
-        # 3. Genuine shop bottom feature buttons (セレクトチェンジ / カスタマイズ / 強化 / 削除) — ONLY when detected on screen
-        feat_lines: List[Dict[str, Any]] = [
-            ln for ln in lines if int(h * 0.56) <= ((ln["bbox"][1] + ln["bbox"][3]) // 2) <= int(h * 0.82)
-        ]
-        if h >= 400 and w >= 300:
-            fy1, fx1 = int(h * 0.62), int(w * 0.05)
-            fy2, fx2 = int(h * 0.79), int(w * 0.95)
-            feat_crop = frame[fy1:fy2, fx1:fx2]
-            if feat_crop.size > 0:
-                from PIL import ImageOps
-                fgray = feat_crop.mean(axis=2)
-                sat_bg = (feat_crop.max(axis=2).astype(np.int16) - feat_crop.min(axis=2).astype(np.int16)) >= 30
-                dil_bg = cv2.dilate(sat_bg.astype(np.uint8), np.ones((11, 11), np.uint8)) > 0
-                white_on_color = (
-                    (feat_crop[:, :, 0] > 205)
-                    & (feat_crop[:, :, 1] > 205)
-                    & (feat_crop[:, :, 2] > 205)
-                    & dil_bg
-                )
-                pass_imgs = [
-                    Image.fromarray(feat_crop).resize((feat_crop.shape[1] * 2, feat_crop.shape[0] * 2), Image.Resampling.BICUBIC),
-                    Image.fromarray(
-                        np.where((fgray < 165)[:, :, None], 0, 255).astype(np.uint8).repeat(3, axis=2)
-                    ).resize((feat_crop.shape[1] * 2, feat_crop.shape[0] * 2), Image.Resampling.BICUBIC),
-                ]
-                if int(white_on_color.sum()) >= 25:
-                    pass_imgs.append(
-                        Image.fromarray(
-                            np.where(white_on_color[:, :, None], 0, 255).astype(np.uint8).repeat(3, axis=2)
-                        ).resize((feat_crop.shape[1] * 2, feat_crop.shape[0] * 2), Image.Resampling.BICUBIC)
-                    )
-                for fb2 in pass_imgs:
-                    fres = self.ocr.recognize_array(np.array(ImageOps.expand(fb2, 12, (255, 255, 255))))
-                    for fln in fres.get("lines", []):
-                        bx1, by1, bx2, by2 = fln["bbox"]
-                        feat_lines.append({
-                            "text": fln["text"],
-                            "bbox": [
-                                fx1 + max(0, (bx1 - 12) // 2),
-                                fy1 + max(0, (by1 - 12) // 2),
-                                fx1 + max(0, (bx2 - 12) // 2),
-                                fy1 + max(0, (by2 - 12) // 2),
-                            ],
-                        })
+        return options, p_pts, held_drinks, exit_opt, full_joined_shop
 
+    def _finalize_shop_observation(
+        self,
+        frame: np.ndarray,
+        lines: List[Dict[str, Any]],
+        plan: str,
+        meta: Dict[str, Any],
+        options: List[Dict[str, Any]],
+        p_pts: int,
+        held_drinks: List[RecognizedDrink],
+        exit_opt: Optional[Dict[str, Any]],
+        shop_label: str,
+    ) -> ScreenObservation:
+        h, w = frame.shape[:2]
+        if held_drinks:
+            self._append_banned_drink_discards(
+                options,
+                held_drinks,
+                banned_ids=self.banned_drink_ids,
+                banned_names=self._banned_drink_names,
+            )
+
+        exit_bbox = (
+            exit_opt["bbox"]
+            if exit_opt
+            else BoundingBox(xmin=int(w * 0.74), ymin=int(h * 0.79), xmax=int(w * 0.96), ymax=int(h * 0.85)).model_dump()
+        )
+        if not options:
+            options = [{
+                "choice_id": 0,
+                "name": exit_opt["name"] if exit_opt else "終了",
+                "title": exit_opt["title"] if exit_opt else f"終了 (离开{shop_label})",
+                "description": f"持有{p_pts}P不足或已无可买项，直接结束离开{shop_label}",
+                "bbox": exit_bbox,
+            }]
+        elif exit_opt or any(str(o.get("name") or "").startswith("破棄候補_") for o in options):
+            options.append({
+                "choice_id": len(options),
+                "name": exit_opt["name"] if exit_opt else "終了",
+                "title": exit_opt["title"] if exit_opt else f"終了 (离开{shop_label})",
+                "description": f"离开{shop_label} (当前持有 {p_pts}P)",
+                "bbox": exit_bbox,
+            })
+        for idx, o in enumerate(options):
+            o["choice_id"] = idx
+
+        ctx = compute_week_stats_and_stage_bonus(scenario_id=self.scenario_id, week=meta["week"], plan=plan, override_stats=meta["stats"])
+        return ScreenObservation(
+            scene_type="shop",
+            plan=plan,
+            scenario_id=self.scenario_id,
+            week=meta["week"],
+            total_weeks=meta["total_weeks"],
+            week_activity=f"{meta['week_label'] or ctx['week_node'].title} | 持有P点:{p_pts}",
+            stamina=meta["stamina"],
+            max_stamina=meta["max_stamina"],
+            p_points=p_pts,
+            idol_stats=meta["stats"],
+            p_items=ctx["p_items"],
+            stage_bonuses=ctx["stage_bonuses"],
+            drinks=held_drinks,
+            options=options,
+            raw_text="\n".join(ln["text"] for ln in lines),
+        )
+
+    def _parse_consultation_shop_screen(
+        self, frame: np.ndarray, lines: List[Dict[str, Any]], plan: str, meta: Dict[str, Any]
+    ) -> ScreenObservation:
+        """Parse W6 / standard 相談 shop with its own 4-card + 4-drink grid and feature buttons."""
+        h, w = frame.shape[:2]
+        cols = [(0.08, 0.27), (0.29, 0.48), (0.505, 0.695), (0.715, 0.91)]
+        rows = [
+            ("スキルカード", int(h * 0.395), int(h * 0.482), int(h * 0.485), int(h * 0.510)),
+            ("Pドリンク", int(h * 0.512), int(h * 0.598), int(h * 0.599), int(h * 0.638)),
+        ]
+        options, p_pts, held_drinks, exit_opt, _ = self._scan_shop_grid_and_confirm(
+            frame,
+            lines,
+            plan,
+            meta,
+            cols=cols,
+            rows=rows,
+            row2_split_cards_drinks=False,
+            sold_out_p90_max=229.9,
+        )
+
+        feat_lines = self._collect_shop_feature_lines(
+            frame,
+            lines,
+            self.ocr,
+            fy1_ratio=0.60,
+            fy2_ratio=0.79,
+            fx1_ratio=0.04,
+            fx2_ratio=0.96,
+        )
         seen_feats: Set[str] = set()
-        norm_shop_all = full_joined_shop.replace("カスタマイス", "カスタマイズ")
-        upg_zero_rem = bool(re.search(r"強化可能.{0,6}あと\s*0", norm_shop_all))
-        cust_zero_rem = bool(re.search(r"カスタマイズ可能.{0,6}あと\s*0", norm_shop_all))
+
+        def _is_bright_box(box: Tuple[int, int, int, int], fallback: bool) -> bool:
+            patch = frame[box[1] : box[3], box[0] : box[2]]
+            if not patch.size:
+                return fallback
+            return float(patch.mean()) >= 150.0 or float(np.percentile(patch, 85)) >= 195.0
+
+        def _lookup_side_price(by1: int, by2: int, x_min: int, x_max: int) -> Optional[int]:
+            cy_this = (by1 + by2) // 2
+            for oln in feat_lines:
+                otxt = oln["text"].strip()
+                obx1, oby1, obx2, oby2 = oln["bbox"]
+                ocx = (obx1 + obx2) // 2
+                ocy = (oby1 + oby2) // 2
+                if abs(ocy - cy_this) <= 24 and x_min <= ocx <= x_max:
+                    m_adj = re.search(r"^\s*P?\s*(\d{2,3})\s*P?\s*$", otxt)
+                    if m_adj and 10 <= int(m_adj.group(1)) <= 500:
+                        return int(m_adj.group(1))
+            return None
+
         for ln in feat_lines:
             txt = ln["text"].strip()
             norm_t = txt.replace("チェンツ", "チェンジ").replace("カスタマイス", "カスタマイズ")
-            if len(norm_t) > 18 or "交換" in norm_t or "終了" in norm_t or "次へ" in norm_t or "チェンジで獲得" in norm_t:
+            has_both_upg_del = ("強化" in norm_t and "削除" in norm_t)
+            if len(norm_t) > (34 if has_both_upg_del else 18):
+                continue
+            if "交換" in norm_t or "終了" in norm_t or "次へ" in norm_t or "チェンジで獲得" in norm_t:
                 continue
             bx1, by1, bx2, by2 = ln["bbox"]
             btn_box = (max(10, bx1 - 30), max(int(h * 0.56), by1 - 16), min(w - 10, bx2 + 30), min(int(h * 0.82), by2 + 16))
-            btn_patch = frame[btn_box[1] : btn_box[3], btn_box[0] : btn_box[2]]
-            btn_bright = (
-                (float(btn_patch.mean()) >= 150.0 or float(np.percentile(btn_patch, 85)) >= 195.0)
-                if btn_patch.size
-                else True
-            )
+            btn_bright = _is_bright_box(btn_box, True)
             m_price = re.search(r"(\d{2,3})\s*P?", norm_t)
             feat_price = int(m_price.group(1)) if m_price and 10 <= int(m_price.group(1)) <= 500 else None
             if feat_price is None:
                 cy_this = (by1 + by2) // 2
                 for oln in feat_lines:
                     otxt = oln["text"].strip()
-                    obx1, oby1, obx2, oby2 = oln["bbox"]
+                    obx1, oby1, _obx2, oby2 = oln["bbox"]
                     ocy_other = (oby1 + oby2) // 2
                     if abs(ocy_other - cy_this) <= 24 and -10 <= obx1 - bx1 <= int(w * 0.35):
                         m_adj = re.search(r"^\s*P?\s*(\d{2,3})\s*P?\s*$", otxt)
@@ -4090,18 +4455,182 @@ class LiveScreenRecognizer:
                         **({"price": feat_price} if feat_price is not None else {}),
                         "bbox": BoundingBox(xmin=btn_box[0], ymin=btn_box[1], xmax=btn_box[2], ymax=btn_box[3]).model_dump(),
                     })
-            elif (
-                ("カスタマイズ" in norm_t or (is_interval_shop and "カスタマイズ可能" in norm_t))
+                continue
+
+            if (
+                "カスタマイズ" in norm_t
+                and "確認" not in norm_t
+                and "カスタマイズ" not in seen_feats
+                and "カスタマイズ" not in self._shop_visited_slots
+            ):
+                if btn_bright and (feat_price is None or p_pts >= feat_price):
+                    seen_feats.add("カスタマイズ")
+                    options.append({
+                        "choice_id": len(options),
+                        "shop_slot_key": "カスタマイズ",
+                        "name": "カスタマイズ",
+                        "title": "スキルカードカスタマイズ (用余钱自定义强化主力卡牌!)",
+                        "description": "用富裕P点进入自定义改造，强化主力卡牌数值/减耗/使用数",
+                        **({"price": feat_price} if feat_price is not None else {}),
+                        "bbox": BoundingBox(xmin=btn_box[0], ymin=btn_box[1], xmax=btn_box[2], ymax=btn_box[3]).model_dump(),
+                    })
+                continue
+
+            if (
+                "強化" in norm_t
+                and "強化済" not in norm_t
+                and "強化前" not in norm_t
+                and "強化" not in seen_feats
+                and "強化" not in self._shop_visited_slots
+            ):
+                if has_both_upg_del or bx2 > int(w * 0.50):
+                    u_box = (
+                        max(10, min(bx1 - 24, int(w * 0.08))),
+                        max(int(h * 0.56), by1 - 16),
+                        int(w * 0.48),
+                        min(int(h * 0.82), by2 + 16),
+                    )
+                    m_u = re.search(r"強化\D{0,6}(\d{2,3})", norm_t)
+                    u_price = (
+                        int(m_u.group(1))
+                        if m_u and 10 <= int(m_u.group(1)) <= 500
+                        else _lookup_side_price(by1, by2, 0, int(w * 0.49))
+                    )
+                else:
+                    u_box = btn_box
+                    u_price = feat_price
+                if _is_bright_box(u_box, btn_bright) and (u_price is None or p_pts >= u_price):
+                    seen_feats.add("強化")
+                    options.append({
+                        "choice_id": len(options),
+                        "shop_slot_key": "強化",
+                        "name": "強化",
+                        "title": (
+                            f"スキルカード強化 ({u_price}P·强化手头未+卡牌)"
+                            if u_price is not None
+                            else "スキルカード強化 (强化手头未+卡牌)"
+                        ),
+                        **({"price": u_price} if u_price is not None else {}),
+                        "description": f"花费{u_price}P强化一张技能卡(+)" if u_price is not None else "强化一张技能卡(+)",
+                        "bbox": BoundingBox(xmin=u_box[0], ymin=u_box[1], xmax=u_box[2], ymax=u_box[3]).model_dump(),
+                    })
+
+            if (
+                "削除" in norm_t
+                and "削除済" not in norm_t
+                and "削除" not in seen_feats
+                and "削除" not in self._shop_visited_slots
+            ):
+                if has_both_upg_del or bx1 < int(w * 0.49):
+                    d_box = (
+                        int(w * 0.52),
+                        max(int(h * 0.56), by1 - 16),
+                        min(w - 10, max(bx2 + 24, int(w * 0.92))),
+                        min(int(h * 0.82), by2 + 16),
+                    )
+                    m_d = re.search(r"削除\D{0,6}(\d{2,3})", norm_t)
+                    d_price = (
+                        int(m_d.group(1))
+                        if m_d and 10 <= int(m_d.group(1)) <= 500
+                        else _lookup_side_price(by1, by2, int(w * 0.50), w)
+                    )
+                else:
+                    d_box = btn_box
+                    d_price = feat_price
+                if _is_bright_box(d_box, btn_bright) and (d_price is None or p_pts >= d_price):
+                    seen_feats.add("削除")
+                    options.append({
+                        "choice_id": len(options),
+                        "shop_slot_key": "削除",
+                        "name": "削除",
+                        "title": "スキルカード削除 (删除冗余废卡)",
+                        "description": "删除多余基本/废卡精简牌库",
+                        **({"price": d_price} if d_price is not None else {}),
+                        "bbox": BoundingBox(xmin=d_box[0], ymin=d_box[1], xmax=d_box[2], ymax=d_box[3]).model_dump(),
+                    })
+
+        return self._finalize_shop_observation(
+            frame,
+            lines,
+            plan,
+            meta,
+            options,
+            p_pts,
+            held_drinks,
+            exit_opt,
+            shop_label="相談商店",
+        )
+
+    def _parse_interval_shop_screen(
+        self, frame: np.ndarray, lines: List[Dict[str, Any]], plan: str, meta: Dict[str, Any]
+    ) -> ScreenObservation:
+        """Parse W8 H.I.F インターバル shop with dedicated grid, 強化/カスタマイズ, and aligned リフレッシュ."""
+        h, w = frame.shape[:2]
+        cols = [(0.0750, 0.2486), (0.2972, 0.4722), (0.5194, 0.6944), (0.7417, 0.9167)]
+        rows = [
+            ("スキルカード", int(h * 0.4119), int(h * 0.4950), int(h * 0.4963), int(h * 0.5180)),
+            ("Pドリンク", int(h * 0.5325), int(h * 0.6156), int(h * 0.6163), int(h * 0.6400)),
+        ]
+        options, p_pts, held_drinks, exit_opt, full_joined_shop = self._scan_shop_grid_and_confirm(
+            frame,
+            lines,
+            plan,
+            meta,
+            cols=cols,
+            rows=rows,
+            row2_split_cards_drinks=True,
+            sold_out_p90_max=232.0,
+        )
+
+        feat_lines = self._collect_shop_feature_lines(
+            frame,
+            lines,
+            self.ocr,
+            fy1_ratio=0.64,
+            fy2_ratio=0.81,
+            fx1_ratio=0.02,
+            fx2_ratio=0.95,
+        )
+        seen_feats: Set[str] = set()
+        norm_shop_all = full_joined_shop.replace("カスタマイス", "カスタマイズ")
+        upg_zero_rem = bool(re.search(r"強化可能.{0,6}あと\s*0", norm_shop_all))
+        cust_zero_rem = bool(re.search(r"カスタマイズ可能.{0,6}あと\s*0", norm_shop_all))
+
+        for ln in feat_lines:
+            txt = ln["text"].strip()
+            norm_t = txt.replace("チェンツ", "チェンジ").replace("カスタマイス", "カスタマイズ")
+            if len(norm_t) > 18 or "交換" in norm_t or "終了" in norm_t or "次へ" in norm_t or "チェンジで獲得" in norm_t:
+                continue
+            bx1, by1, bx2, by2 = ln["bbox"]
+            btn_box = (max(10, bx1 - 30), max(int(h * 0.56), by1 - 16), min(w - 10, bx2 + 30), min(int(h * 0.82), by2 + 16))
+            btn_patch = frame[btn_box[1] : btn_box[3], btn_box[0] : btn_box[2]]
+            btn_bright = (
+                (float(btn_patch.mean()) >= 150.0 or float(np.percentile(btn_patch, 85)) >= 195.0)
+                if btn_patch.size
+                else True
+            )
+            m_price = re.search(r"(\d{2,3})\s*P?", norm_t)
+            feat_price = int(m_price.group(1)) if m_price and 10 <= int(m_price.group(1)) <= 500 else None
+            if feat_price is None:
+                cy_this = (by1 + by2) // 2
+                for oln in feat_lines:
+                    otxt = oln["text"].strip()
+                    obx1, oby1, _obx2, oby2 = oln["bbox"]
+                    ocy_other = (oby1 + oby2) // 2
+                    if abs(ocy_other - cy_this) <= 24 and -10 <= obx1 - bx1 <= int(w * 0.35):
+                        m_adj = re.search(r"^\s*P?\s*(\d{2,3})\s*P?\s*$", otxt)
+                        if m_adj and 10 <= int(m_adj.group(1)) <= 500:
+                            feat_price = int(m_adj.group(1))
+                            break
+
+            if (
+                ("カスタマイズ" in norm_t or "カスタマイズ可能" in norm_t)
                 and not cust_zero_rem
                 and "確認" not in norm_t
                 and "カスタマイズ" not in seen_feats
                 and "カスタマイズ" not in self._shop_visited_slots
             ):
-                c_box = (
-                    (int(w * 0.44), int(h * 0.658), int(w * 0.78), int(h * 0.706))
-                    if is_interval_shop
-                    else btn_box
-                )
+                c_box = (int(w * 0.444), int(h * 0.6575), int(w * 0.778), int(h * 0.7013))
                 c_patch = frame[c_box[1] : c_box[3], c_box[0] : c_box[2]]
                 c_bright = (
                     (float(c_patch.mean()) >= 150.0 or float(np.percentile(c_patch, 85)) >= 195.0)
@@ -4120,37 +4649,29 @@ class LiveScreenRecognizer:
                         "bbox": BoundingBox(xmin=c_box[0], ymin=c_box[1], xmax=c_box[2], ymax=c_box[3]).model_dump(),
                     })
             elif (
-                ("強化" in norm_t or (is_interval_shop and "強化可能" in norm_t))
+                ("強化" in norm_t or "強化可能" in norm_t)
                 and not upg_zero_rem
                 and "強化済" not in norm_t
                 and "強化前" not in norm_t
                 and "強化" not in seen_feats
                 and "強化" not in self._shop_visited_slots
             ):
-                u_box = (
-                    (int(w * 0.08), int(h * 0.658), int(w * 0.41), int(h * 0.706))
-                    if is_interval_shop
-                    else btn_box
-                )
+                u_box = (int(w * 0.078), int(h * 0.6569), int(w * 0.412), int(h * 0.7013))
                 u_patch = frame[u_box[1] : u_box[3], u_box[0] : u_box[2]]
                 u_bright = (
                     (float(u_patch.mean()) >= 150.0 or float(np.percentile(u_patch, 85)) >= 195.0)
                     if u_patch.size
                     else btn_bright
                 )
-                u_price = feat_price
-                if is_interval_shop:
-                    u_nums: List[int] = []
-                    for oln in lines + feat_lines:
-                        obx1, oby1, obx2, oby2 = oln["bbox"]
-                        ocx, ocy = (obx1 + obx2) // 2, (oby1 + oby2) // 2
-                        if int(w * 0.05) <= ocx <= int(w * 0.44) and int(h * 0.65) <= ocy <= int(h * 0.715):
-                            u_nums.extend(
-                                int(n) for n in re.findall(r"\d{2,3}", oln["text"]) if 10 <= int(n) <= 500
-                            )
-                    if u_nums:
-                        u_price = u_nums[-1]
-                req_p = u_price if u_price is not None else 100
+                u_nums: List[int] = []
+                for oln in lines + feat_lines:
+                    obx1, oby1, obx2, oby2 = oln["bbox"]
+                    ocx, ocy = (obx1 + obx2) // 2, (oby1 + oby2) // 2
+                    if int(w * 0.05) <= ocx <= int(w * 0.44) and int(h * 0.65) <= ocy <= int(h * 0.715):
+                        u_nums.extend(
+                            int(n) for n in re.findall(r"\d{2,3}", oln["text"]) if 10 <= int(n) <= 500
+                        )
+                req_p = u_nums[-1] if u_nums else (feat_price if feat_price is not None else 100)
                 if u_bright and p_pts >= req_p:
                     seen_feats.add("強化")
                     options.append({
@@ -4168,12 +4689,17 @@ class LiveScreenRecognizer:
                 and bx1 <= int(w * 0.35)
                 and "リフレッシュ" not in seen_feats
             ):
-                r_box = (
-                    max(10, bx1 - 24),
-                    max(int(h * 0.68), by1 - 12),
-                    min(w - 10, max(bx2 + 24, int(w * 0.27))),
-                    min(int(h * 0.84), by2 + int(h * 0.042)),
-                )
+                # Click strictly inside the upper white [リフレッシュ] pill (~y=1207..1246 on 1600p),
+                # never down into the gap / non-clickable lower `P 10` price pill (~y=1255..1283).
+                if int(h * 0.745) <= by1 <= int(h * 0.782):
+                    r_box = (int(w * 0.026), int(h * 0.7544), int(w * 0.276), int(h * 0.7788))
+                else:
+                    r_box = (
+                        max(10, bx1 - 18),
+                        max(int(h * 0.68), by1 - 8),
+                        min(w - 10, max(bx2 + 18, int(w * 0.276))),
+                        min(int(h * 0.80), by2 + 8),
+                    )
                 r_patch = frame[r_box[1] : r_box[3], r_box[0] : r_box[2]]
                 r_bright = (
                     (float(r_patch.mean()) >= 150.0 or float(np.percentile(r_patch, 85)) >= 195.0)
@@ -4199,71 +4725,42 @@ class LiveScreenRecognizer:
                         "description": f"花费{ref_price}P刷新商品行，重新获取P饮料并重置強化/カスタマイズ次数",
                         "bbox": BoundingBox(xmin=r_box[0], ymin=r_box[1], xmax=r_box[2], ymax=r_box[3]).model_dump(),
                     })
-            elif "削除" in norm_t and "削除済" not in norm_t and "削除" not in seen_feats and "削除" not in self._shop_visited_slots:
-                if not (self.scenario_id in ("hif_honsen", "hif") and meta.get("week") == 8):
-                    if btn_bright and (feat_price is None or p_pts >= feat_price):
-                        seen_feats.add("削除")
-                        options.append({
-                            "choice_id": len(options),
-                            "shop_slot_key": "削除",
-                            "name": "削除",
-                            "title": "スキルカード削除 (删除冗余废卡)",
-                            "description": "删除多余基本/废卡精简牌库",
-                            **({"price": feat_price} if feat_price is not None else {}),
-                            "bbox": BoundingBox(xmin=btn_box[0], ymin=btn_box[1], xmax=btn_box[2], ymax=btn_box[3]).model_dump(),
-                        })
 
-        if held_drinks:
-            self._append_banned_drink_discards(
-                options,
-                held_drinks,
-                banned_ids=self.banned_drink_ids,
-                banned_names=self._banned_drink_names,
-            )
-
-        # 4. Always provide Exit (✕ 終了); when nothing affordable/unvisited remains, offer ONLY Exit!
-        exit_bbox = (
-            exit_opt["bbox"]
-            if exit_opt
-            else BoundingBox(xmin=int(w * 0.74), ymin=int(h * 0.79), xmax=int(w * 0.96), ymax=int(h * 0.85)).model_dump()
+        return self._finalize_shop_observation(
+            frame,
+            lines,
+            plan,
+            meta,
+            options,
+            p_pts,
+            held_drinks,
+            exit_opt,
+            shop_label="インターバル商店",
         )
-        if not options:
-            options = [{
-                "choice_id": 0,
-                "name": exit_opt["name"] if exit_opt else "終了",
-                "title": exit_opt["title"] if exit_opt else "終了 (离开相談商店)",
-                "description": f"持有{p_pts}P不足或已无可买项，直接结束离开商店",
-                "bbox": exit_bbox,
-            }]
-        elif exit_opt or any(str(o.get("name") or "").startswith("破棄候補_") for o in options):
-            options.append({
-                "choice_id": len(options),
-                "name": exit_opt["name"] if exit_opt else "終了",
-                "title": exit_opt["title"] if exit_opt else "終了 (离开相談商店)",
-                "description": f"离开相談商店 (当前持有 {p_pts}P)",
-                "bbox": exit_bbox,
-            })
-        for idx, o in enumerate(options):
-            o["choice_id"] = idx
 
-        ctx = compute_week_stats_and_stage_bonus(scenario_id=self.scenario_id, week=meta["week"], plan=plan, override_stats=meta["stats"])
-        return ScreenObservation(
-            scene_type="shop",
-            plan=plan,
-            scenario_id=self.scenario_id,
-            week=meta["week"],
-            total_weeks=meta["total_weeks"],
-            week_activity=f"{meta['week_label'] or ctx['week_node'].title} | 持有P点:{p_pts}",
-            stamina=meta["stamina"],
-            max_stamina=meta["max_stamina"],
-            p_points=p_pts,
-            idol_stats=meta["stats"],
-            p_items=ctx["p_items"],
-            stage_bonuses=ctx["stage_bonuses"],
-            drinks=held_drinks,
-            options=options,
-            raw_text="\n".join(ln["text"] for ln in lines),
+    def _parse_shop_screen(self, frame: np.ndarray, lines: List[Dict[str, Any]], plan: str, meta: Dict[str, Any]) -> ScreenObservation:
+        h = frame.shape[0]
+        full_joined_shop = "".join(ln["text"] for ln in lines)
+        hdr_shop = str(meta.get("header_label") or "")
+        has_interval_cue = (
+            ("インターバル" in full_joined_shop)
+            or ("インターバル" in hdr_shop)
+            or ("リフレッシュ" in full_joined_shop)
+            or ("カスタマイズ可能" in full_joined_shop)
+            or ("強化可能" in full_joined_shop)
         )
+        has_explicit_soudan_cue = (
+            any("相談" in str(ln.get("text") or "") and ln["bbox"][1] < int(h * 0.25) for ln in lines)
+            or ("セレクトチェンジ" in full_joined_shop)
+            or ("チェンジで獲得" in full_joined_shop)
+        )
+        if has_interval_cue or (
+            self.scenario_id in ("hif_honsen", "hif")
+            and int(meta.get("week") or 0) == 8
+            and not has_explicit_soudan_cue
+        ):
+            return self._parse_interval_shop_screen(frame, lines, plan, meta)
+        return self._parse_consultation_shop_screen(frame, lines, plan, meta)
 
     def _parse_customize_menu_screen(
         self, frame: np.ndarray, lines: List[Dict[str, Any]], plan: str, meta: Dict[str, Any]
@@ -5535,16 +6032,17 @@ class LiveScreenRecognizer:
         if is_exam_hud and hp_found or (not is_exam_hud and best_hp_y >= 0):
             self._last_stamina = (stamina, meta["max_stamina"])
 
-        # Top-left Good Impression (👍好印象) & Motivation (✊やる気) diamonds + red feather halfCostTurns
+        # Top-left Good Impression (👍好印象) & Motivation (✊やる気) diamonds (Logic only) + red feather halfCostTurns
         buffs: Dict[str, int] = {}
-        diamond_buffs = self._parse_left_buff_diamonds(frame)
+        is_logic_plan = (plan or "logic").lower() == "logic"
+        diamond_buffs = self._parse_left_buff_diamonds(frame) if is_logic_plan else {}
         buff_hud_occluded = bool(
-            getattr(self, "_last_buff_hud_occluded", False)
+            (is_logic_plan and getattr(self, "_last_buff_hud_occluded", False))
             or self._has_left_buff_toast_in_lines(lines, w, h)
         )
         if diamond_buffs:
             buffs.update(diamond_buffs)
-        elif not buff_hud_occluded:
+        elif is_logic_plan and not buff_hud_occluded:
             bf_patch = frame[int(h * 0.082) : int(h * 0.225), 0 : int(w * 0.305)]
             bf_mw = (bf_patch[:, :, 0] > 195) & (bf_patch[:, :, 1] > 195) & (bf_patch[:, :, 2] > 195)
             bf_bw = np.where(bf_mw[:, :, None], 0, 255).astype(np.uint8).repeat(3, axis=2)

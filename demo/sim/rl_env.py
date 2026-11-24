@@ -29,8 +29,15 @@ class ActionSpec:
 class GakumasActionCodec:
     """Bijective mapping between canonical discrete IDs and simulator actions."""
 
-    def __init__(self, config: BattleConfig, db: Optional[GakumasDB] = None):
+    def __init__(
+        self,
+        config: BattleConfig,
+        db: Optional[GakumasDB] = None,
+        *,
+        finisher_play_max_turns_remaining: int = 2,
+    ):
         self.config = config
+        self.finisher_play_max_turns_remaining = max(0, int(finisher_play_max_turns_remaining))
         self.specs: List[ActionSpec] = []
         self.card_slots: List[CardKey] = []
         self.card_key_to_action: Dict[CardKey, int] = {}
@@ -165,7 +172,10 @@ class GakumasActionCodec:
                 action_map[aid] = ("card", h_idx)
 
         for d_idx, dr in enumerate(sim.available_drinks):
-            if prune_dominated and not sim.can_use_active_retrigger_drink_now(dr):
+            if prune_dominated and (
+                not sim.can_use_active_retrigger_drink_now(dr)
+                or sim.should_defer_drink_for_hand_cap(dr)
+            ):
                 continue
             aid = self.drink_id_to_action.get(dr.drink_id)
             if aid is not None and aid not in action_map:
@@ -176,6 +186,81 @@ class GakumasActionCodec:
         action_map[self.end_turn_action_id] = ("end_turn", -1)
 
         if prune_dominated:
+            if self.finisher_play_max_turns_remaining > 0 and sim.double_card_effect_cards == 0:
+                has_813 = sim.has_unexhausted_card_family(813)
+                held_aids = {
+                    aid
+                    for aid, (kind, idx) in action_map.items()
+                    if sim.should_hold_for_finisher(
+                        card_cfg=sim.hand[idx].cfg if kind == "card" else None,
+                        drink_cfg=sim.available_drinks[idx] if kind == "drink" else None,
+                        fin_window=self.finisher_play_max_turns_remaining,
+                        has_813=has_813,
+                    )
+                }
+                if held_aids and len(held_aids) < len(action_map):
+                    action_map = {aid: v for aid, v in action_map.items() if aid not in held_aids}
+                    for aid in held_aids:
+                        mask[aid] = False
+
+            if sim.double_card_effect_cards > 0:
+                fin_aids = {
+                    aid
+                    for aid, (kind, idx) in action_map.items()
+                    if kind == "card" and sim.is_late_scaling_finisher(sim.hand[idx].cfg)
+                }
+                if fin_aids:
+                    action_map = {
+                        aid: v
+                        for aid, v in action_map.items()
+                        if aid in fin_aids
+                        or (v[0] == "drink" and not sim.is_active_retrigger_drink(sim.available_drinks[v[1]]))
+                    }
+                    mask.fill(False)
+                    for aid in action_map:
+                        mask[aid] = True
+                    return mask, action_map
+                tutor_aids = {
+                    aid
+                    for aid, (kind, idx) in action_map.items()
+                    if kind == "drink" and sim.is_tutor_drink(sim.available_drinks[idx])
+                }
+                if (
+                    tutor_aids
+                    and len(sim.hand) < sim.MAX_HAND_SIZE
+                    and any(c.cfg.base_id == 813 for z in (sim.draw_pile, sim.discard_pile) for c in z)
+                ):
+                    action_map = {
+                        aid: v
+                        for aid, v in action_map.items()
+                        if aid in tutor_aids
+                        or (
+                            v[0] == "drink"
+                            and sim.is_score_buff_drink(sim.available_drinks[v[1]])
+                        )
+                    }
+                    mask.fill(False)
+                    for aid in action_map:
+                        mask[aid] = True
+                    return mask, action_map
+                if (
+                    sim.turns_remaining > 1
+                    and sim.turns_remaining <= max(2, self.finisher_play_max_turns_remaining)
+                    and len(sim.draw_pile) <= 3
+                    and any(c.cfg.base_id == 813 for c in sim.draw_pile)
+                    and self.end_turn_action_id in action_map
+                ):
+                    action_map = {
+                        aid: v
+                        for aid, v in action_map.items()
+                        if aid == self.end_turn_action_id
+                        or (v[0] == "drink" and not sim.is_active_retrigger_drink(sim.available_drinks[v[1]]))
+                    }
+                    mask.fill(False)
+                    for aid in action_map:
+                        mask[aid] = True
+                    return mask, action_map
+
             if sim.has_armed_active_retrigger(same_turn_only=True):
                 active_aids = {
                     aid
@@ -212,6 +297,25 @@ class GakumasActionCodec:
                     for aid in action_map:
                         mask[aid] = True
 
+            if (
+                self.end_turn_action_id in action_map
+                and len(action_map) > 1
+            ):
+                has_non_trouble_card = any(
+                    k == "card" and not sim.is_trouble_card(sim.hand[idx].cfg)
+                    for k, idx in action_map.values()
+                )
+                has_trouble_card = any(
+                    k == "card" and sim.is_trouble_card(sim.hand[idx].cfg)
+                    for k, idx in action_map.values()
+                )
+                if sim.should_prune_blank_end_turn(
+                    has_non_trouble_card=has_non_trouble_card,
+                    has_trouble_card=has_trouble_card,
+                ):
+                    action_map.pop(self.end_turn_action_id, None)
+                    mask[self.end_turn_action_id] = False
+
         return mask, action_map
 
     def action_mask(self, sim: HeadlessBattleSimulator, *, prune_dominated: bool = False) -> np.ndarray:
@@ -228,7 +332,7 @@ class GakumasActionCodec:
 class GakumasFeatureEncoder:
     """Strictly information-set-safe state encoder (invariant to draw_pile order)."""
 
-    SCALAR_DIMS = 17 + 22 + 25 + 4
+    SCALAR_DIMS = 17 + 22 + 29 + 8
 
     def __init__(self, codec: GakumasActionCodec):
         self.codec = codec
@@ -412,13 +516,21 @@ class GakumasFeatureEncoder:
         obs[idx + 17] = d25_max_ttl / 2.0
         obs[idx + 18] = sum(v * (t + (1 if f else 0)) for v, t, f in sim.timed_gi_effect_buffs) / 15.0
 
-        mem_137_extra_avail = 0.0
+        seen_extra_bids: set[int] = set()
+        total_rem_extra = 0
         mem_exiles_avail = 0
         troubles_in_active = 0
         for zone in (sim.hand, sim.draw_pile, sim.discard_pile):
             for c in zone:
                 if sim.has_unused_memory_extra_use(c):
-                    mem_137_extra_avail = 1.0
+                    bid = c.cfg.base_id
+                    if bid not in seen_extra_bids:
+                        seen_extra_bids.add(bid)
+                        lim = int(
+                            getattr(c.cfg, "memory_extra_use_limit", 0)
+                            or (1 if c.cfg.free_extra_use_first_play else 0)
+                        )
+                        total_rem_extra += max(0, lim - int(sim.memory_extra_use_counts.get(bid, 0) or 0))
                 if sim.has_unused_memory_exile(c):
                     mem_exiles_avail += 1
                 if c.cfg.card_type == "trouble" or c.cfg.base_id == 23:
@@ -437,7 +549,7 @@ class GakumasFeatureEncoder:
             1.0 if any(sim.can_play_card(c) and sim.has_unused_memory_extra_use(c) for c in sim.hand) else 0.0
         )
 
-        obs[idx + 19] = mem_137_extra_avail
+        obs[idx + 19] = min(1.0, total_rem_extra / 4.0)
         obs[idx + 20] = mem_exiles_avail / 3.0
         obs[idx + 21] = troubles_in_active / 2.0
         obs[idx + 22] = has_dom_free_in_hand
@@ -453,6 +565,20 @@ class GakumasFeatureEncoder:
             / max(1.0, float(econ["spenders_total_cost"])),
         )
         idx += 29
+
+        # 3b. Sense core buffs (8 dims: goodConditionTurns / perfectConditionTurns / concentration)
+        gc = int(buffs.get("goodConditionTurns", 0) or 0)
+        pc = int(buffs.get("perfectConditionTurns", 0) or 0)
+        conc = int(buffs.get("concentration", 0) or 0)
+        obs[idx] = gc / 30.0
+        obs[idx + 1] = 1.0 if gc >= 4 else 0.0
+        obs[idx + 2] = 1.0 if gc >= 8 else 0.0
+        obs[idx + 3] = 1.0 if gc >= 12 else 0.0
+        obs[idx + 4] = pc / 10.0
+        obs[idx + 5] = 1.0 if pc >= 1 else 0.0
+        obs[idx + 6] = conc / 40.0
+        obs[idx + 7] = 1.0 if conc >= 5 else 0.0
+        idx += 8
 
         # 4. Drink counts
         for dr in sim.available_drinks:
@@ -508,6 +634,7 @@ class GakumasBattleEnv:
         record_logs: bool = False,
         prune_dominated_free_actions: bool = True,
         motivation_cost_weight: float = 0.0,
+        finisher_play_max_turns_remaining: int = 2,
     ):
         self.config = config
         self._owns_db = db is None
@@ -516,10 +643,15 @@ class GakumasBattleEnv:
         self.record_logs = record_logs
         self.prune_dominated_free_actions = bool(prune_dominated_free_actions)
         self.motivation_cost_weight = float(motivation_cost_weight)
+        self.finisher_play_max_turns_remaining = max(0, int(finisher_play_max_turns_remaining))
         self._prev_mot_potential: float = 0.0
         self._card_cfg_cache: Dict[Tuple[int, Optional[bool], bool, bool], CardConfig] = {}
 
-        self.codec = GakumasActionCodec(config, db=self.db)
+        self.codec = GakumasActionCodec(
+            config,
+            db=self.db,
+            finisher_play_max_turns_remaining=self.finisher_play_max_turns_remaining,
+        )
         self.encoder = GakumasFeatureEncoder(self.codec)
         self.sim: Optional[HeadlessBattleSimulator] = None
 

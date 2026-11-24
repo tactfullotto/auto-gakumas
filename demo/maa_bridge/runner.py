@@ -83,6 +83,8 @@ class GakumasRunner:
         manual_card_customizations: Optional[Dict[Any, Dict[str, Any]]] = None,
         manual_memory_slots: Optional[List[Dict[str, Any]]] = None,
         manual_memory_passives: Optional[List[Dict[str, Any]]] = None,
+        retry_home_on_empty_loadout: Optional[bool] = None,
+        max_loadout_home_retries: int = 3,
         # Rich TUI Event Hooks
         on_observation: Optional[Callable[[ScreenObservation], None]] = None,
         on_prompt_built: Optional[Callable[[str, List[LegalAction]], None]] = None,
@@ -138,6 +140,14 @@ class GakumasRunner:
         self._loadout_lp_attempts: int = 0
         self._loadout_detail_attempts: int = 0
         self._in_loadout_scan: bool = False
+        self.retry_home_on_empty_loadout: bool = (
+            bool(retry_home_on_empty_loadout)
+            if retry_home_on_empty_loadout is not None
+            else bool(self.mode != "mock" and not isinstance(self.controller, MockController))
+        )
+        self.max_loadout_home_retries: int = max(0, int(max_loadout_home_retries))
+        self._loadout_home_retries: int = 0
+        self._retrying_loadout_via_home: bool = False
         self.scene_routing_reco = GakumasSceneRoutingRecognition(
             db=self.db,
             plan=self.plan,
@@ -191,6 +201,7 @@ class GakumasRunner:
         self._pending_change_pickup_cid: Optional[int] = None
         self._battle_toast_settle_sleep: float = 0.9
         self._last_stable_shop_p_points: Optional[int] = None
+        self._last_shop_expected_p: Optional[int] = None
         self._shop_settle_sleep: float = 0.90
 
     def tap_blank_area(self, reason: str = "") -> Tuple[int, int]:
@@ -392,6 +403,10 @@ class GakumasRunner:
         self._checkpoint_loaded = False
         self._claimed_card_in_reward_scene = False
         self._loadout_scan_attempts = 0
+        self._loadout_lp_attempts = 0
+        self._loadout_detail_attempts = 0
+        self._loadout_home_retries = 0
+        self._retrying_loadout_via_home = False
         self._reward_step_count = 0
         self._reward_forced_cancel_count = 0
         self._reward_grid_scrolled_bottom = False
@@ -490,7 +505,11 @@ class GakumasRunner:
                     and self._last_stable_shop_p_points is not None
                 ):
                     cur_shop_p = int(getattr(obs, "p_points", 0) or 0)
-                    prev_shop_p = int(self._last_stable_shop_p_points)
+                    prev_shop_p = int(
+                        self._last_shop_expected_p
+                        if self._last_shop_expected_p is not None
+                        else self._last_stable_shop_p_points
+                    )
                     if (prev_shop_p >= 50 and cur_shop_p < 20) or (prev_shop_p >= 120 and cur_shop_p < prev_shop_p - 140):
                         logger.info(
                             "Detected abrupt shop P-point drop (%d -> %d, try %d/%d); settling %.2fs before re-capture...",
@@ -509,10 +528,40 @@ class GakumasRunner:
                 break
 
             assert obs is not None
-            if obs.scene_type == "shop" and int(getattr(obs, "p_points", 0) or 0) > 0:
-                self._last_stable_shop_p_points = int(obs.p_points)
+            if obs.scene_type == "shop":
+                cur_shop_p = int(getattr(obs, "p_points", 0) or 0)
+                ref_shop_p = (
+                    int(self._last_shop_expected_p)
+                    if self._last_shop_expected_p is not None
+                    else (
+                        int(self._last_stable_shop_p_points)
+                        if self._last_stable_shop_p_points is not None
+                        else None
+                    )
+                )
+                if ref_shop_p is not None and ref_shop_p >= 220 and cur_shop_p < ref_shop_p - 220:
+                    logger.warning(
+                        "Preserving expected shop P-points %d over persistent implausible OCR drop (%d).",
+                        ref_shop_p,
+                        cur_shop_p,
+                    )
+                    reco_inner = getattr(self.scene_routing_reco, "recognizer", None)
+                    if reco_inner is not None and hasattr(reco_inner, "_last_p_points"):
+                        reco_inner._last_p_points = ref_shop_p
+                    if frame is not None:
+                        re_obs = self.scene_routing_reco.recognize(frame)
+                        if re_obs is not None:
+                            obs = re_obs
+                            cur_shop_p = int(getattr(obs, "p_points", 0) or 0)
+                    if cur_shop_p < ref_shop_p - 220:
+                        obs.p_points = ref_shop_p
+                        cur_shop_p = ref_shop_p
+                if cur_shop_p > 0:
+                    self._last_stable_shop_p_points = cur_shop_p
+                self._last_shop_expected_p = None
             elif obs.scene_type not in ("shop", "popup", "card_reward"):
                 self._last_stable_shop_p_points = None
+                self._last_shop_expected_p = None
             if (
                 self.loadout_scanner is not None
                 and not self.tracker.initial_loadout_captured
@@ -564,7 +613,8 @@ class GakumasRunner:
                                 self._last_heartbeat_ts = now_post
                                 self._last_blank_tap_ts = now_post
 
-                            if scan_res.deck_card_ids or scan_res.p_items:
+                            if scan_res.deck_card_ids:
+                                self._retrying_loadout_via_home = False
                                 self.tracker.set_initial_loadout(
                                     p_idol_id=scan_res.p_idol_id,
                                     plan=scan_res.plan,
@@ -596,10 +646,11 @@ class GakumasRunner:
                                 self._flush_produce_library()
                                 break
                             logger.warning(
-                                "H.I.F loadout scan (%s attempt %d/%d) yielded empty deck/P-items.",
+                                "H.I.F loadout scan (%s attempt %d/%d) yielded empty deck (p_items=%d).",
                                 "LP" if via_lp else "detail",
                                 cur_try,
                                 max_budget,
+                                len(scan_res.p_items or []),
                             )
                             if (not via_lp) and self._loadout_detail_attempts < max_budget:
                                 time.sleep(0.8)
@@ -619,6 +670,86 @@ class GakumasRunner:
                                 frame = refreshed
                                 obs = refreshed_obs
 
+                        if (
+                            not self.tracker.initial_loadout_captured
+                            and self.retry_home_on_empty_loadout
+                            and self._loadout_home_retries < self.max_loadout_home_retries
+                        ):
+                            self._loadout_home_retries += 1
+                            self._loadout_lp_attempts = 0
+                            self._loadout_detail_attempts = 0
+                            self._retrying_loadout_via_home = True
+                            self._has_entered_produce = False
+                            self._has_seen_produce_setup = False
+                            if hasattr(self.agent, "_has_entered_produce"):
+                                self.agent._has_entered_produce = False
+                            if hasattr(self.agent, "_has_seen_produce_setup"):
+                                self.agent._has_seen_produce_setup = False
+
+                            fh_r, fw_r = (frame.shape[:2] if frame is not None and frame.size > 0 else (1600, 720))
+                            home_x = int(round(fw_r * (84.0 / 720.0)))
+                            home_y = int(round(fh_r * (1532.0 / 1600.0)))
+                            logger.warning(
+                                "H.I.F loadout scan found 0 cards; returning to Home (%d/%d) at (%d, %d) to re-enter cleanly.",
+                                self._loadout_home_retries,
+                                self.max_loadout_home_retries,
+                                home_x,
+                                home_y,
+                            )
+                            with self._ctrl_lock:
+                                self.controller.click(home_x, home_y)
+                            if self.mode != "mock" and not isinstance(self.controller, MockController):
+                                time.sleep(1.0)
+                            home_act = LegalAction(
+                                choice_id=0,
+                                action_type="pick_option",
+                                description="返回主页重新进入以重试读取卡牌",
+                                bbox=BoundingBox(
+                                    xmin=max(0, home_x - 45),
+                                    ymin=max(0, home_y - 32),
+                                    xmax=home_x + 45,
+                                    ymax=home_y + 32,
+                                ),
+                                payload={"name": "ホーム", "retry_empty_loadout": True},
+                            )
+                            home_dec = DecisionResult(
+                                choice_id=0,
+                                reason=(
+                                    f"Runner: Loadout scan found 0 cards; returning to Home "
+                                    f"({self._loadout_home_retries}/{self.max_loadout_home_retries}) to re-enter"
+                                ),
+                                source="runner_retry",
+                            )
+                            if self.on_decision:
+                                try:
+                                    self.on_decision(home_dec, home_act)
+                                except Exception as cb_err:
+                                    logger.error("Error in on_decision callback: %s", cb_err)
+                            if self.on_action_executed:
+                                try:
+                                    self.on_action_executed(home_act, (home_x, home_y))
+                                except Exception as cb_err:
+                                    logger.error("Error in on_action_executed callback: %s", cb_err)
+                            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                            retry_result = StepResult(
+                                step_idx=step_idx,
+                                success=True,
+                                scene_type=obs.scene_type,
+                                observation=obs,
+                                legal_actions=[home_act],
+                                decision=home_dec,
+                                action_taken=home_act,
+                                click_coords=(home_x, home_y),
+                                elapsed_ms=round(elapsed_ms, 2),
+                            )
+                            self.history.append(retry_result)
+                            if self.on_step_completed:
+                                try:
+                                    self.on_step_completed(retry_result)
+                                except Exception as cb_err:
+                                    logger.error("Error in on_step_completed callback: %s", cb_err)
+                            return retry_result
+
             is_live_ctrl = self.mode != "mock" and not isinstance(self.controller, MockController)
             raw_r = obs.raw_text or ""
             is_trade_or_delete_grid = (
@@ -626,6 +757,8 @@ class GakumasRunner:
                 and "チェンジで獲得" not in raw_r
                 and "カスタマイズ" not in raw_r
                 and "強化" not in raw_r
+                and "移動" not in raw_r
+                and "手札に移動" not in raw_r
             )
             if (
                 is_live_ctrl
@@ -670,7 +803,9 @@ class GakumasRunner:
                     self._reward_grid_started_at_top = True
                 self._reward_grid_scrolled_bottom = True
 
-            if obs.scene_type == "produce_setup":
+            if obs.scene_type == "home":
+                self._retrying_loadout_via_home = False
+            elif obs.scene_type == "produce_setup":
                 self._has_seen_produce_setup = True
             elif obs.scene_type in ("produce_schedule", "battle_turn", "card_reward", "shop"):
                 self._has_entered_produce = True
@@ -1208,10 +1343,17 @@ class GakumasRunner:
                 if obs.scene_type == "shop" and (picked_name in ("交換する", "強化", "リフレッシュ") or str((chosen_action.payload or {}).get("shop_slot_key") or "") == "リフレッシュ"):
                     if chosen_action.payload.get("price"):
                         spent = int(chosen_action.payload["price"])
-                        self.tracker.p_points = max(0, self.tracker.p_points - spent)
+                        base_p = (
+                            self._last_stable_shop_p_points
+                            if self._last_stable_shop_p_points is not None
+                            else self.tracker.p_points
+                        )
+                        exp_p = max(0, int(base_p) - spent)
+                        self._last_shop_expected_p = exp_p
+                        self.tracker.p_points = exp_p
                         reco_inner = getattr(self.scene_routing_reco, "recognizer", None)
                         if reco_inner is not None and hasattr(reco_inner, "_last_p_points"):
-                            reco_inner._last_p_points = self.tracker.p_points
+                            reco_inner._last_p_points = exp_p
                     if (picked_name == "リフレッシュ" or str((chosen_action.payload or {}).get("shop_slot_key") or "") == "リフレッシュ") and self.mode == "adb":
                         time.sleep(0.8)
             elif chosen_action and chosen_action.action_type == "pick_option" and obs.scene_type == "popup" and self.tracker.in_battle:
@@ -1314,10 +1456,17 @@ class GakumasRunner:
                 logger.warning("Step %d failed: %s. Stopping loop.", step_res.step_idx, step_res.error)
                 break
 
-            if self._has_entered_produce or getattr(self.agent, "_has_entered_produce", False):
-                entered_produce = True
+            if self._retrying_loadout_via_home:
+                entered_produce = False
+            else:
+                entered_produce = bool(self._has_entered_produce or getattr(self.agent, "_has_entered_produce", False))
 
-            if stop_on_home_return and entered_produce and step_res.scene_type in ("home", "produce_setup"):
+            if (
+                stop_on_home_return
+                and entered_produce
+                and not self._retrying_loadout_via_home
+                and step_res.scene_type in ("home", "produce_setup")
+            ):
                 logger.info(
                     "Returned cleanly to %s after produce run at step %d. Stopping loop.",
                     step_res.scene_type,

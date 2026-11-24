@@ -90,6 +90,42 @@ KNOWN_P_ITEM_DEFS: List[Dict[str, Any]] = [
         "rarity": "SSR",
         "description": "スキルカードチェンジ時 ビジュアル上昇+25 & 体力回復2",
     },
+    {
+        "item_id": 9139,
+        "name": "憧れ続けた輝き",
+        "aliases": ("憧れ続けた輝き",),
+        "mode": "stage",
+        "source_type": "pIdol",
+        "rarity": "SSR",
+        "description": "好調が8ターン以上の場合、好調効果のスキルカードを4回使用するごとに、絶好調1ターン・使用数+1・1ドロー・固定体力消費1",
+    },
+    {
+        "item_id": 9140,
+        "name": "包まれるやさしさ",
+        "aliases": ("包まれるやさしさ",),
+        "mode": "stage",
+        "source_type": "support",
+        "rarity": "SSR",
+        "description": "【ビジュアルターンのみ】ターン開始時、好調が10ターン以上の場合、絶好調4ターン・元気+10（レッスン内1回）",
+    },
+    {
+        "item_id": 9141,
+        "name": "ひとりだちシューズ",
+        "aliases": ("ひとりだちシューズ",),
+        "mode": "stage",
+        "source_type": "support",
+        "rarity": "SSR",
+        "description": "【ダンズレッスンのみ】ターン時、体力が50%以下の場合",
+    },
+    {
+        "item_id": 9142,
+        "name": "ほっこりまんぶく",
+        "aliases": ("ほっこりまんぶく",),
+        "mode": "produce",
+        "source_type": "support",
+        "rarity": "SSR",
+        "description": "好調効果のスキルカード獲得時、ランダムなPドリンクを獲得",
+    },
 ]
 
 
@@ -147,6 +183,10 @@ def match_p_item_by_text(title: str, body: str = "") -> Dict[str, Any]:
         (("SPレッスン終了時" in body or "ボーカルSP" in body), 61),
         (("ロジック" in body and ("ボーカル" in body or "強化" in body)), 510),
         (("チェンジ時" in body or "体力回復2" in body), 487),
+        (("絶好調1ターン" in body and "4回使用" in body), 9139),
+        (("絶好調4ターン" in body and "元気+10" in body), 9140),
+        (("ひとりだち" in body or ("50%以下" in body and "ダンス" in body)), 9141),
+        (("好調効果のスキルカード獲得時" in body and "Pドリンク" in body), 9142),
     )
     for matched_cond, known_id in body_rules:
         if matched_cond:
@@ -195,11 +235,11 @@ class LoadoutScanResult:
 class HifLoadoutScanner:
     """Scans the long-press / 詳細 loadout modal for P-idol, P-items, and full initial deck."""
 
-    def __init__(self, db: Optional[GakumasDB] = None):
+    def __init__(self, db: Optional[GakumasDB] = None, plan: str = "logic"):
         self._owns_db = db is None
         self.db = db or GakumasDB("gakumas_library.db")
         self.ocr = get_win_ocr("ja")
-        self.reco = LiveScreenRecognizer(db=self.db, plan="logic", scenario_id="hif_honsen")
+        self.reco = LiveScreenRecognizer(db=self.db, plan=(plan or "logic").lower(), scenario_id="hif_honsen")
 
     def close(self) -> None:
         if self._owns_db:
@@ -321,7 +361,7 @@ class HifLoadoutScanner:
         matched_idol = ""
         matched_plan = default_plan.lower()
         matched_rec: Optional[str] = None
-        best_score = (0, 0)
+        best_score = (0, 0, 0)
 
         for pid_row in self.db.get_p_idols():
             t = _clean_ocr_text(str(pid_row.get("title") or ""))
@@ -332,12 +372,13 @@ class HifLoadoutScanner:
                 parts = [p for p in str(pid_row["idol_name"]).split() if len(p) >= 1]
                 if parts and all(p in hdr_compact for p in parts):
                     has_idol = True
+            plan_match = 1 if str(pid_row.get("plan") or "").lower() == default_plan.lower() else 0
             if has_title and has_idol:
-                score = (3, len(t) + len(nm))
+                score = (3, plan_match, len(t) + len(nm))
             elif has_idol:
-                score = (2, len(nm))
+                score = (2, plan_match, len(nm))
             elif has_title:
-                score = (1, len(t))
+                score = (1, plan_match, len(t))
             else:
                 continue
             if score > best_score:
@@ -562,28 +603,31 @@ class HifLoadoutScanner:
                         deck_card_ids.append(cid)
                         card_names.append(str(matched_card["name"]))
                         hooks = dict(card_hooks.get(cid, {}))
+                        dsl_a = str(
+                            matched_card.get("dsl_actions")
+                            or ((self.db.get_card_by_id(cid) or {}).get("dsl_actions"))
+                            or ""
+                        )
                         if "レッスン開始時手札に入る" in body_txt:
                             hooks["force_initial_hand"] = True
                         if (
-                            "トラブルカードを除外" in body_txt
-                            or "トラブルカード1枚を除外" in body_txt
-                            or "トラブルカードを1枚除外" in body_txt
-                            or "眠気を除外" in body_txt
-                            or (
-                                "トラブル" in body_txt
-                                and "除外" in body_txt
-                                and cid not in (426, 427)
-                                and "除外以外" not in body_txt
-                                and "除外にある" not in body_txt
+                            "removeRandom[trouble" not in dsl_a
+                            and (
+                                "トラブルカードを除外" in body_txt
+                                or "トラブルカード1枚を除外" in body_txt
+                                or "トラブルカードを1枚除外" in body_txt
+                                or "眠気を除外" in body_txt
+                                or (
+                                    "トラブル" in body_txt
+                                    and "除外" in body_txt
+                                    and cid not in (426, 427)
+                                    and "除外以外" not in body_txt
+                                    and "除外にある" not in body_txt
+                                )
                             )
                         ):
                             hooks["exiles_trouble_on_play"] = True
                         if "スキルカード使用数追加" in body_txt or "使用数追加" in body_txt:
-                            dsl_a = str(
-                                matched_card.get("dsl_actions")
-                                or ((self.db.get_card_by_id(cid) or {}).get("dsl_actions"))
-                                or ""
-                            )
                             if "cardUsesRemaining+=" not in dsl_a:
                                 hooks["free_extra_use_first_play"] = True
                         if "カスタマイズ" in body_txt:
@@ -687,6 +731,9 @@ class HifLoadoutScanner:
                 )
                 if any(tok in top_txt for tok in list_markers):
                     break
+            if not any(tok in top_txt for tok in list_markers):
+                self._dismiss_detail_modal(controller, frame0)
+                return LoadoutScanResult(plan=plan.lower(), screenshots_scanned=0)
 
         frames: List[np.ndarray] = []
         prev_vp: Optional[np.ndarray] = None
@@ -713,7 +760,12 @@ class HifLoadoutScanner:
                 time.sleep(0.45)
 
         # Return cleanly to the previous setup page via bottom-left '<<' button (auto-detecting 3-icon vs 1-icon pill)
-        back_x, back_y = self._detect_back_button_xy(frames[-1] if frames else frame0)
+        self._dismiss_detail_modal(controller, frames[-1] if frames else frame0)
+        return self.parse_detail_frames(frames, plan=plan)
+
+    def _dismiss_detail_modal(self, controller: BaseController, frame: np.ndarray) -> None:
+        """Close the 基本情報 detail modal via bottom-left '<<' until navigation bar disappears."""
+        back_x, back_y = self._detect_back_button_xy(frame)
         for _back_try in range(2):
             controller.click(back_x, back_y)
             time.sleep(1.2)
@@ -723,4 +775,3 @@ class HifLoadoutScanner:
             if "基本情報" not in nav_txt:
                 break
             back_x, back_y = self._detect_back_button_xy(after_fr)
-        return self.parse_detail_frames(frames, plan=plan)
