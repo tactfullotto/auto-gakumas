@@ -901,10 +901,17 @@ class HifWorkbenchSession:
                     if norm_c:
                         cleaned_imp_custs[cid_k] = norm_c
             self.card_customizations = cleaned_imp_custs
-            if isinstance(raw_data.get("memory_slots"), list):
-                self._apply_memories_locked({"memory_slots": raw_data["memory_slots"]})
-            if isinstance(raw_data.get("memory_passives"), list):
-                self._apply_memories_locked({"memory_passives": raw_data["memory_passives"]})
+            imp_slots = raw_data.get("memory_slots")
+            imp_passives = raw_data.get("memory_passives")
+            if isinstance(imp_slots, list):
+                self._apply_memories_locked({"memory_slots": imp_slots})
+            if isinstance(imp_passives, list):
+                if imp_passives or not self.memory_passives:
+                    self._apply_memories_locked({"memory_passives": imp_passives})
+                if imp_passives and not any(s.get("passives") for s in self.memory_slots):
+                    if not self.memory_slots:
+                        self.memory_slots = _empty_memory_slots()
+                    self.memory_slots[0]["passives"] = [dict(p) for p in self.memory_passives]
             if isinstance(raw_data.get("preferences"), dict):
                 self.preferences = ProducePreferences.from_dict(raw_data["preferences"])
 
@@ -1045,6 +1052,7 @@ class HifWorkbenchSession:
                 "info",
                 f"启动 H.I.F 自动化: plan={plan}, p_idol={p_idol_id}, mode={loadout_mode}, "
                 f"adb={cfg['adb_host']}:{cfg['adb_port']} | 回忆钩子 {len(self.card_memory_hooks)} 条, "
+                f"开局词条 {len(self.memory_passives)} 条, "
                 f"单卡强化 {len(self.card_customizations)} 张, 三维 Vo={self.idol_stats.get('vocal')}/Da={self.idol_stats.get('dance')}/Vi={self.idol_stats.get('visual')} | "
                 f"日志: {Path(cfg['csv_out']).name}",
             )

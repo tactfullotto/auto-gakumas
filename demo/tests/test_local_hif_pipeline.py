@@ -7862,6 +7862,903 @@ def test_shop_buys_unowned_priority_card_above_drinks_and_skips_if_owned():
         db.close()
 
 
+def test_change_pickup_card_without_limit_and_ocr_kutasai_stays_card_reward():
+    """Live regression: チェンジで獲得 page 1 with non-exhaust card (アドリブ) + '選んでくたさい' OCR typo + orange 次へ must stay card_reward."""
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    rec = LiveScreenRecognizer(db=db, plan="sense", scenario_id="hif_honsen")
+    try:
+        frame = np.full((1600, 720, 3), 245, dtype=np.uint8)
+        # Orange "次へ" button at y=1220..1290
+        frame[1220:1290, 237:482] = (245, 130, 30)
+        lines = [
+            {"text": "審査基準", "bbox": [551, 45, 629, 63]},
+            {"text": "チェンジで獲得するスキルカードを選んでくたさい", "bbox": [87, 457, 634, 480]},
+            {"text": "アドリプ", "bbox": [304, 679, 418, 706]},
+            {"text": "十バラメータ+5", "bbox": [138, 736, 313, 757]},
+            {"text": "+イ3好調3ターン", "bbox": [138, 766, 343, 801]},
+            {"text": "第を気", "bbox": [160, 976, 576, 1136]},
+            {"text": "今次へ", "bbox": [256, 1238, 410, 1273]},
+        ]
+        pv_lines = [
+            {"text": "アドリプ", "bbox": [250, 80, 365, 110]},
+            {"text": "十バラメータ+5", "bbox": [80, 140, 260, 165]},
+        ]
+        btn_lines = [{"text": "→次へ", "bbox": [20, 15, 180, 55]}]
+
+        def _fake_ocr(arr, *a, **kw):
+            h_a = arr.shape[0]
+            if h_a == 1600:
+                return {"text": "", "lines": lines}
+            if 100 <= h_a <= 200:
+                return {"text": "→次へ", "lines": btn_lines}
+            return {"text": "", "lines": pv_lines}
+
+        rec.ocr = SimpleNamespace(recognize_array=_fake_ocr)
+        rec.en_ocr = SimpleNamespace(recognize_array=lambda _arr, *a, **kw: {"text": "", "lines": []})
+
+        obs = rec.recognize(frame)
+        assert obs.scene_type == "card_reward"
+        names = [o.get("name") for o in obs.options]
+        assert "受け取る" in names
+        claim = next(o for o in obs.options if o.get("name") == "受け取る")
+        assert claim.get("card_id") == 74
+    finally:
+        db.close()
+
+
+def test_drink22_selected_pill_full_scan_combo163_w6_soudan_and_w8_refresh_fixes(monkeypatch):
+    """Regressions from Run 7 live audit:
+    1) #22 move-to-hand modal with top-left ◆移動 pill + orange bottom button stays card_reward (never skip/drink).
+    2) #22 scans past slot 6 when #814 is in hand and pulls #163 (22_000 > duplicate #814 15_500); planner tutors #163 before solo #814.
+    3) W6 H.I.F schedule detects 相談 via focused bottom-center 3x pass when shallow 0.72..0.91 strip misses it, and ignores <0.915h boundary footer text.
+    4) Refresh confirmation popup clears _shop_visited_slots despite dimmed shop 交換/強化 backdrop; GakumasRunner clears _live_recognizer slots; _decide_shop caps consecutive fruitless drink refreshes.
+    """
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    rec = LiveScreenRecognizer(db=db, plan="sense", scenario_id="hif_honsen")
+    try:
+        # 1) #22 modal after clicking slot 0: "スキルカードが選択されていません" disappeared, full-frame OCR missed bottom button,
+        #    only top-left ◆移動 pill + orange button remain -> must stay card_reward ('移動する'), never skip or drink!
+        tutor_frame = np.full((1600, 720, 3), 35, dtype=np.uint8)
+        for sx in (138, 282, 426):
+            tutor_frame[835:955, sx - 58 : sx + 58] = (230, 230, 230)
+        tutor_frame[832:958, 76:200] = (245, 145, 30)  # selected slot border
+        tutor_frame[1444:1514, 238:481] = (245, 130, 30)  # active orange 移動 button
+        tutor_lines = [
+            {"text": "◆移動", "bbox": [20, 39, 118, 71]},
+        ]
+
+        def _tutor_ocr(arr, *a, **kw):
+            h_a, w_a = arr.shape[:2]
+            if (h_a, w_a) == (1600, 720):
+                return {"text": "", "lines": tutor_lines}
+            if h_a < 260 and w_a > 400 and kw.get("scale", None) is None:
+                # bottom orange button crop from _ocr_bottom_orange_button
+                return {"text": "ノ移動", "lines": [{"text": "ノ移動", "bbox": [40, 10, 160, 45]}]}
+            return {"text": "破竹の勢い", "lines": [{"text": "破竹の勢い", "bbox": [20, 10, 200, 45]}]}
+
+        rec.ocr = SimpleNamespace(recognize_array=_tutor_ocr)
+        rec.en_ocr = SimpleNamespace(recognize_array=lambda *_a, **_kw: {"text": "", "lines": []})
+        rec._last_turns_remaining = 2
+        obs_tutor = rec.recognize(tutor_frame, plan="sense")
+        assert obs_tutor.scene_type == "card_reward"
+        assert obs_tutor.options[0]["name"] == "移動する"
+        assert not any(o.get("drink_id") is not None for o in obs_tutor.options)
+
+        # 2) Agent scans past slot 6 (#22 grid with 10 visible slots) and grabs #163 at slot 8 when #814 is in hand
+        agent = LocalHybridDecisionAgent(db=db)
+        agent.reset_session()
+        planner = agent.battle_planner
+        obs_b_turn = ScreenObservation(
+            scene_type="battle_turn",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=7,
+            turn=10,
+            turns_remaining=2,
+            stamina=30,
+            max_stamina=44,
+            genki=20,
+            buffs={"goodConditionTurns": 18, "concentration": 10},
+            cards=[
+                RecognizedCard(card_id=814, name="自然体の魅力+", type="active", playable=True, visual_playable=True, bbox=BoundingBox(xmin=10, ymin=1000, xmax=200, ymax=1300)),
+            ],
+            drinks=[
+                RecognizedDrink(drink_id=22, name="初星黒酢", playable=True, bbox=BoundingBox(xmin=20, ymin=860, xmax=80, ymax=920)),
+            ],
+        )
+        tr_t = GameStateTracker(plan="sense", p_idol_id=139, scenario_id="hif_honsen")
+        tr_t.set_initial_loadout(
+            p_idol_id=139,
+            plan="sense",
+            recommended_effect="goodConditionTurns",
+            deck_ids=[814, 163, 74, 75, 105, 113, 812, 35],
+            p_items=[{"item_id": 436}],
+            db=db,
+        )
+        pb_t = PromptBuilder(db=db, compact=False)
+        _, acts_t = pb_t.build_prompt(obs_b_turn, tr_t)
+        planner.decide_battle_action(obs_b_turn, acts_t, tracker=tr_t)
+        a814_t = next(a for a in acts_t if (a.payload or {}).get("card_id") == 814)
+        aid_814_t = next(aid for aid, act in planner._map_legal_actions_to_canonical(acts_t).items() if act.choice_id == a814_t.choice_id)
+        planner._ismcts.select_action = lambda *_a, **_kw: (aid_814_t, {"best_q_score": 500_000.0, "top_actions": []})  # type: ignore[union-attr,method-assign]
+        cid_combo22, reason_combo22, _ = planner.decide_battle_action(obs_b_turn, acts_t, tracker=tr_t)
+        assert next(a for a in acts_t if a.choice_id == cid_combo22).action_type == "use_drink"
+        assert "#22->Tutor #163" in reason_combo22
+
+        # Now #22 modal opens with #814 in sim.hand: slot 0..7 are filler, slot 8 is #163 -> must inspect all the way to slot 8!
+        for slot_i in range(8):
+            obs_loop = ScreenObservation(
+                scene_type="card_reward",
+                plan="sense",
+                scenario_id="hif_honsen",
+                week=7,
+                turns_remaining=2,
+                options=[
+                    {"choice_id": 0, "name": "移動する", "title": "移動する《破竹の勢い》", "card_id": 98, "slot_idx": slot_i, "bbox": {"xmin": 240, "ymin": 1440, "xmax": 480, "ymax": 1515}},
+                    *[
+                        {"choice_id": j + 1, "name": f"待选卡{j + 1}", "title": f"待选卡{j + 1}", "slot_idx": j, "bbox": {"xmin": 80 + (j % 4) * 140, "ymin": 830 + (j // 4) * 140, "xmax": 190 + (j % 4) * 140, "ymax": 950 + (j // 4) * 140}}
+                        for j in range(9)
+                    ],
+                ],
+            )
+            acts_loop = [
+                LegalAction(choice_id=o["choice_id"], action_type="pick_option", description=o["title"], bbox=BoundingBox(**o["bbox"]), payload=o)
+                for o in obs_loop.options
+            ]
+            d_scan = agent.decide("", acts_loop, obs=obs_loop, p_idol_id=139)
+            assert acts_loop[d_scan.choice_id].payload.get("name") != "移動する"
+            assert acts_loop[d_scan.choice_id].payload.get("slot_idx") == slot_i + 1
+        obs_slot8 = ScreenObservation(
+            scene_type="card_reward",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=7,
+            turns_remaining=2,
+            options=[
+                {"choice_id": 0, "name": "移動する", "title": "移動する《国民的アイドル+》", "card_id": 163, "slot_idx": 8, "bbox": {"xmin": 240, "ymin": 1440, "xmax": 480, "ymax": 1515}},
+                *[
+                    {"choice_id": j + 1, "name": f"待选卡{j + 1}", "title": f"待选卡{j + 1}", "slot_idx": j, "bbox": {"xmin": 80 + (j % 4) * 140, "ymin": 830 + (j // 4) * 140, "xmax": 190 + (j % 4) * 140, "ymax": 950 + (j // 4) * 140}}
+                    for j in range(9)
+                ],
+            ],
+        )
+        acts_slot8 = [
+            LegalAction(choice_id=o["choice_id"], action_type="pick_option", description=o["title"], bbox=BoundingBox(**o["bbox"]), payload=o)
+            for o in obs_slot8.options
+        ]
+        d_slot8 = agent.decide("", acts_slot8, obs=obs_slot8, p_idol_id=139)
+        assert d_slot8.choice_id == 0
+
+        # 3) W6 相談 bottom-center 3x focused pass catches 相談 even when full-frame and 0.72..0.945 strip OCR miss it
+        w6_frame = np.full((1600, 720, 3), 235, dtype=np.uint8)
+        w6_frame[1385:1415, 330:390] = (30, 30, 30)
+        w6_full_lines = [
+            {"text": "6日目", "bbox": [45, 25, 115, 55]},
+            {"text": "行動を選択してください", "bbox": [210, 1080, 510, 1110]},
+            {"text": "休む", "bbox": [610, 1197, 665, 1218]},
+        ]
+
+        def _w6_ocr(arr, *a, **kw):
+            h_a, w_a = arr.shape[:2]
+            if (h_a, w_a) == (1600, 720):
+                return {"text": "", "lines": w6_full_lines}
+            # 3x upscaled tight crop on bottom-center 相談 (patch height ~ 107 -> *3 + 36 = ~357, width ~ 230 -> *3 + 36 = ~726)
+            if h_a >= 300 and 700 <= w_a <= 820 and h_a < 500:
+                return {"text": "相談", "lines": [{"text": "相談", "bbox": [280, 120, 420, 185]}]}
+            return {"text": "", "lines": []}
+
+        rec.ocr = SimpleNamespace(recognize_array=_w6_ocr)
+        obs_w6 = rec.recognize(w6_frame, plan="sense")
+        assert obs_w6.scene_type == "produce_schedule"
+        assert "相談" in [o["name"] for o in obs_w6.options]
+
+        # 4) Refresh popup clears _shop_visited_slots even with 交換/強化/カスタマイズ behind; 交換 popup does NOT;
+        #    GakumasRunner uses _live_recognizer; _decide_shop yields refresh to カスタマイズ after 2 fruitless refreshes.
+        rec._shop_visited_slots = {"Pドリンク:2", "Pドリンク:3"}
+        rec._shop_last_clicked_slot = "Pドリンク:2"
+        pop_frame = np.full((1600, 720, 3), 60, dtype=np.uint8)
+        pop_exchange_lines = [
+            {"text": "交換確認", "bbox": [280, 400, 440, 435]},
+            {"text": "このドリンクを交換しますか", "bbox": [180, 520, 540, 555]},
+            {"text": "リフレッシュ", "bbox": [40, 1210, 180, 1240]},
+            {"text": "交換", "bbox": [430, 1120, 540, 1165]},
+            {"text": "キャンセル", "bbox": [160, 1120, 300, 1165]},
+        ]
+        rec.ocr = SimpleNamespace(recognize_array=lambda *_a, **_kw: {"text": "", "lines": pop_exchange_lines})
+        obs_pop_ex = rec.recognize(pop_frame, plan="sense")
+        assert obs_pop_ex.scene_type == "popup"
+        assert rec._shop_visited_slots == {"Pドリンク:2", "Pドリンク:3"}
+
+        pop_refresh_lines = [
+            {"text": "商品更新確認", "bbox": [260, 400, 460, 435]},
+            {"text": "ラインナップを更新しますか", "bbox": [170, 520, 550, 555]},
+            {"text": "Pポイントと交換 強化 カスタマイズ リフレッシュ", "bbox": [40, 1210, 580, 1240]},
+            {"text": "更新する", "bbox": [420, 1120, 560, 1165]},
+            {"text": "キャンセル", "bbox": [160, 1120, 300, 1165]},
+        ]
+        rec.ocr = SimpleNamespace(recognize_array=lambda *_a, **_kw: {"text": "", "lines": pop_refresh_lines})
+        obs_pop_ref = rec.recognize(pop_frame, plan="sense")
+        assert obs_pop_ref.scene_type == "popup"
+        assert "更新する" in [o["name"] for o in obs_pop_ref.options]
+        assert len(rec._shop_visited_slots) == 0
+        assert rec._shop_last_clicked_slot is None
+
+        # Runner clears _live_recognizer._shop_visited_slots (not just .recognizer!)
+        ctrl_r = SimpleNamespace(
+            is_connected=True,
+            connect=lambda: True,
+            disconnect=lambda: None,
+            screencap=lambda: pop_frame,
+            click=lambda _x, _y: True,
+            swipe=lambda *a, **kw: None,
+        )
+        runner_lr = GakumasRunner(
+            mode="adb",
+            controller=ctrl_r,  # type: ignore[arg-type]
+            agent=agent,
+            db=db,
+            plan="sense",
+            scenario_id="hif_honsen",
+            session_mode=False,
+        )
+        agent.reset_session()
+        runner_lr.tracker.p_points = 250
+        rec._shop_visited_slots = {"Pドリンク:2", "Pドリンク:3"}
+        rec._last_p_points = 250
+        obs_ref_btn = ScreenObservation(
+            scene_type="shop",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=8,
+            total_weeks=9,
+            p_points=250,
+            options=[
+                {
+                    "choice_id": 0,
+                    "name": "リフレッシュ",
+                    "title": "リフレッシュ (10P)",
+                    "shop_slot_key": "リフレッシュ",
+                    "price": 10,
+                    "bbox": {"xmin": 24, "ymin": 1204, "xmax": 207, "ymax": 1304},
+                }
+            ],
+        )
+        runner_lr.scene_routing_reco = SimpleNamespace(_live_recognizer=rec, recognize=lambda _fr, **_kw: obs_ref_btn)
+        runner_lr.run_once()
+        assert len(rec._shop_visited_slots) == 0
+        assert runner_lr.tracker.p_points == 240
+
+        # Consecutive fruitless refresh cap in _decide_shop
+        agent.reset_session()
+        agent.bind_tracker(tr_t)
+        agent._shop_refresh_since_purchase = 2
+        obs_w8_cap = ScreenObservation(
+            scene_type="shop",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=8,
+            total_weeks=9,
+            p_points=190,
+            drinks=[RecognizedDrink(drink_id=20, name="初星スープ", bbox=BoundingBox(xmin=0, ymin=0, xmax=10, ymax=10))],
+        )
+        acts_w8_cap = [
+            LegalAction(choice_id=0, action_type="pick_option", description="リフレッシュ (30P)", bbox=BoundingBox(xmin=24, ymin=1204, xmax=207, ymax=1304), payload={"name": "リフレッシュ", "shop_slot_key": "リフレッシュ", "price": 30}),
+            LegalAction(choice_id=1, action_type="pick_option", description="カスタマイズ", bbox=BoundingBox(xmin=300, ymin=1050, xmax=500, ymax=1120), payload={"name": "カスタマイズ", "shop_slot_key": "カスタマイズ"}),
+            LegalAction(choice_id=2, action_type="pick_option", description="終了", bbox=BoundingBox(xmin=580, ymin=1220, xmax=690, ymax=1270), payload={"name": "終了", "shop_slot_key": "終了"}),
+        ]
+        d_cap = agent.decide("", acts_w8_cap, obs=obs_w8_cap)
+        assert d_cap.choice_id == 1
+    finally:
+        agent.close()
+        db.close()
+
+
+def test_p_drink_reward_move_to_hand_description_not_hijacked_as_tutor_grid():
+    """Produce P-drink reward (e.g. パワフル漢方ドリンク) whose description contains
+    '山札か捨札にあるアイドル固有スキルカード1枚を手札に移動' and 'スキルカード'
+    must remain a 3-slot drink reward with 受け取る active, never a deck-grid #22 scan.
+    """
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    rec = LiveScreenRecognizer(db=db, plan="sense", scenario_id="hif_honsen")
+    try:
+        frame = np.full((1600, 720, 3), 85, dtype=np.uint8)
+        frame[630:1290, 52:668] = (248, 248, 248)  # white reward dialog
+        frame[1212:1284, 232:488] = (245, 130, 30)  # orange 受け取る button
+        for idx, sx in enumerate((215, 360, 505)):
+            frame[975:1090, sx - 58 : sx + 58] = (225, 232, 240)
+        # Selected middle drink slot (オレンジ枠)
+        frame[965:1100, 290:430] = (245, 145, 30)
+
+        full_lines = [
+            {"text": "2日目", "bbox": [45, 25, 115, 55]},
+            {"text": "Pドリンクを選択して獲得", "bbox": [180, 485, 500, 512]},
+            {"text": "パワフル漢方ドリンク", "bbox": [210, 665, 510, 700]},
+            {"text": "山札か捨札にあるアイドル固有スキルカード", "bbox": [110, 725, 610, 755]},
+            {"text": "1枚を手札に移動", "bbox": [110, 760, 310, 788]},
+            {"text": "消費体力減少3ターン", "bbox": [155, 800, 420, 830]},
+            {"text": "受け取る", "bbox": [310, 1230, 410, 1265]},
+        ]
+        pv_lines = [
+            {"text": "パワフル漢方ドリンク", "bbox": [160, 40, 440, 75]},
+            {"text": "山札か捨札にあるアイドル固有スキルカード1枚を手札に移動", "bbox": [40, 95, 560, 145]},
+            {"text": "消費体力減少3ターン", "bbox": [60, 155, 320, 185]},
+        ]
+
+        def _fake_ocr(arr, *a, **kw):
+            if arr.shape[:2] == (1600, 720):
+                return {"text": "", "lines": full_lines}
+            return {"text": "", "lines": pv_lines}
+
+        rec.ocr = SimpleNamespace(recognize_array=_fake_ocr)
+        rec.en_ocr = SimpleNamespace(recognize_array=lambda *_a, **_kw: {"text": "", "lines": []})
+        rec._in_battle_scene = False
+        obs = rec.recognize(frame, plan="sense")
+        assert obs.scene_type == "card_reward"
+        names = [o.get("name") for o in obs.options]
+        assert "移動する" not in names
+        assert not any("待选卡" in str(n) for n in names)
+        assert "受け取る" in names
+        claim = next(o for o in obs.options if o.get("name") == "受け取る")
+        assert claim.get("drink_id") is not None
+        drink_row = db.get_drink_by_id(int(claim["drink_id"]))
+        assert drink_row is not None and "パワフル漢方ドリンク" in drink_row["name"]
+    finally:
+        db.close()
+
+
+def test_p_item_9139_counter_sync_same_name_customized_priority_spike_guard_and_w8_455_p_points(monkeypatch):
+    """Regressions from Run 8 W6/W8/W9 audit:
+    1) Stage P-item #9139 only counts goodConditionTurns+= cards (NOT #776 話題沸騰+ or #147).
+    2) W9 S228: live p_item_remaining_counts={0: 2} syncs #9139 counter, duplicate #295 does not hijack
+       unmapped fallback, and planner plays #776 話題沸騰+ at rem=1 instead of #295 M-card.
+    3) Same-name customized priority: hand with [#295 (uncustomized), #295 (customized=True, count=2)]
+       always selects the customized copy (even if MCTS scores another duplicate equal or higher).
+    4) Upward buff OCR spike (goodConditionTurns: 45 -> 405) is rejected and inflated sim.score resyncs to real obs.score.
+    5) W8 455->55 P-point truncation is recovered by wider OCR crop, and W6 休み確認 header is rejected/cancelled.
+    """
+    from demo.sim.battle_simulator import BattleConfig, HeadlessBattleSimulator, TurnMultiplierSpec, _build_sense_hif_p_items, _make_card_config
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        # 1) #9139 must only count goodConditionTurns+= cards
+        cfg_9139 = BattleConfig(
+            scenario_id="hif_honsen",
+            stage_name="sense_9139_strict",
+            p_idol_id=139,
+            idol_name="姫崎 莉波",
+            plan="sense",
+            idol_stats={"vocal": 1360, "dance": 2647, "visual": 2087},
+            initial_stamina=40,
+            max_stamina=44,
+            initial_good_condition=20,
+            initial_perfect_condition=3,
+            total_turns=4,
+            turn_schedule=[TurnMultiplierSpec("Vi", 1.0)] * 4,
+            deck=[_make_card_config(db, 105)] * 6,
+            p_items=[p for p in _build_sense_hif_p_items() if p.item_id == 9139],
+        )
+        sim_strict = HeadlessBattleSimulator(cfg_9139, db=db, seed=7)
+        sim_strict.card_uses_remaining = 4
+        sim_strict.hand = [
+            sim_strict._new_instance(_make_card_config(db, 776)),
+            sim_strict._new_instance(_make_card_config(db, 147)),
+            sim_strict._new_instance(_make_card_config(db, 295)),
+        ]
+        sim_strict.play_card(0)  # #776 (goodConditionTurnsMultiplier=2.5, NOT +=)
+        assert sim_strict.p_item_sense_gc_counters.get(9139, 0) == 0
+        sim_strict.play_card(0)  # #147 (if-condition/multiplier only, NOT +=)
+        assert sim_strict.p_item_sense_gc_counters.get(9139, 0) == 0
+        sim_strict.play_card(0)  # #295 (goodConditionTurns+=6)
+        assert sim_strict.p_item_sense_gc_counters.get(9139, 0) == 1
+
+        # 2) W9 S228 + 4) Upward buff OCR spike guard + sim.score resync
+        tr = GameStateTracker(plan="sense", p_idol_id=139, scenario_id="hif_honsen")
+        tr.set_initial_loadout(
+            p_idol_id=139,
+            plan="sense",
+            recommended_effect="goodConditionTurns",
+            deck_ids=[812, 814, 163, 776, 295, 295, 87, 117, 105, 112],
+            p_items=[{"item_id": 9139}],
+            db=db,
+        )
+        planner = LiveBattlePlanner(db=db, cfg=LiveBattlePlannerConfig(ppo_episodes=16, ismcts_simulations=32))
+        pb = PromptBuilder(db=db, compact=False)
+        box = BoundingBox(xmin=10, ymin=1000, xmax=160, ymax=1300)
+
+        obs_t5 = ScreenObservation(
+            scene_type="battle_turn",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=9,
+            turn=5,
+            turns_remaining=8,
+            stamina=36,
+            max_stamina=44,
+            score=12_820,
+            buffs={"goodConditionTurns": 45, "concentration": 15, "perfectConditionTurns": 5},
+            p_items=[{"item_id": "9139"}],
+            p_item_remaining_counts={0: 2},
+            cards=[RecognizedCard(card_id=295, name="スポットライト+", type="mental", upgraded=True, playable=True, visual_playable=True, bbox=box)],
+        )
+        _, acts_t5 = pb.build_prompt(obs_t5, tr)
+        planner.decide_battle_action(obs_t5, acts_t5, tracker=tr)
+        assert planner._sim is not None
+        assert planner._sim.p_item_sense_gc_counters.get(9139, 0) % 4 == 2  # 4 - 2 == 2
+
+        # Inject inflated sim.score and an OCR goodConditionTurns spike (45 -> 405)
+        planner._sim.score = 3_611_524
+        obs_s228 = ScreenObservation(
+            scene_type="battle_turn",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=9,
+            turn=12,
+            turns_remaining=1,
+            stamina=44,
+            max_stamina=44,
+            score=819_643,
+            card_uses_remaining=1,
+            idol_stats={"vocal": 1360, "dance": 2647, "visual": 2087},
+            buffs={"goodConditionTurns": 405, "concentration": 21, "perfectConditionTurns": 12},
+            p_items=[{"item_id": "9139"}],
+            p_item_remaining_counts={0: 2},  # 2 cards away from trigger -> #295 will NOT grant +1 play!
+            cards=[
+                RecognizedCard(card_id=776, name="話題沸騰+", type="active", upgraded=True, playable=True, visual_playable=True, bbox=box),
+                RecognizedCard(card_id=295, name="スポットライト+", type="mental", upgraded=True, playable=True, visual_playable=True, customized=True, customization_count=2, bbox=box),
+                RecognizedCard(card_id=295, name="スポットライト+", type="mental", upgraded=True, playable=True, visual_playable=True, customized=False, customization_count=0, bbox=box),
+            ],
+        )
+        _, acts_s228 = pb.build_prompt(obs_s228, tr)
+        assert "专精强化×2" in acts_s228[1].description
+        assert acts_s228[1].payload.get("customization_count") == 2
+        cid_s228, reason_s228, _ = planner.decide_battle_action(obs_s228, acts_s228, tracker=tr)
+        assert int(planner._sim.buffs["goodConditionTurns"]) < 200
+        assert planner._sim.score == 819_643
+        assert int((acts_s228[cid_s228].payload or {}).get("card_id") or 0) == 776, f"Expected #776 over #295 at rem=1, got {reason_s228}"
+
+        # 3) Same-name customized priority rule: hand [#295 uncustomized, #295 customized x2]
+        obs_dup = obs_s228.model_copy(
+            update={
+                "cards": [
+                    RecognizedCard(card_id=295, name="スポットライト+", type="mental", upgraded=True, playable=True, visual_playable=True, customized=False, customization_count=0, bbox=box),
+                    RecognizedCard(card_id=295, name="スポットライト+", type="mental", upgraded=True, playable=True, visual_playable=True, customized=True, customization_count=2, bbox=box),
+                ]
+            }
+        )
+        _, acts_dup = pb.build_prompt(obs_dup, tr)
+        aid_uncust = next(iter(planner._map_legal_actions_to_canonical([acts_dup[0]]).keys()))
+        planner._ismcts.select_action = lambda *_a, **_kw: (aid_uncust, {"best_q_score": 900_000.0, "top_actions": []})  # type: ignore[union-attr,method-assign]
+        cid_dup, reason_dup, _ = planner.decide_battle_action(obs_dup, acts_dup, tracker=tr)
+        assert cid_dup == 1, f"Expected customized copy choice_id=1, got {cid_dup} ({reason_dup})"
+        assert acts_dup[cid_dup].payload.get("customized") is True
+
+        # 5) W8 455->55 P-point truncation override & W6 休み確認 header reject / cancel
+        rec = LiveScreenRecognizer(db=db, plan="sense", scenario_id="hif_honsen")
+        shop_frame = np.full((1600, 720, 3), 240, dtype=np.uint8)
+        rec._last_p_points = 0
+        monkeypatch.setattr(rec, "_ocr_bw_banner_number", lambda *_a, **_kw: 55)
+        monkeypatch.setattr(
+            rec,
+            "_ocr_crop_upscaled",
+            lambda _fr, box_t, **kw: "455" if box_t[0] < int(720 * 0.45) else ("55" if kw.get("use_en") else ""),
+        )
+        monkeypatch.setattr(rec.ocr, "recognize_array", lambda *_a, **_kw: {"text": "", "lines": [{"text": "インターバル", "bbox": [50, 38, 170, 56]}, {"text": "42/44", "bbox": [295, 57, 426, 83]}]})
+        monkeypatch.setattr(rec.en_ocr, "recognize_array", lambda *_a, **_kw: {"text": "", "lines": []})
+        meta_w8 = rec._parse_week_and_stats(
+            [{"text": "インターバル", "bbox": [50, 38, 170, 56]}, {"text": "42/44", "bbox": [295, 57, 426, 83]}],
+            shop_frame,
+        )
+        assert meta_w8["p_points"] == 455
+
+        opts_rest = rec._extract_bottom_and_list_options(
+            [{"text": "休み確認", "bbox": [260, 410, 460, 445]}, {"text": "キャンセル", "bbox": [160, 1120, 300, 1165]}, {"text": "休む", "bbox": [430, 1120, 540, 1165]}],
+            720,
+            1600,
+            frame=None,
+        )
+        assert "休み確認" not in [o["name"] for o in opts_rest]
+
+        agent = LocalHybridDecisionAgent(db=db)
+        agent.reset_session()
+        obs_w6_rest = ScreenObservation(
+            scene_type="popup",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=6,
+            p_points=380,
+            raw_text="休み確認 休む キャンセル",
+        )
+        acts_w6_rest = [
+            LegalAction(choice_id=0, action_type="pick_option", description="休む", bbox=box, payload={"name": "休む"}),
+            LegalAction(choice_id=1, action_type="pick_option", description="キャンセル", bbox=box, payload={"name": "キャンセル"}),
+        ]
+        d_rest = agent.decide("", acts_w6_rest, obs=obs_w6_rest)
+        assert d_rest.choice_id == 1
+        agent.close()
+    finally:
+        db.close()
+
+
+def test_hand_animation_core_motion_mid_battle_modal_guard_and_week_reuse(monkeypatch, tmp_path):
+    """Verify card-core motion filtering, #22 modal in_battle preservation, and week policy reuse."""
+    from demo.maa_bridge.adb_controller import AdbController
+    from demo.maa_bridge.runner import _compute_hand_card_core_motion
+    from demo.sim.maskable_ppo import MaskablePPOTrainer
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    # 1. _compute_hand_card_core_motion ignores 3D background outside card cores, catches real card motion
+    card_boxes = [
+        BoundingBox(xmin=20, ymin=1184, xmax=181, ymax=1456),
+        BoundingBox(xmin=185, ymin=1184, xmax=346, ymax=1456),
+    ]
+    cards = [
+        RecognizedCard(card_id=776, name="話題沸騰+", playable=True, bbox=card_boxes[0]),
+        RecognizedCard(card_id=295, name="スポットライト+", playable=True, bbox=card_boxes[1]),
+    ]
+    frame_a = np.full((1600, 720, 3), 120, dtype=np.uint8)
+    for b in card_boxes:
+        frame_a[b.ymin : b.ymax, b.xmin : b.xmax] = 60
+
+    frame_bg_moved = np.clip(frame_a.astype(np.int32) + 80, 0, 255).astype(np.uint8)
+    for b in card_boxes:
+        frame_bg_moved[b.ymin : b.ymax, b.xmin : b.xmax] = 60
+    mad_bg, used_cores_bg = _compute_hand_card_core_motion(frame_a, frame_bg_moved, cards)
+    assert used_cores_bg is True
+    assert mad_bg < 1.0
+
+    frame_card_moved = frame_a.copy()
+    frame_card_moved[1260:1420, 50:150] = 220
+    mad_card, used_cores_c = _compute_hand_card_core_motion(frame_a, frame_card_moved, cards)
+    assert used_cores_c is True
+    assert mad_card > 40.0
+
+    # 2. GakumasRunner.run_once(): static hand + animated background -> 1x recognize(), real slide -> settles & reuses frame
+    class _FakeAdb(AdbController):
+        def __init__(self, frames_seq):
+            super().__init__(host="127.0.0.1", port=5555)
+            self._connected = True
+            self._frames = list(frames_seq)
+            self._idx = 0
+
+        @property
+        def is_connected(self) -> bool:
+            return True
+
+        def connect(self) -> bool:
+            return True
+
+        def screencap(self) -> np.ndarray:
+            f = self._frames[min(self._idx, len(self._frames) - 1)]
+            self._idx += 1
+            return f
+
+        def click(self, x: int, y: int) -> bool:
+            return True
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        box = BoundingBox(xmin=20, ymin=1184, xmax=181, ymax=1456)
+        battle_obs_static = ScreenObservation(
+            scene_type="battle_turn",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=7,
+            turn=1,
+            turns_remaining=9,
+            stamina=40,
+            max_stamina=44,
+            cards=cards,
+            options=[{"choice_id": 0, "name": "SKIP", "title": "SKIP", "bbox": {"xmin": 580, "ymin": 1100, "xmax": 700, "ymax": 1160}}],
+        )
+
+        rec_calls_static = []
+        agent_static = SimpleNamespace(
+            decide=lambda *_a, **_kw: DecisionResult(choice_id=0, reason="skip", source="test"),
+            reset_battle=lambda: None,
+        )
+        ctrl_static = _FakeAdb([frame_a, frame_bg_moved, frame_bg_moved])
+        runner_static = GakumasRunner(
+            mode="adb",
+            controller=ctrl_static,
+            agent=agent_static,  # type: ignore[arg-type]
+            db=db,
+            plan="sense",
+            scenario_id="hif_honsen",
+            session_mode=False,
+        )
+        runner_static.scene_routing_reco = SimpleNamespace(
+            recognize=lambda _fr: (rec_calls_static.append(1), battle_obs_static)[1]
+        )
+        monkeypatch.setattr("demo.maa_bridge.runner.time.sleep", lambda *_a: None)
+        runner_static.run_once()
+        assert len(rec_calls_static) == 1
+
+        frame_settled = frame_a.copy()
+        rec_calls_slide = []
+        ctrl_slide = _FakeAdb([frame_a, frame_card_moved, frame_settled, frame_settled, frame_settled])
+        runner_slide = GakumasRunner(
+            mode="adb",
+            controller=ctrl_slide,
+            agent=agent_static,  # type: ignore[arg-type]
+            db=db,
+            plan="sense",
+            scenario_id="hif_honsen",
+            session_mode=False,
+        )
+        runner_slide.scene_routing_reco = SimpleNamespace(
+            recognize=lambda _fr: (rec_calls_slide.append(1), battle_obs_static)[1]
+        )
+        runner_slide.run_once()
+        assert len(rec_calls_slide) == 2
+
+        # 3. LiveScreenRecognizer preserves _in_battle_scene and rem=1 on typo "スキルカートが選択されていません"
+        rec = LiveScreenRecognizer(db=db, plan="sense", scenario_id="hif_honsen")
+        rec._in_battle_scene = True
+        rec._last_turns_remaining = 1
+        blank_img = np.full((1600, 720, 3), 210, dtype=np.uint8)
+        monkeypatch.setattr(
+            rec.ocr,
+            "recognize_array",
+            lambda *_a, **_kw: {"text": "スキルカートが選択されていません", "lines": [{"text": "スキルカートが選択されていません", "bbox": [160, 220, 560, 260]}]},
+        )
+        monkeypatch.setattr(rec.en_ocr, "recognize_array", lambda *_a, **_kw: {"text": "", "lines": []})
+        obs_typo = rec.recognize(blank_img, plan="sense")
+        assert obs_typo.scene_type == "card_reward"
+        assert obs_typo.turns_remaining == 1
+        assert rec._in_battle_scene is True
+
+        # Post-battle reward with 受け取る clears _in_battle_scene
+        monkeypatch.setattr(
+            rec.ocr,
+            "recognize_array",
+            lambda *_a, **_kw: {
+                "text": "スキルカード獲得 受け取る",
+                "lines": [
+                    {"text": "スキルカード獲得", "bbox": [120, 200, 420, 240]},
+                    {"text": "受け取る", "bbox": [280, 1460, 440, 1520]},
+                ],
+            },
+        )
+        obs_post = rec.recognize(blank_img, plan="sense")
+        assert obs_post.scene_type == "card_reward"
+        assert rec._in_battle_scene is False
+
+        # 4. Runner + LocalHybridDecisionAgent keep in_battle & planner._sim on mid-battle card_reward without post-battle cues
+        agent = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(
+                ppo_hidden_dim=32, ppo_episodes=16, ppo_episodes_per_update=8, ismcts_simulations=2, policy_cache_dir=None
+            ),
+        )
+        agent.tracker = GameStateTracker(plan="sense", p_idol_id=139)
+        agent.tracker.produce_deck = [814, 163, 295, 776, 642, 147, 159, 105]
+        obs_b = ScreenObservation(
+            scene_type="battle_turn",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=7,
+            turn=1,
+            turns_remaining=9,
+            stamina=40,
+            max_stamina=44,
+            buffs={"goodConditionTurns": 6, "concentration": 6},
+            cards=cards,
+            options=[{"choice_id": 2, "name": "SKIP", "title": "SKIP", "bbox": {"xmin": 580, "ymin": 1100, "xmax": 700, "ymax": 1160}}],
+        )
+        ctrl_guard = MockController()
+        runner_guard = GakumasRunner(
+            mode="mock",
+            controller=ctrl_guard,
+            agent=agent,
+            db=db,
+            tracker=agent.tracker,
+            plan="sense",
+            scenario_id="hif_honsen",
+            session_mode=True,
+        )
+        mid_modal_obs = ScreenObservation(
+            scene_type="card_reward",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=7,
+            raw_text="スキルカートが選択されていません",
+            options=[{"choice_id": 0, "name": "换出候选卡1", "description": "卡库槽位", "bbox": {"xmin": 60, "ymin": 400, "xmax": 200, "ymax": 540}}],
+        )
+        post_reward_obs = ScreenObservation(
+            scene_type="card_reward",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=7,
+            raw_text="スキルカード獲得 受け取る",
+            options=[{"choice_id": 0, "name": "受け取る", "description": "接受新卡牌", "bbox": {"xmin": 260, "ymin": 1440, "xmax": 460, "ymax": 1520}}],
+        )
+        seq_obs = [obs_b, mid_modal_obs, post_reward_obs]
+        runner_guard.scene_routing_reco = SimpleNamespace(recognize=lambda _fr: seq_obs.pop(0))
+
+        runner_guard.run_once()
+        assert runner_guard.tracker.in_battle is True
+        assert agent.battle_planner._sim is not None
+
+        runner_guard.run_once()
+        assert runner_guard.tracker.in_battle is True
+        assert agent.battle_planner._sim is not None
+
+        runner_guard.run_once()
+        assert runner_guard.tracker.in_battle is False
+        assert agent.battle_planner._sim is None
+
+        # 5. LiveBattlePlanner reuses active week policy after accidental reset_battle() & caps turns=1 episodes to 256
+        planner = LiveBattlePlanner(
+            db=db,
+            cfg=LiveBattlePlannerConfig(ppo_hidden_dim=32, ppo_episodes=32, ppo_episodes_per_update=16, ismcts_simulations=2, policy_cache_dir=None),
+        )
+        tr_w = GameStateTracker(plan="sense", p_idol_id=139)
+        tr_w.produce_deck = [814, 163, 295, 776, 642, 147, 159, 105]
+        acts_b = [
+            LegalAction(choice_id=0, action_type="play_card", description="話題沸騰+", bbox=box, payload={"card_id": 776, "name": "話題沸騰+"}),
+            LegalAction(choice_id=1, action_type="end_turn", description="SKIP", bbox=box, payload={"name": "SKIP"}),
+        ]
+        train_eps_seen = []
+        orig_train = MaskablePPOTrainer.train
+
+        def _spy_train(self_tr, *a, **kw):
+            train_eps_seen.append(self_tr.cfg.total_episodes)
+            return orig_train(self_tr, *a, **kw)
+
+        monkeypatch.setattr(MaskablePPOTrainer, "train", _spy_train)
+        planner.decide_battle_action(obs_b, acts_b, tracker=tr_w)
+        assert len(train_eps_seen) == 1
+
+        planner.reset_battle()
+        tr_w.produce_deck.append(295)
+        obs_rem1 = obs_b.model_copy(update={"turn": 9, "turns_remaining": 1})
+        planner.decide_battle_action(obs_rem1, acts_b, tracker=tr_w)
+        assert len(train_eps_seen) == 1  # Week policy cache avoided retrain!
+
+        # Verify turns=1 episode cap == 256 on fresh week
+        planner_cap = LiveBattlePlanner(
+            db=db,
+            cfg=LiveBattlePlannerConfig(ppo_hidden_dim=32, ppo_episodes=2000, ppo_episodes_per_update=32, ismcts_simulations=2, policy_cache_dir=str(tmp_path / "cap_cache")),
+        )
+        monkeypatch.setattr(MaskablePPOTrainer, "train", lambda self_tr, *a, **kw: (train_eps_seen.append(self_tr.cfg.total_episodes), (self_tr.net, {"episodes_trained": self_tr.cfg.total_episodes, "best_val_mean": 1.0, "final_val_mean": 1.0, "history": []}))[1])
+        obs_w9_rem1 = obs_b.model_copy(update={"week": 9, "turns_remaining": 1})
+        planner_cap.decide_battle_action(obs_w9_rem1, acts_b, tracker=tr_w)
+        assert train_eps_seen[-1] == 256
+    finally:
+        db.close()
+
+
+def test_drink18_and_drink21_deferred_when_extra_use_or_hand_empty(tmp_path):
+    """Reproduce S141 W7 T1: #18 (+1 use) must defer when non-free playable cards <= uses,
+    #21 (upgradeHand) must forbid empty hand, and T1 memory_passives floor must survive partial OCR."""
+    from demo.sim.battle_simulator import (
+        CardInstance,
+        HeadlessBattleSimulator,
+        _make_card_config,
+        _make_drink_config,
+    )
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        planner = LiveBattlePlanner(
+            db=db,
+            cfg=LiveBattlePlannerConfig(
+                ppo_hidden_dim=32,
+                ppo_episodes=32,
+                ppo_episodes_per_update=16,
+                ismcts_simulations=4,
+                policy_cache_dir=str(tmp_path / "cache"),
+            ),
+        )
+        tr = GameStateTracker(plan="sense", p_idol_id=139)
+        tr.produce_deck = [814, 163, 585, 87, 812, 159, 105, 113]
+        tr.memory_passives = [
+            {"key": "start_good_condition", "label": "試験開始時 好調+Xターン", "value": 6},
+            {"key": "start_concentration", "label": "試験開始時 集中+X", "value": 6},
+        ]
+
+        box = BoundingBox(xmin=0, ymin=0, xmax=100, ymax=100)
+        # S141 hand: two free cards (#585, #87) + one non-free card (#812), card_uses_remaining=1,
+        # partial T1 OCR buff {goodConditionTurns: 5} (missing concentration!).
+        obs_t1 = ScreenObservation(
+            scene_type="battle_turn",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=7,
+            turn=1,
+            turns_remaining=9,
+            stamina=29,
+            max_stamina=29,
+            genki=0,
+            card_uses_remaining=1,
+            hand_slot_count=3,
+            week_activity="H.I.F本戦ラウンド1 (試験 ボーカル4887)",
+            buffs={"goodConditionTurns": 5},
+            cards=[
+                RecognizedCard(card_id=585, name="夏夜に咲く思い出+", playable=True, bbox=box),
+                RecognizedCard(card_id=87, name="シュプレヒコール+", playable=True, bbox=box),
+                RecognizedCard(card_id=812, name="お姉さんの感覚+", playable=True, bbox=box),
+            ],
+            drinks=[
+                RecognizedDrink(drink_id=18, name="初星ホエイプロテイン", playable=True, bbox=box),
+                RecognizedDrink(drink_id=21, name="初星ブーストエナジー", playable=True, bbox=box),
+            ],
+            options=[{"choice_id": 5, "name": "SKIP", "title": "SKIP"}],
+        )
+        acts_t1 = [
+            LegalAction(choice_id=0, action_type="play_card", description="夏夜に咲く思い出+", bbox=box, payload={"card_id": 585, "name": "夏夜に咲く思い出+"}),
+            LegalAction(choice_id=1, action_type="play_card", description="シュプレヒコール+", bbox=box, payload={"card_id": 87, "name": "シュプレヒコール+"}),
+            LegalAction(choice_id=2, action_type="play_card", description="お姉さんの感覚+", bbox=box, payload={"card_id": 812, "name": "お姉さんの感覚+"}),
+            LegalAction(choice_id=3, action_type="use_drink", description="初星ホエイプロテイン", bbox=box, payload={"drink_id": 18, "name": "初星ホエイプロテイン"}),
+            LegalAction(choice_id=4, action_type="use_drink", description="初星ブーストエナジー", bbox=box, payload={"drink_id": 21, "name": "初星ブーストエナジー"}),
+            LegalAction(choice_id=5, action_type="end_turn", description="SKIP", bbox=box, payload={"name": "SKIP"}),
+        ]
+
+        cid1, _reason1, _ = planner.decide_battle_action(obs_t1, acts_t1, tracker=tr)
+        assert planner._battle_cfg is not None
+        assert planner._sim is not None
+        assert planner._battle_cfg.initial_good_condition >= 6
+        assert planner._battle_cfg.initial_concentration >= 6
+        assert planner._sim.buffs["goodConditionTurns"] >= 6
+        assert planner._sim.buffs["concentration"] >= 6
+
+        d18 = _make_drink_config(db, 18)
+        d21 = _make_drink_config(db, 21)
+        assert planner._sim.is_pure_extra_use_drink(d18) is True
+        assert planner._sim.is_hand_upgrade_drink(d21) is True
+        assert planner._sim.count_playable_non_free_cards() == 1
+        assert planner._sim.should_defer_drink_now(d18) is True
+        assert cid1 != 3  # Never waste Drink #18 when hand only has 1 non-free card
+
+        # Simulate Turn 1 post-play empty hand: neither #18 nor #21 may be drunk on 0 cards!
+        planner.notify_action_executed(acts_t1[0])
+        planner.notify_action_executed(acts_t1[1])
+        planner.notify_action_executed(acts_t1[2])
+        obs_empty = obs_t1.model_copy(update={"cards": [], "hand_slot_count": 0, "genki": 6})
+        acts_empty = [
+            LegalAction(choice_id=3, action_type="use_drink", description="初星ホエイプロテイン", bbox=box, payload={"drink_id": 18, "name": "初星ホエイプロテイン"}),
+            LegalAction(choice_id=4, action_type="use_drink", description="初星ブーストエナジー", bbox=box, payload={"drink_id": 21, "name": "初星ブーストエナジー"}),
+            LegalAction(choice_id=5, action_type="end_turn", description="SKIP", bbox=box, payload={"name": "SKIP"}),
+        ]
+        assert planner._sim.can_use_drink(d18, hand_size=0) is False
+        assert planner._sim.can_use_drink(d21, hand_size=0) is False
+        cid_empty, _r_empty, _ = planner.decide_battle_action(obs_empty, acts_empty, tracker=tr)
+        assert cid_empty == 5  # Must SKIP rather than wasting #21/#18 on empty hand
+
+        # With #812 (non-free) + #159 (free cardUsesRemaining+=1) and 1 use remaining, only 1 non-free card -> defer #18
+        sim_two = HeadlessBattleSimulator(planner._battle_cfg, db=db, seed=1, record_logs=False)
+        sim_two.stamina = 30
+        sim_two.card_uses_remaining = 1
+        sim_two.hand.clear()
+        for c_id in (812, 159):
+            c_cfg = _make_card_config(db, c_id)
+            assert c_cfg is not None
+            sim_two.hand.append(CardInstance(uid=sim_two.next_uid, cfg=c_cfg))
+            sim_two.next_uid += 1
+        assert sim_two.count_playable_non_free_cards() == 1
+        assert sim_two.should_defer_drink_now(d18) is True
+
+        # Replacing #159 with non-free #105 gives 2 playable non-free cards > 1 remaining use -> #18 IS allowed!
+        c105 = _make_card_config(db, 105)
+        assert c105 is not None
+        sim_two.hand[1] = CardInstance(uid=sim_two.next_uid, cfg=c105)
+        sim_two.next_uid += 1
+        assert sim_two.count_playable_non_free_cards() == 2
+        assert sim_two.should_defer_drink_now(d18) is False
+    finally:
+        db.close()
+
+
+
+
+
 
 
 

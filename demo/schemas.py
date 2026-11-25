@@ -54,6 +54,8 @@ class RecognizedCard(BaseModel):
     reason: str = ""
     type: str = "active"  # 'active' | 'mental' | 'trouble'
     rarity: str = "N"
+    customized: bool = False
+    customization_count: int = 0
 
 
 class RecognizedDrink(BaseModel):
@@ -89,6 +91,7 @@ class ScreenObservation(BaseModel):
         default_factory=lambda: {"vocal": 180, "dance": 160, "visual": 150}
     )
     p_items: List[Dict[str, str]] = Field(default_factory=list)
+    p_item_remaining_counts: Dict[int, int] = Field(default_factory=dict)
     stage_bonuses: Dict[str, Any] = Field(default_factory=dict)
     buffs: Dict[str, int] = Field(default_factory=dict)
     buff_hud_occluded: bool = False

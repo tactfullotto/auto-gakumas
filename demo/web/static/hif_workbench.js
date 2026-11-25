@@ -742,7 +742,7 @@ function loadHookFormForCard(cardId) {
   byId("hif-hook-draw").checked = Number(hooks.draw_on_play || 0) > 0;
 }
 
-async function renderMemoryTab() {
+async function renderMemoryTab(options = {}) {
   const st = hifState.state;
   const cat = hifState.catalog;
   if (!st || !cat) return;
@@ -862,8 +862,23 @@ async function renderMemoryTab() {
     wikiBox.appendChild(sec);
   }
 
+  renderMemorySummary(st);
+
   // Render 4 Memory Slots
   const slotsGrid = byId("hif-memory-slots-grid");
+  const activeEl = document.activeElement;
+  const editingSlotField = Boolean(
+    activeEl
+      && activeEl.closest?.("#hif-memory-slots-grid")
+      && ["INPUT", "SELECT", "TEXTAREA"].includes(activeEl.tagName)
+  );
+  const hasDirtySlotDraft = Boolean(
+    slotsGrid?.querySelector?.('.hif-slot-add-bar[data-dirty="1"]')
+  );
+  if (!options?.forceSlotsRender && (editingSlotField || hasDirtySlotDraft)) {
+    return;
+  }
+
   slotsGrid.replaceChildren();
   const passiveTemplates = (memCat.passive_templates || []).filter(
     (pt) => !pt.plans || pt.plans.includes("all") || pt.plans.includes(plan)
@@ -891,16 +906,32 @@ async function renderMemoryTab() {
       const mp = curPassives[pIdx];
       const pRow = makeEl("div", "hif-passive-row");
       pRow.appendChild(makeEl("span", "", mp.label || mp.key));
-      const pVal = mp.key === "custom_note" ? mp.note : `+${mp.value}`;
-      pRow.appendChild(makeEl("strong", "", pVal || ""));
+      if (mp.key === "custom_note") {
+        pRow.appendChild(makeEl("strong", "", mp.note || ""));
+      } else {
+        const valEdit = document.createElement("input");
+        valEdit.type = "number";
+        valEdit.min = "0";
+        valEdit.max = "999";
+        valEdit.className = "hif-passive-val";
+        valEdit.dataset.passiveIndex = String(pIdx);
+        valEdit.style.width = "64px";
+        valEdit.value = String(mp.value ?? 0);
+        valEdit.addEventListener("input", () => {
+          valEdit.dataset.dirty = "1";
+        });
+        valEdit.addEventListener("change", () => {
+          valEdit.dataset.dirty = "1";
+        });
+        pRow.appendChild(valEdit);
+      }
       const delP = makeEl("button", "btn-secondary btn-compact", "✕");
       delP.type = "button";
       delP.addEventListener("click", async () => {
-        const nextSlots = structuredClone(hifState.state.memory_slots || []);
-        nextSlots[sIdx].owner_name = ownerInput.value;
+        const { nextSlots } = collectMemorySlotsFromDom({ commitDirtyDrafts: false });
         nextSlots[sIdx].passives = (nextSlots[sIdx].passives || []).filter((_, i) => i !== pIdx);
         await hifState.ctx.apiPost("/api/hif/memories", { memory_slots: nextSlots });
-        await refreshHifState();
+        await refreshHifState({ forceSlotsRender: true });
       });
       pRow.appendChild(delP);
       passiveList.appendChild(pRow);
@@ -909,6 +940,7 @@ async function renderMemoryTab() {
 
     const addBar = makeEl("div", "hif-slot-add-bar");
     const tmplSel = document.createElement("select");
+    tmplSel.className = "hif-slot-draft-key";
     for (const pt of passiveTemplates) {
       const opt = makeEl("option", "", pt.label);
       opt.value = pt.key;
@@ -916,30 +948,37 @@ async function renderMemoryTab() {
     }
     const valInput = document.createElement("input");
     valInput.type = "number";
+    valInput.className = "hif-slot-draft-val";
     valInput.min = "0";
     valInput.max = "999";
     valInput.value = String(passiveTemplates[0]?.default_value ?? 2);
     const noteInput = document.createElement("input");
     noteInput.type = "text";
+    noteInput.className = "hif-slot-draft-note";
     noteInput.placeholder = "备注内容";
     noteInput.hidden = true;
 
+    const markDraftDirty = () => {
+      addBar.dataset.dirty = "1";
+    };
     tmplSel.addEventListener("change", () => {
       const chosen = passiveTemplates.find((pt) => pt.key === tmplSel.value);
       const isCustom = tmplSel.value === "custom_note";
       valInput.hidden = isCustom;
       noteInput.hidden = !isCustom;
       if (chosen && !isCustom) valInput.value = String(chosen.default_value ?? 1);
+      markDraftDirty();
     });
+    valInput.addEventListener("input", markDraftDirty);
+    valInput.addEventListener("change", markDraftDirty);
+    noteInput.addEventListener("input", markDraftDirty);
+    noteInput.addEventListener("change", markDraftDirty);
 
     const addBtn = makeEl("button", "btn-secondary btn-compact", "+词条");
     addBtn.type = "button";
-    addBtn.addEventListener("click", async () => {
+    const submitAdd = async () => {
       const chosen = passiveTemplates.find((pt) => pt.key === tmplSel.value);
-      const nextSlots = structuredClone(hifState.state.memory_slots || []);
-      while (nextSlots.length < 4) {
-        nextSlots.push({ slot: nextSlots.length + 1, label: `メモリー #${nextSlots.length + 1}`, owner_name: "", passives: [] });
-      }
+      const { nextSlots } = collectMemorySlotsFromDom({ commitDirtyDrafts: false });
       nextSlots[sIdx].owner_name = ownerInput.value;
       nextSlots[sIdx].passives.push({
         key: tmplSel.value,
@@ -948,13 +987,107 @@ async function renderMemoryTab() {
         note: noteInput.value.trim(),
       });
       await hifState.ctx.apiPost("/api/hif/memories", { memory_slots: nextSlots });
-      await refreshHifState();
+      await refreshHifState({ forceSlotsRender: true });
+    };
+    addBtn.addEventListener("click", submitAdd);
+    valInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        submitAdd();
+      }
+    });
+    noteInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        submitAdd();
+      }
     });
 
     addBar.append(tmplSel, valInput, noteInput, addBtn);
     card.appendChild(addBar);
     slotsGrid.appendChild(card);
   }
+}
+
+function renderMemorySummary(st) {
+  const sumEl = byId("hif-memory-passives-summary");
+  if (!sumEl) return;
+  const passives = st?.memory_passives || [];
+  if (!passives.length) {
+    sumEl.textContent = "尚未配置开局通用词条。可直接在下方槽位选择词条并填写数值，点击「+词条」或直接点击「保存 4 槽位设置」提交。";
+    return;
+  }
+  const agg = new Map();
+  for (const mp of passives) {
+    if (!mp || !mp.key) continue;
+    if (mp.key === "custom_note") continue;
+    const val = Number(mp.value || 0);
+    if (val <= 0) continue;
+    const lbl = mp.label || mp.key;
+    agg.set(lbl, (agg.get(lbl) || 0) + val);
+  }
+  const parts = Array.from(agg.entries()).map(([lbl, total]) => `${lbl.replace("+X", `+${total}`)}`);
+  sumEl.textContent = `当前已生效开局词条（共 ${passives.length} 条）：${parts.join(" ｜ ") || `${passives.length} 条备注`}`;
+}
+
+function collectMemorySlotsFromDom({ commitDirtyDrafts = true } = {}) {
+  const nextSlots = structuredClone(hifState.state?.memory_slots || []);
+  while (nextSlots.length < 4) {
+    nextSlots.push({
+      slot: nextSlots.length + 1,
+      label: `メモリー #${nextSlots.length + 1}`,
+      owner_name: "",
+      passives: [],
+    });
+  }
+  let hasUnsavedChanges = false;
+  const memCat = hifState.catalog?.memory_catalog || {};
+  const passiveTemplates = memCat.passive_templates || [];
+
+  document.querySelectorAll("#hif-memory-slots-grid .hif-slot-card").forEach((cardEl) => {
+    const idx = Number(cardEl.dataset.slotIndex);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= nextSlots.length) return;
+    const slotObj = nextSlots[idx];
+    if (!Array.isArray(slotObj.passives)) slotObj.passives = [];
+
+    const ownerInp = cardEl.querySelector(".hif-slot-owner");
+    if (ownerInp && ownerInp.value !== (slotObj.owner_name || "")) {
+      slotObj.owner_name = ownerInp.value;
+      hasUnsavedChanges = true;
+    }
+
+    cardEl.querySelectorAll(".hif-passive-val").forEach((valEl) => {
+      const pIdx = Number(valEl.dataset.passiveIndex);
+      if (Number.isInteger(pIdx) && slotObj.passives[pIdx]) {
+        const nextVal = Math.max(0, Number(valEl.value || 0));
+        if (nextVal !== Number(slotObj.passives[pIdx].value || 0) || valEl.dataset.dirty === "1") {
+          slotObj.passives[pIdx].value = nextVal;
+          hasUnsavedChanges = true;
+        }
+      }
+    });
+
+    if (commitDirtyDrafts) {
+      const addBar = cardEl.querySelector(".hif-slot-add-bar");
+      if (addBar && addBar.dataset.dirty === "1") {
+        const key = addBar.querySelector(".hif-slot-draft-key")?.value || "";
+        const val = Math.max(0, Number(addBar.querySelector(".hif-slot-draft-val")?.value || 0));
+        const note = (addBar.querySelector(".hif-slot-draft-note")?.value || "").trim();
+        const chosen = passiveTemplates.find((pt) => pt.key === key);
+        if (key && ((key === "custom_note" && note.length > 0) || (key !== "custom_note" && val > 0))) {
+          slotObj.passives.push({
+            key,
+            label: chosen?.label || key,
+            value: key === "custom_note" ? 0 : val,
+            note,
+          });
+          hasUnsavedChanges = true;
+        }
+      }
+    }
+  });
+
+  return { nextSlots, hasUnsavedChanges };
 }
 
 /* ==================== Tab 4: Produce Card & Drink Preferences ==================== */
@@ -1340,47 +1473,6 @@ function bindHifEvents() {
   byId("btn-hif-import-roster")?.addEventListener("click", () => handleImportByFilename("hif-import-select"));
   byId("btn-hif-loadout-import")?.addEventListener("click", () => handleImportByFilename("hif-loadout-import-select"));
 
-  // File upload JSON import & export
-  byId("btn-hif-export-json")?.addEventListener("click", async () => {
-    try {
-      const data = await hifState.ctx.apiGet("/api/hif/export-library");
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `hif_config_${data.plan || "logic"}_${data.p_idol_id || "custom"}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      hifState.ctx.showToast("已导出 H.I.F 配置 JSON");
-    } catch (err) {
-      hifState.ctx.showToast(`导出失败: ${err.message}`);
-    }
-  });
-
-  byId("hif-import-file-input")?.addEventListener("change", async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      await hifState.ctx.apiPost("/api/hif/import-library", { data });
-      await refreshHifState();
-      setStage("workbench");
-      hifState.ctx.showToast(`已从 ${file.name} 导入配置`);
-    } catch (err) {
-      hifState.ctx.showToast(`文件解析失败: ${err.message}`);
-    } finally {
-      e.target.value = "";
-    }
-  });
-
-  // Sub-tabs
-  for (const btn of document.querySelectorAll(".hif-subtab")) {
-    btn.addEventListener("click", () => setActiveTab(btn.dataset.hifTab));
-  }
-
   // Helper: read currently checked memory-hook form into a merged card_memory_hooks dict
   const buildMergedHooksWithForm = () => {
     const nextHooks = { ...(hifState.state?.card_memory_hooks || {}) };
@@ -1409,6 +1501,56 @@ function bindHifEvents() {
     return { nextHooks, formChanged: false };
   };
 
+  // File upload JSON import & export
+  byId("btn-hif-export-json")?.addEventListener("click", async () => {
+    try {
+      const { nextHooks, formChanged } = buildMergedHooksWithForm();
+      const { nextSlots, hasUnsavedChanges } = collectMemorySlotsFromDom({ commitDirtyDrafts: true });
+      if (formChanged || hasUnsavedChanges) {
+        await hifState.ctx.apiPost("/api/hif/memories", {
+          ...(formChanged ? { card_memory_hooks: nextHooks } : {}),
+          ...(hasUnsavedChanges ? { memory_slots: nextSlots } : {}),
+        });
+        await refreshHifState({ forceSlotsRender: true });
+      }
+      const data = await hifState.ctx.apiGet("/api/hif/export-library");
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `hif_config_${data.plan || "logic"}_${data.p_idol_id || "custom"}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      hifState.ctx.showToast("已导出 H.I.F 配置 JSON");
+    } catch (err) {
+      hifState.ctx.showToast(`导出失败: ${err.message}`);
+    }
+  });
+
+  byId("hif-import-file-input")?.addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      await hifState.ctx.apiPost("/api/hif/import-library", { data });
+      await refreshHifState({ forceSlotsRender: true });
+      setStage("workbench");
+      hifState.ctx.showToast(`已从 ${file.name} 导入配置`);
+    } catch (err) {
+      hifState.ctx.showToast(`文件解析失败: ${err.message}`);
+    } finally {
+      e.target.value = "";
+    }
+  });
+
+  // Sub-tabs
+  for (const btn of document.querySelectorAll(".hif-subtab")) {
+    btn.addEventListener("click", () => setActiveTab(btn.dataset.hifTab));
+  }
+
   // Launch / Stop buttons (sticky + Tab 1)
   const toggleRun = async () => {
     const running = Boolean(hifState.state?.running);
@@ -1418,14 +1560,18 @@ function bindHifEvents() {
         hifState.ctx.showToast("已请求停止 H.I.F 自动化");
       } else {
         const { nextHooks, formChanged } = buildMergedHooksWithForm();
-        if (formChanged) {
-          await hifState.ctx.apiPost("/api/hif/memories", { card_memory_hooks: nextHooks });
+        const { nextSlots, hasUnsavedChanges } = collectMemorySlotsFromDom({ commitDirtyDrafts: true });
+        if (formChanged || hasUnsavedChanges) {
+          await hifState.ctx.apiPost("/api/hif/memories", {
+            ...(formChanged ? { card_memory_hooks: nextHooks } : {}),
+            ...(hasUnsavedChanges ? { memory_slots: nextSlots } : {}),
+          });
         }
         await saveRunConfig();
         await hifState.ctx.apiPost("/api/hif/start");
         hifState.ctx.showToast("H.I.F 自动化任务已启动！");
       }
-      await refreshHifState();
+      await refreshHifState({ forceSlotsRender: true });
     } catch (err) {
       hifState.ctx.showToast(`操作失败: ${err.message}`);
     }
@@ -1586,36 +1732,28 @@ function bindHifEvents() {
     hifState.ctx.showToast("已添加/更新技能卡回忆效果");
   });
 
+  const saveMemorySlotsFromDom = async ({ includeHooks = false } = {}) => {
+    const { nextSlots } = collectMemorySlotsFromDom({ commitDirtyDrafts: true });
+    const payload = { memory_slots: nextSlots };
+    if (includeHooks) {
+      const { nextHooks } = buildMergedHooksWithForm();
+      payload.card_memory_hooks = nextHooks;
+    }
+    await hifState.ctx.apiPost("/api/hif/memories", payload);
+    await refreshHifState({ forceSlotsRender: true });
+    const passiveCnt = (hifState.state?.memory_passives || []).length;
+    const hookCnt = Object.keys(hifState.state?.card_memory_hooks || {}).length;
+    return { passiveCnt, hookCnt };
+  };
+
   byId("btn-hif-save-memories")?.addEventListener("click", async () => {
-    const { nextHooks } = buildMergedHooksWithForm();
-    const nextSlots = structuredClone(hifState.state?.memory_slots || []);
-    document.querySelectorAll(".hif-slot-card").forEach((cardEl) => {
-      const idx = Number(cardEl.dataset.slotIndex);
-      const inp = cardEl.querySelector(".hif-slot-owner");
-      if (nextSlots[idx] && inp) {
-        nextSlots[idx].owner_name = inp.value;
-      }
-    });
-    await hifState.ctx.apiPost("/api/hif/memories", {
-      card_memory_hooks: nextHooks,
-      memory_slots: nextSlots,
-    });
-    await refreshHifState();
-    hifState.ctx.showToast(`已保存回忆配置（当前共 ${Object.keys(hifState.state?.card_memory_hooks || {}).length} 条技能回忆效果）`);
+    const { hookCnt, passiveCnt } = await saveMemorySlotsFromDom({ includeHooks: true });
+    hifState.ctx.showToast(`已保存回忆配置（${hookCnt} 条技能回忆效果，${passiveCnt} 条开局词条）`);
   });
 
   byId("btn-hif-save-slots")?.addEventListener("click", async () => {
-    const nextSlots = structuredClone(hifState.state?.memory_slots || []);
-    document.querySelectorAll(".hif-slot-card").forEach((cardEl) => {
-      const idx = Number(cardEl.dataset.slotIndex);
-      const inp = cardEl.querySelector(".hif-slot-owner");
-      if (nextSlots[idx] && inp) {
-        nextSlots[idx].owner_name = inp.value;
-      }
-    });
-    await hifState.ctx.apiPost("/api/hif/memories", { memory_slots: nextSlots });
-    await refreshHifState();
-    hifState.ctx.showToast("已保存 4 枚回忆槽位词条");
+    const { passiveCnt } = await saveMemorySlotsFromDom({ includeHooks: false });
+    hifState.ctx.showToast(`已保存 4 枚回忆槽位（当前生效 ${passiveCnt} 条开局词条）`);
   });
 
   // Preferences tab controls & multi-dimensional card filters
@@ -1693,7 +1831,7 @@ function bindHifEvents() {
   });
 }
 
-export async function refreshHifState() {
+export async function refreshHifState(options = {}) {
   if (!hifState.ctx) return;
   try {
     const st = await hifState.ctx.apiGet("/api/hif/state");
@@ -1705,7 +1843,7 @@ export async function refreshHifState() {
     renderWorkbenchHeader();
     renderRunTab();
     if (hifState.activeTab === "loadout") await renderLoadoutTab();
-    if (hifState.activeTab === "memory") await renderMemoryTab();
+    if (hifState.activeTab === "memory") await renderMemoryTab(options);
     if (hifState.activeTab === "prefs") await renderPrefsTab();
   } catch (err) {
     hifState.ctx.showToast(`加载 H.I.F 工作台失败: ${err.message}`);

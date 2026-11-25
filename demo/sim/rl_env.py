@@ -138,8 +138,9 @@ class GakumasActionCodec:
         return self.specs[action_id].label
 
     def card_slot_index(self, cfg: CardConfig) -> int:
-        key = self.card_key_for_cfg(cfg)
-        aid = self.card_key_to_action.get(key)
+        aid = self.card_key_to_action.get(
+            (cfg.card_id, cfg.free_extra_use_first_play, cfg.exiles_trouble_on_play)
+        )
         if aid is not None:
             return aid
         aid = self.card_id_to_fallback_action.get(cfg.card_id)
@@ -156,6 +157,7 @@ class GakumasActionCodec:
         sim: HeadlessBattleSimulator,
         *,
         prune_dominated: bool = False,
+        hand_playable: Optional[List[bool]] = None,
     ) -> Tuple[np.ndarray, Dict[int, Tuple[str, int]]]:
         mask = np.zeros(self.num_actions, dtype=bool)
         action_map: Dict[int, Tuple[str, int]] = {}
@@ -164,23 +166,35 @@ class GakumasActionCodec:
             return mask, action_map
 
         for h_idx, inst in enumerate(sim.hand):
-            if not sim.can_play_card(inst):
+            if hand_playable is not None:
+                if not hand_playable[h_idx]:
+                    continue
+            elif not sim.can_play_card(inst):
                 continue
             aid = self.card_slot_index(inst.cfg)
             if 0 <= aid < self.num_card_slots and aid not in action_map:
                 mask[aid] = True
                 action_map[aid] = ("card", h_idx)
 
+        has_813_for_drink: Optional[bool] = None
         for d_idx, dr in enumerate(sim.available_drinks):
             # Core engine legality rule (always active, even when prune_dominated=False):
-            # never allow wasting tutor (#22) or pure-draw drinks at 5-card hand cap.
+            # never allow wasting tutor (#22)/pure-draw drinks at 5-card hand cap or #18/#21 on empty hand.
             if not sim.can_use_drink(dr):
                 continue
-            if prune_dominated and (
-                not sim.can_use_active_retrigger_drink_now(dr)
-                or sim.should_defer_drink_for_hand_cap(dr)
-            ):
-                continue
+            if prune_dominated:
+                if has_813_for_drink is None:
+                    has_813_for_drink = (
+                        self.finisher_play_max_turns_remaining > 0
+                        and sim.double_card_effect_cards == 0
+                        and sim.has_unexhausted_card_family(813)
+                    )
+                if not sim.can_use_active_retrigger_drink_now(dr) or sim.should_defer_drink_now(
+                    dr,
+                    fin_window=self.finisher_play_max_turns_remaining,
+                    has_813=has_813_for_drink,
+                ):
+                    continue
             aid = self.drink_id_to_action.get(dr.drink_id)
             if aid is not None and aid not in action_map:
                 mask[aid] = True
@@ -297,7 +311,7 @@ class GakumasActionCodec:
                 dom_aids = {
                     aid
                     for aid, (kind, idx) in action_map.items()
-                    if kind == "card" and sim.is_safe_dominating_free_card(sim.hand[idx])
+                    if kind == "card" and sim.is_safe_dominating_free_card(sim.hand[idx], playable=True)
                 }
                 if dom_aids:
                     action_map = {
@@ -357,7 +371,13 @@ class GakumasFeatureEncoder:
     def obs_dim(self) -> int:
         return self._obs_dim
 
-    def encode(self, sim: HeadlessBattleSimulator) -> np.ndarray:
+    def encode(
+        self,
+        sim: HeadlessBattleSimulator,
+        *,
+        hand_playable: Optional[List[bool]] = None,
+        mot_econ: Optional[Dict[str, int]] = None,
+    ) -> np.ndarray:
         obs = np.zeros(self._obs_dim, dtype=np.float64)
         idx = 0
 
@@ -548,17 +568,22 @@ class GakumasFeatureEncoder:
                 if c.cfg.card_type == "trouble" or c.cfg.base_id == 23:
                     troubles_in_active += 1
 
-        has_dom_free_in_hand = 1.0 if any(sim.is_safe_dominating_free_card(c) for c in sim.hand) else 0.0
+        hp = hand_playable if hand_playable is not None else [sim.can_play_card(c) for c in sim.hand]
+        has_dom_free_in_hand = (
+            1.0
+            if any(sim.is_safe_dominating_free_card(c, playable=hp[i]) for i, c in enumerate(sim.hand))
+            else 0.0
+        )
         has_exile_ready_in_hand = (
             1.0
             if (
                 sim.has_active_troubles()
-                and any(sim.can_play_card(c) and sim.has_unused_memory_exile(c) for c in sim.hand)
+                and any(hp[i] and sim.has_unused_memory_exile(c) for i, c in enumerate(sim.hand))
             )
             else 0.0
         )
         has_mem_extra_ready_in_hand = (
-            1.0 if any(sim.can_play_card(c) and sim.has_unused_memory_extra_use(c) for c in sim.hand) else 0.0
+            1.0 if any(hp[i] and sim.has_unused_memory_extra_use(c) for i, c in enumerate(sim.hand)) else 0.0
         )
 
         obs[idx + 19] = min(1.0, total_rem_extra / 4.0)
@@ -567,7 +592,7 @@ class GakumasFeatureEncoder:
         obs[idx + 22] = has_dom_free_in_hand
         obs[idx + 23] = has_exile_ready_in_hand
         obs[idx + 24] = has_mem_extra_ready_in_hand
-        econ = sim.active_motivation_economy()
+        econ = mot_econ if mot_econ is not None else sim.active_motivation_economy()
         obs[idx + 25] = econ["spenders_total_cost"] / 15.0
         obs[idx + 26] = econ["gainers_count"] / 6.0
         obs[idx + 27] = econ["unplayable_mot_in_hand"] / 4.0
@@ -608,10 +633,10 @@ class GakumasFeatureEncoder:
         di_off = idx + 3 * nc
         ex_off = idx + 4 * nc
 
-        for c in sim.hand:
+        for i, c in enumerate(sim.hand):
             slot = self.codec.card_slot_index(c.cfg)
             if 0 <= slot < nc:
-                if sim.can_play_card(c):
+                if hp[i]:
                     obs[hp_off + slot] += 1.0
                 else:
                     obs[hu_off + slot] += 1.0
@@ -666,19 +691,25 @@ class GakumasBattleEnv:
         )
         self.encoder = GakumasFeatureEncoder(self.codec)
         self.sim: Optional[HeadlessBattleSimulator] = None
+        self._last_action_map: Optional[Dict[int, Tuple[str, int]]] = None
 
-    def _motivation_potential(self, sim: HeadlessBattleSimulator) -> float:
+    def _motivation_potential(
+        self,
+        sim: HeadlessBattleSimulator,
+        *,
+        econ: Optional[Dict[str, int]] = None,
+    ) -> float:
         """Zero-terminal PBRS potential encoding Motivation economy health across turns."""
         if self.motivation_cost_weight <= 0.0 or sim.turns_remaining <= 0:
             return 0.0
-        econ = sim.active_motivation_economy()
-        if econ["spenders_total_cost"] <= 0:
+        econ_d = econ if econ is not None else sim.active_motivation_economy()
+        if econ_d["spenders_total_cost"] <= 0:
             return 0.0
         rem_t = min(float(sim.turns_remaining), 8.0)
         target_mot = min(10.0, 2.5 + 0.75 * rem_t)
         mot_eff = float(sim.buffs.get("motivation", 0) or 0) + (4.0 if sim.has_motivation_engine() else 0.0)
         deficit_frac = min(1.0, mot_eff / max(1.0, target_mot)) - 1.0
-        brick_pen = -0.25 * min(2, econ["unplayable_mot_in_hand"])
+        brick_pen = -0.25 * min(2, econ_d["unplayable_mot_in_hand"])
         return self.motivation_cost_weight * (rem_t / 8.0) * (deficit_frac + brick_pen)
 
     @property
@@ -707,25 +738,47 @@ class GakumasBattleEnv:
             record_logs=self.record_logs,
             card_cfg_cache=self._card_cfg_cache,
         )
-        self._prev_mot_potential = self._motivation_potential(self.sim)
-        return self.encoder.encode(self.sim), self.codec.action_mask(
-            self.sim, prune_dominated=self.prune_dominated_free_actions
+        hp = [self.sim.can_play_card(c) for c in self.sim.hand]
+        econ = self.sim.active_motivation_economy()
+        self._prev_mot_potential = self._motivation_potential(self.sim, econ=econ)
+        obs = self.encoder.encode(self.sim, hand_playable=hp, mot_econ=econ)
+        mask, action_map = self.codec.legal_mask_and_map(
+            self.sim,
+            prune_dominated=self.prune_dominated_free_actions,
+            hand_playable=hp,
         )
+        self._last_action_map = action_map
+        return obs, mask
 
     def step(self, action_id: int) -> Tuple[np.ndarray, np.ndarray, float, bool, Dict[str, Any]]:
         if self.sim is None:
             raise RuntimeError("Environment must be reset() before step()")
         prev_score = self.sim.score
-        kind, act_idx = self.codec.resolve_action(self.sim, action_id)
+        cached_map = self._last_action_map
+        self._last_action_map = None
+        if cached_map is not None and action_id in cached_map:
+            kind, act_idx = cached_map[action_id]
+        else:
+            kind, act_idx = self.codec.resolve_action(self.sim, action_id)
         self.sim.step(kind, act_idx)
         done = self.sim.turns_remaining <= 0
-        new_pot = self._motivation_potential(self.sim)
+        hp = [self.sim.can_play_card(c) for c in self.sim.hand]
+        econ = self.sim.active_motivation_economy()
+        new_pot = self._motivation_potential(self.sim, econ=econ)
         mot_shaping = new_pot - self._prev_mot_potential
         self._prev_mot_potential = new_pot
         reward = (self.sim.score - prev_score) / self.score_scale + mot_shaping
-        obs = self.encoder.encode(self.sim)
-        mask = self.codec.action_mask(self.sim, prune_dominated=self.prune_dominated_free_actions)
-        econ = self.sim.active_motivation_economy()
+        obs = self.encoder.encode(self.sim, hand_playable=hp, mot_econ=econ)
+        if done:
+            mask = np.zeros(self.num_actions, dtype=bool)
+            self._last_action_map = {}
+        else:
+            mask, action_map = self.codec.legal_mask_and_map(
+                self.sim,
+                prune_dominated=self.prune_dominated_free_actions,
+                hand_playable=hp,
+            )
+            self._last_action_map = action_map
         info = {
             "score": self.sim.score,
             "turn": self.sim.turn,

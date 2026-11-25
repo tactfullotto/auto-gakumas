@@ -208,6 +208,8 @@ class ISMCTSAgent:
                 for a in root_legal:
                     root_mask[a] = True
         if cfg.prune_dominated_free_actions and len(root_legal) > 1:
+            fin_win_d = getattr(self.codec, "finisher_play_max_turns_remaining", 2)
+            has_813_d = sim.has_unexhausted_card_family(813) if (fin_win_d > 0 and sim.double_card_effect_cards == 0) else False
             drink_filtered = [
                 a
                 for a in root_legal
@@ -215,7 +217,11 @@ class ISMCTSAgent:
                     root_map.get(a, ("", -1))[0] == "drink"
                     and (
                         not sim.can_use_active_retrigger_drink_now(sim.available_drinks[root_map[a][1]])
-                        or sim.should_defer_drink_for_hand_cap(sim.available_drinks[root_map[a][1]])
+                        or sim.should_defer_drink_now(
+                            sim.available_drinks[root_map[a][1]],
+                            fin_window=fin_win_d,
+                            has_813=has_813_d,
+                        )
                     )
                 )
             ]

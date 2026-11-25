@@ -137,22 +137,34 @@ class PolicyValueNet:
         """Fast 1D inference returning (masked_probs, value_scalar)."""
         p = self.params
         x = np.asarray(obs, dtype=np.float64)
+        inv_h = 1.0 / float(self.hidden_dim)
 
         z1 = x @ p["W1"] + p["b1"]
-        z1_mean = float(np.mean(z1))
+        z1_mean = float(z1.sum()) * inv_h
         z1_c = z1 - z1_mean
-        z1_inv_std = 1.0 / math.sqrt(float(np.mean(z1_c * z1_c)) + self.ln_eps)
+        z1_inv_std = 1.0 / math.sqrt(float(np.dot(z1_c, z1_c)) * inv_h + self.ln_eps)
         h1 = np.tanh((z1_c * z1_inv_std) * p["ln1_g"] + p["ln1_b"])
 
         z2 = h1 @ p["W2"] + p["b2"]
-        z2_mean = float(np.mean(z2))
+        z2_mean = float(z2.sum()) * inv_h
         z2_c = z2 - z2_mean
-        z2_inv_std = 1.0 / math.sqrt(float(np.mean(z2_c * z2_c)) + self.ln_eps)
+        z2_inv_std = 1.0 / math.sqrt(float(np.dot(z2_c, z2_c)) * inv_h + self.ln_eps)
         h2 = np.tanh((z2_c * z2_inv_std) * p["ln2_g"] + p["ln2_b"])
 
         logits = h2 @ p["Wp"] + p["bp"]
-        value = float((h2 @ p["Wv"] + p["bv"])[0])
-        probs, _, _ = masked_log_softmax(logits, mask)
+        value = float(np.dot(h2, p["Wv"][:, 0]) + p["bv"][0])
+
+        m = np.asarray(mask, dtype=bool)
+        if not np.any(m):
+            return np.zeros(self.num_actions, dtype=np.float64), value
+        sub_logits = logits[m]
+        max_z = float(np.max(sub_logits))
+        exp_sub = np.exp(sub_logits - max_z)
+        sum_exp = float(exp_sub.sum())
+        if sum_exp < 1e-30:
+            sum_exp = 1e-30
+        probs = np.zeros(self.num_actions, dtype=np.float64)
+        probs[m] = exp_sub / sum_exp
         return probs, value
 
     def select_action(
@@ -165,10 +177,13 @@ class PolicyValueNet:
         temperature: float = 1.0,
     ) -> Tuple[int, float, float]:
         """Sample or select greedy masked action, returning (action_id, log_prob, value)."""
-        probs, value = self.predict_single(obs, mask)
         legal_indices = np.flatnonzero(mask)
-        if len(legal_indices) == 0:
+        n_legal = len(legal_indices)
+        if n_legal == 0:
             raise ValueError("Cannot select action when mask has no legal actions")
+        probs, value = self.predict_single(obs, mask)
+        if n_legal == 1:
+            return int(legal_indices[0]), 0.0, value
 
         if greedy or temperature <= 0.0:
             best_pos = int(np.argmax(probs[legal_indices]))
@@ -181,10 +196,18 @@ class PolicyValueNet:
             sample_probs = scaled / np.sum(scaled)
         else:
             p_sub = probs[legal_indices]
-            sample_probs = p_sub / np.sum(p_sub)
+            p_sum = float(np.sum(p_sub))
+            sample_probs = p_sub / p_sum if p_sum > 0.0 else np.full(n_legal, 1.0 / n_legal, dtype=np.float64)
 
         active_rng = rng if rng is not None else np.random.default_rng()
-        action_id = int(active_rng.choice(legal_indices, p=sample_probs))
+        u = float(active_rng.random())
+        cum = 0.0
+        action_id = int(legal_indices[-1])
+        for pos in range(n_legal):
+            cum += float(sample_probs[pos])
+            if u < cum:
+                action_id = int(legal_indices[pos])
+                break
         log_prob = math.log(max(float(probs[action_id]), 1e-30))
         return action_id, log_prob, value
 
@@ -394,6 +417,9 @@ class MaskablePPOConfig:
     val_interval_updates: int = 10
     val_episodes: int = 16
     val_seed_offset: int = 50000
+    early_stop_patience: int = 0
+    early_stop_min_episodes: int = 0
+    early_stop_min_rel_delta: float = 0.01
     seed: int = 2026
 
 
@@ -422,7 +448,11 @@ class MaskablePPOTrainer:
             obs, mask = self.env.reset(seed=s)
             done = False
             while not done:
-                action_id, _, _ = self.net.select_action(obs, mask, greedy=True)
+                legal = np.flatnonzero(mask)
+                if legal.size == 1:
+                    action_id = int(legal[0])
+                else:
+                    action_id, _, _ = self.net.select_action(obs, mask, greedy=True)
                 obs, mask, _, done, info = self.env.step(action_id)
             scores.append(int(info["score"]))
         arr = np.asarray(scores, dtype=np.float64)
@@ -445,6 +475,10 @@ class MaskablePPOTrainer:
         best_weights = self.net.get_weights()
         history: List[Dict[str, Any]] = []
         episodes_done = 0
+        last_val_stats: Optional[Dict[str, float]] = None
+        last_val_upd = 0
+        stale_vals = 0
+        stopped_early = False
 
         for upd in range(1, num_updates + 1):
             frac = float(upd - 1) / float(max(1, num_updates - 1))
@@ -558,22 +592,41 @@ class MaskablePPOTrainer:
 
             if (upd % cfg.val_interval_updates == 0) or (upd == num_updates) or (episodes_done >= cfg.total_episodes):
                 val_stats = self.evaluate_greedy(val_seeds)
-                rec["val_mean"] = val_stats["mean"]
+                last_val_stats = val_stats
+                last_val_upd = upd
+                val_mean = val_stats["mean"]
+                rec["val_mean"] = val_mean
                 rec["val_max"] = val_stats["max"]
-                if val_stats["mean"] > best_val_mean:
-                    best_val_mean = val_stats["mean"]
+                rel_base = max(abs(best_val_mean), 1e-6)
+                rel_improved = (best_val_mean < 0.0) or ((val_mean - best_val_mean) / rel_base > cfg.early_stop_min_rel_delta)
+                if val_mean > best_val_mean:
+                    best_val_mean = val_mean
                     best_weights = self.net.get_weights()
+                if cfg.early_stop_patience > 0 and episodes_done >= cfg.early_stop_min_episodes:
+                    if rel_improved:
+                        stale_vals = 0
+                    else:
+                        stale_vals += 1
+                        if stale_vals >= cfg.early_stop_patience:
+                            stopped_early = True
 
             history.append(rec)
             if progress_callback is not None:
                 progress_callback(rec)
+            if stopped_early:
+                break
 
-        final_val_stats = self.evaluate_greedy(val_seeds)
+        final_val_stats = (
+            last_val_stats
+            if (last_val_stats is not None and history and last_val_upd == history[-1]["update"])
+            else self.evaluate_greedy(val_seeds)
+        )
         self.net.set_weights(best_weights)
         summary = {
             "episodes_trained": episodes_done,
             "best_val_mean": best_val_mean,
             "final_val_mean": final_val_stats["mean"],
+            "stopped_early": stopped_early,
             "history": history,
         }
         return self.net, summary

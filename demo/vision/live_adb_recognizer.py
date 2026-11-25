@@ -43,6 +43,8 @@ def _normalize_katakana_ocr(text: str) -> str:
         .replace("エンジする", "チェンジする")
         .replace("ェンジで獲得", "チェンジで獲得")
         .replace("カスタマイス", "カスタマイズ")
+        .replace("くたさい", "ください")
+        .replace("くださぃ", "ください")
     )
 
 
@@ -574,10 +576,11 @@ class LiveScreenRecognizer:
                 return True
             if prev >= 100 and val < 10 and (prev % 5 == 0) and (val % 5 != 0):
                 return True
-            # Guard middle-digit / suffix drops on high P-point counts (e.g. 449->49, 439->49),
+            # Guard middle-digit / leading-digit drops on high P-point counts (e.g. 449->49, 439->49, 455->55, 255->55),
             # while still allowing legitimate single-step ~100-150P spends (105->5, 120->20).
-            if (prev - val) > 220 and (
+            if (prev - val) >= 180 and (
                 _is_digit_subseq(s_val, s_prev)
+                or s_prev.endswith(s_val)
                 or (val < 100 and (s_val[0] == s_prev[0] or s_val[-1] == s_prev[-1]))
             ):
                 return True
@@ -650,6 +653,28 @@ class LiveScreenRecognizer:
                     max_val=9999,
                     scale=3,
                 )
+                if p_val is not None and p_val < 100 and h >= 400 and w >= 240:
+                    wide_cands: List[int] = []
+                    for w_mode in ("white", "raw"):
+                        w_txt = self._ocr_crop_upscaled(
+                            frame,
+                            (int(w * 0.44), int(h * 0.052), int(w * 0.64), int(h * 0.095)),
+                            scale=3,
+                            use_en=True,
+                            mode=w_mode,
+                            pad=15,
+                        )
+                        w_clean = re.sub(r"[',.`\s]", "", w_txt)
+                        m_w = re.search(r"(\d{1,4})", w_clean)
+                        if m_w:
+                            cand_w = int(m_w.group(1))
+                            if 100 <= cand_w <= 9999:
+                                wide_cands.append(cand_w)
+                    sfx_hit = next((c for c in wide_cands if str(c).endswith(str(p_val))), None)
+                    if sfx_hit is not None:
+                        p_val = sfx_hit
+                    elif len(wide_cands) >= 2 and len(set(wide_cands)) == 1:
+                        p_val = wide_cands[0]
                 if p_val is not None and not _is_truncated_p_points(p_val):
                     p_points = p_val
                     self._last_p_points = p_points
@@ -995,6 +1020,13 @@ class LiveScreenRecognizer:
                 "Pポイントを使用して",
                 "使用しますか",
                 "カスタマイズしますか",
+                "休み確認",
+                "休みますか",
+                "更新確認",
+                "更新しますか",
+                "ラインナップを更新",
+                "商品を更新",
+                "リフレッシュしますか",
                 "おまかせ編成",
                 "レンタル可能",
                 "Pドリンク詳細",
@@ -1079,11 +1111,25 @@ class LiveScreenRecognizer:
             and not any(k in joined for k in ("詳細", "破棄", "捨てる", "捨てますか", "進みますか", "よろしいですか", "確認"))
         )
         norm_joined_early = _normalize_katakana_ocr(joined)
-        has_move_to_hand_btn_early = any(
-            ln["text"].strip().lstrip("ノ") in ("移動", "移動する")
-            and ln["bbox"][1] > int(h * 0.74)
-            for ln in lines
-        ) and ("移動中" not in norm_joined_early)
+        has_move_to_hand_top_pill_early = (
+            any(
+                ln["text"].strip().lstrip("◆◇✦✓✔ノ・") in ("移動", "移動する", "手札に移動")
+                and ln["bbox"][1] < int(h * 0.12)
+                and ln["bbox"][0] < int(w * 0.35)
+                for ln in lines
+            )
+            and (not is_home_screen)
+            and (not is_produce_setup)
+            and ("移動中" not in norm_joined_early)
+        )
+        has_move_to_hand_btn_early = has_move_to_hand_top_pill_early or (
+            any(
+                ln["text"].strip().lstrip("◆◇✦✓✔ノ・") in ("移動", "移動する")
+                and ln["bbox"][1] > int(h * 0.74)
+                for ln in lines
+            )
+            and ("移動中" not in norm_joined_early)
+        )
         is_early_reward_or_change = has_move_to_hand_btn_early or any(
             k in norm_joined_early
             for k in (
@@ -1106,8 +1152,13 @@ class LiveScreenRecognizer:
             and (not is_early_reward_or_change)
             and any(k in joined for k in ("キャンセル", "決定", "確認", "はい"))
         )
+        is_shop_refresh_popup = any(
+            k in joined for k in ("更新する", "更新しますか", "更新確認", "ラインナップを更新", "商品を更新")
+        )
         if fg_discard_btn is not None:
-            if not any(k in joined for k in ("交換", "ドリンク詳細", "ンク詳細", "強化", "カスタマイズ", "チェンジ")):
+            if is_shop_refresh_popup or not any(
+                k in joined for k in ("交換", "ドリンク詳細", "ンク詳細", "強化", "カスタマイズ", "チェンジ")
+            ):
                 self._shop_visited_slots.clear()
                 self._shop_last_clicked_slot = None
             return self._parse_popup_screen(frame, lines, active_plan, meta, fg_discard_btn=fg_discard_btn)
@@ -1170,7 +1221,9 @@ class LiveScreenRecognizer:
             or has_achievement_modal
             or has_modal_dialog
         ):
-            if not any(k in joined for k in ("交換", "ドリンク詳細", "ンク詳細", "強化", "カスタマイズ", "チェンジ")):
+            if is_shop_refresh_popup or not any(
+                k in joined for k in ("交換", "ドリンク詳細", "ンク詳細", "強化", "カスタマイズ", "チェンジ")
+            ):
                 self._shop_visited_slots.clear()
                 self._shop_last_clicked_slot = None
             if not any(k in joined for k in ("ドリンク", "ンク詳細", "破棄", "捨てる", "捨てますか", "詳細")):
@@ -1228,10 +1281,18 @@ class LiveScreenRecognizer:
             and (not has_shop_exit_btn)
         )
         has_move_to_hand_btn = (
-            any(
-                ln["text"].strip().lstrip("ノ") in ("移動", "移動する")
-                and ln["bbox"][1] > int(h * 0.74)
-                for ln in lines
+            (
+                any(
+                    ln["text"].strip().lstrip("◆◇✦✓✔ノ・") in ("移動", "移動する", "手札に移動")
+                    and ln["bbox"][1] < int(h * 0.12)
+                    and ln["bbox"][0] < int(w * 0.35)
+                    for ln in lines
+                )
+                or any(
+                    ln["text"].strip().lstrip("◆◇✦✓✔ノ・") in ("移動", "移動する")
+                    and ln["bbox"][1] > int(h * 0.74)
+                    for ln in lines
+                )
             )
             and (not is_home_screen)
             and (not is_produce_setup)
@@ -1383,6 +1444,21 @@ class LiveScreenRecognizer:
                         for k in ("スキルカード", "重複不可", "レッスン中1回", "再抽選", "ドリンク")
                     )
                 )
+                or (
+                    oc_reward_name == "次へ"
+                    and any(
+                        k in norm_joined
+                        for k in (
+                            "チェンジで獲得",
+                            "手放すスキルカード",
+                            "を選んでください",
+                            "を選択してください",
+                            "重複不可",
+                            "レッスン中1回",
+                            "再抽選",
+                        )
+                    )
+                )
             )
         is_event_tooltip_hud = (
             ("審査基準" in joined or "授業" in hdr_label or "おでかけ" in hdr_label)
@@ -1393,6 +1469,7 @@ class LiveScreenRecognizer:
                     "受け取る",
                     "決定",
                     "チェンジする",
+                    "チェンジで獲得",
                     "カスタマイズする",
                     "削除する",
                     "強化する",
@@ -1402,6 +1479,7 @@ class LiveScreenRecognizer:
                     "キャンセル",
                     "受け取らない",
                     "スキルカードが選択されていません",
+                    "スキルカードを選んで",
                     "を選んでください",
                     "を選択してください",
                 )
@@ -1425,6 +1503,8 @@ class LiveScreenRecognizer:
             or "チェンジする" in norm_joined
             or "手放すスキルカード" in norm_joined
             or "スキルカードが選択されていません" in norm_joined
+            or "スキルカートが選択されていません" in norm_joined
+            or ("が選択されていません" in norm_joined and "スキル" in norm_joined)
             or "カスタマイズするスキルカード" in norm_joined
             or "カスタマイズ可能スキルカード" in norm_joined
             or "カスタマイズを選" in norm_joined
@@ -1445,7 +1525,32 @@ class LiveScreenRecognizer:
                 and any(("強化" in ln["text"]) and len(ln["text"].strip()) <= 6 and ln["bbox"][1] < int(h * 0.12) for ln in lines)
             )
         ):
-            self._in_battle_scene = False
+            was_in_battle = bool(self._in_battle_scene)
+            has_out_of_battle_reward_cue = any(
+                k in norm_joined
+                for k in (
+                    "受け取る",
+                    "受け取らない",
+                    "再抽選",
+                    "スキルカード獲得",
+                    "Pドリンク獲得",
+                    "ドリンク獲得",
+                    "Pドリンク所持上限",
+                    "チェンジで獲得",
+                    "チェンジする",
+                    "手放すスキルカード",
+                    "削除するスキルカード",
+                    "強化するスキルカード",
+                    "カスタマイズ",
+                    "セレクトチェンジ",
+                    "特別指導",
+                    "CLEAR",
+                    "PERFECT",
+                    "報酬",
+                )
+            )
+            if not (was_in_battle and not has_out_of_battle_reward_cue):
+                self._in_battle_scene = False
             self._non_battle_streak = 0
             if not any(k in joined for k in ("強化", "削除", "カスタマイズ", "チェンジ")):
                 self._shop_visited_slots.clear()
@@ -1551,7 +1656,7 @@ class LiveScreenRecognizer:
         # Combine full-frame word clusters + dedicated bottom dock strip (both raw and dark-on-white footer mask)
         clusters = self._split_line_clusters(lines, max_gap=28)
         sy1, sx1 = int(h * 0.72), int(w * 0.03)
-        sy2, sx2 = int(h * 0.91), int(w * 0.97)
+        sy2, sx2 = int(h * 0.945), int(w * 0.97)
         strip = frame[sy1:sy2, sx1:sx2]
         if strip.size > 0:
             gray = np.mean(strip[:, :, :3], axis=2)
@@ -1697,7 +1802,7 @@ class LiveScreenRecognizer:
                         or (kw == "おでかけ" and bool(re.search(r"お.{0,3}け", norm_txt)))
                         or (kw == "相談" and bool(re.search(r"相.{0,2}談", norm_txt)))
                     )
-                    if matched_kw and len(norm_txt) <= 18 and ln["bbox"][1] > int(h * 0.66):
+                    if matched_kw and len(norm_txt) <= 18 and int(h * 0.66) < ln["bbox"][1] < int(h * 0.915):
                         bx1, by1, bx2, by2 = ln["bbox"]
                         cx = (bx1 + bx2) // 2
                         xmin = max(10, bx1 - 15)
@@ -1800,6 +1905,31 @@ class LiveScreenRecognizer:
                     ],
                 })
             _scan_keywords(up_clusters, seen)
+        if _needs_soudan_scan() and h >= 400 and w >= 300:
+            # Focused 3x pass on bottom-center 相談 white pill when full-width strips miss it
+            sd_x1, sd_y1, sd_x2, sd_y2 = int(w * 0.34), int(h * 0.845), int(w * 0.66), int(h * 0.912)
+            sd_patch = frame[sd_y1:sd_y2, sd_x1:sd_x2]
+            if sd_patch.size > 0:
+                from PIL import ImageOps
+                sd3 = Image.fromarray(sd_patch).resize((sd_patch.shape[1] * 3, sd_patch.shape[0] * 3), Image.Resampling.BICUBIC)
+                sd_gray = np.mean(sd_patch[:, :, :3], axis=2)
+                sd_dark = np.where((sd_gray < 145)[:, :, None], 0, 255).astype(np.uint8).repeat(3, axis=2)
+                sd_dark3 = Image.fromarray(sd_dark).resize((sd_patch.shape[1] * 3, sd_patch.shape[0] * 3), Image.Resampling.BICUBIC)
+                sd_clusters: List[Dict[str, Any]] = []
+                for sd_img in (sd3, sd_dark3):
+                    sd_res = self.ocr.recognize_array(np.array(ImageOps.expand(sd_img, 18, (255, 255, 255))))
+                    for sc in self._split_line_clusters(sd_res.get("lines", []), max_gap=40):
+                        bx1, by1, bx2, by2 = sc["bbox"]
+                        sd_clusters.append({
+                            "text": sc["text"],
+                            "bbox": [
+                                sd_x1 + max(0, (bx1 - 18) // 3),
+                                sd_y1 + max(0, (by1 - 18) // 3),
+                                sd_x1 + max(0, (bx2 - 18) // 3),
+                                sd_y1 + max(0, (by2 - 18) // 3),
+                            ],
+                        })
+                _scan_keywords(sd_clusters, seen)
         if _incomplete_lessons() and h >= 400 and w >= 300:
             lesson_opts = [
                 o
@@ -2482,9 +2612,9 @@ class LiveScreenRecognizer:
     ) -> Optional[Dict[str, Any]]:
         """Detect primary white-on-orange pill button at bottom (or mid-lower modal fallback)."""
         toks: Tuple[str, ...] = (
-            ("再開する", "再開", "続きから", "プロデュース開始", "開始する", "開始", "挑戦", "使用する", "使う", "交換", "強化する", "削除する", "チェンジする", "チェンジ", "カスタマイズする", "捨てる", "破棄する", "破棄", "受け取らない", "スキップ", "プロデュース完了", "完了", "ホームへ", "次へ", "決定", "終了", "受け取る", "はい", "確認", "OK")
+            ("再開する", "再開", "続きから", "プロデュース開始", "開始する", "開始", "挑戦", "使用する", "使う", "交換", "強化する", "削除する", "チェンジする", "チェンジ", "カスタマイズする", "更新する", "移動する", "移動", "捨てる", "破棄する", "破棄", "受け取らない", "スキップ", "プロデュース完了", "完了", "ホームへ", "次へ", "決定", "終了", "受け取る", "はい", "確認", "OK")
             if allow_discard
-            else ("再開する", "再開", "続きから", "プロデュース開始", "開始する", "開始", "挑戦", "使用する", "使う", "交換", "強化する", "削除する", "チェンジする", "チェンジ", "カスタマイズする", "スキップ", "プロデュース完了", "完了", "ホームへ", "次へ", "決定", "終了", "受け取る", "はい", "確認", "OK")
+            else ("再開する", "再開", "続きから", "プロデュース開始", "開始する", "開始", "挑戦", "使用する", "使う", "交換", "強化する", "削除する", "チェンジする", "チェンジ", "カスタマイズする", "更新する", "移動する", "移動", "スキップ", "プロデュース完了", "完了", "ホームへ", "次へ", "決定", "終了", "受け取る", "はい", "確認", "OK")
         )
         for y_start_frac, y_end_frac, r_min in ((0.855, 0.965, 225), (0.73, 0.855, 195)):
             y_off = int(h * y_start_frac)
@@ -2664,10 +2794,10 @@ class LiveScreenRecognizer:
         elif any(k in full_joined for k in ("Pドリンク詳細", "ドリンク詳細", "ンク詳細", "ドリンク詳")):
             confirm_tokens = ("使用する", "使う", "決定", "確認", "はい", "OK", "閉じる")
         elif allow_drink_discard:
-            base_tokens = ("再開する", "再開", "続きから", "プロデュース開始", "開始する", "レギュラー", "使用する", "使う", "交換", "強化する", "強化", "削除する", "削除", "チェンジ", "カスタマイズする", "破棄する", "破棄", "受け取らない", "スキップ", "プロデュース完了", "完了", "ホームへ", "閉じる", "決定", "確認", "はい", "OK", "タイトルへ", "受け取る", "次へ")
+            base_tokens = ("再開する", "再開", "続きから", "プロデュース開始", "開始する", "レギュラー", "使用する", "使う", "交換", "強化する", "強化", "削除する", "削除", "チェンジ", "カスタマイズする", "更新する", "破棄する", "破棄", "受け取らない", "スキップ", "プロデュース完了", "完了", "ホームへ", "閉じる", "決定", "確認", "はい", "OK", "タイトルへ", "受け取る", "次へ")
             confirm_tokens = base_tokens if has_use_action else ("捨てる",) + base_tokens
         else:
-            confirm_tokens = ("再開する", "再開", "続きから", "プロデュース開始", "開始する", "レギュラー", "使用する", "使う", "交換", "強化する", "強化", "削除する", "削除", "チェンジ", "カスタマイズする", "スキップ", "プロデュース完了", "完了", "ホームへ", "閉じる", "決定", "確認", "はい", "OK", "タイトルへ", "受け取る", "次へ")
+            confirm_tokens = ("再開する", "再開", "続きから", "プロデュース開始", "開始する", "レギュラー", "使用する", "使う", "交換", "強化する", "強化", "削除する", "削除", "チェンジ", "カスタマイズする", "更新する", "スキップ", "プロデュース完了", "完了", "ホームへ", "閉じる", "決定", "確認", "はい", "OK", "タイトルへ", "受け取る", "次へ")
         options: List[Dict[str, Any]] = []
         seen_names = set()
         if fg_discard_btn is not None and not has_use_action:
@@ -3032,7 +3162,17 @@ class LiveScreenRecognizer:
                 elif "無料" not in full_joined:
                     continue
             if int(h * 0.05) <= y1 <= int(h * 0.96) and 2 <= len(txt) <= 10 and not txt.endswith(("?", "？", "。", "！")):
+                if (
+                    ("確認" in txt and txt.strip() != "確認")
+                    or ("しますか" in txt)
+                    or ("詳細" in txt)
+                ):
+                    continue
                 if any(tok in txt for tok in action_tokens):
+                    if y1 < int(h * 0.45) and any(
+                        tok in txt for tok in ("確認", "決定", "はい", "キャンセル")
+                    ):
+                        continue
                     bx1, by1, bx2, by2 = ln["bbox"]
                     options.append({
                         "choice_id": len(options),
@@ -3436,16 +3576,35 @@ class LiveScreenRecognizer:
                 for ln in lines
             )
         )
-        # Never let card-effect description text (e.g. 天賦の才+ / 夏夜に咲く思い出+ containing '山札か捨札...移動')
-        # hijack チェンジ / 削除 / 強化 / カスタマイズ into the #22 move_to_hand grid!
+        has_reward_receive_cue = (
+            any(
+                k in norm_joined
+                for k in (
+                    "受け取る",
+                    "受け取らない",
+                    "再抽選",
+                    "Pドリンク",
+                    "ドリンクを選",
+                    "ドリンクを選択",
+                    "ドリンク獲得",
+                    "チェンジで獲得",
+                )
+            )
+            or any(
+                ("ドリンク" in ln["text"]) and ln["bbox"][1] < int(h * 0.58)
+                for ln in lines
+            )
+        )
+        # Never let card/drink effect description text (e.g. パワフル漢方ドリンク / 初星黒酢 / 天賦の才+
+        # containing '山札か捨札...手札に移動') hijack produce rewards or チェンジ/削除/強化/カスタマイズ
+        # into the #22 move_to_hand battle grid!
         is_move_to_hand_flow = (
             not is_customize_flow
             and not has_change_or_delete_cue
             and not has_upgrade_header
+            and not has_reward_receive_cue
             and (
-                ("手札に移動" in norm_joined)
-                or ("移動するスキルカード" in norm_joined)
-                or ("山札か捨札" in norm_joined)
+                ("移動するスキルカード" in norm_joined)
                 or any(
                     ("移動" in ln["text"])
                     and len(ln["text"].strip()) <= 6
@@ -3454,13 +3613,22 @@ class LiveScreenRecognizer:
                     for ln in lines
                 )
                 or any(
-                    ln["text"].strip().lstrip("ノ◆◇✦") in ("移動", "移動する")
+                    ln["text"].strip().lstrip("ノ◆◇✦✓✔・") in ("移動", "移動する")
                     and ln["bbox"][1] > int(h * 0.74)
                     for ln in lines
+                )
+                or (
+                    self._in_battle_scene
+                    and (
+                        ("手札に移動" in norm_joined)
+                        or ("山札か捨札" in norm_joined)
+                        or ("が選択されていません" in norm_joined)
+                    )
                 )
             )
             and ("移動中" not in norm_joined)
         )
+        self._in_battle_scene = bool(is_move_to_hand_flow)
         is_shop_delete_flow = (
             not is_customize_flow
             and not is_move_to_hand_flow
@@ -3732,17 +3900,35 @@ class LiveScreenRecognizer:
             if (want_deck_grid and icon_slots)
             else []
         )
+        is_explicit_drink_modal = (
+            ("ドリンク" in full_joined)
+            or (dont_take_ln is not None)
+            or (preview_drink_id is not None and preview_card_id is None)
+        )
         slot_matches: List[Tuple[Optional[Dict[str, Any]], float]] = (
             [self._match_square_drink_slot_with_score(frame, x1, y1, x2, y2) for x1, y1, x2, y2, _ in icon_slots]
-            if icon_slots and "スキルカード" not in full_joined
+            if icon_slots
+            and (is_explicit_drink_modal or ("スキルカード" not in full_joined))
+            and (not want_deck_grid)
+            and (not is_move_to_hand_flow)
+            and (not is_upgrade_flow)
+            and (not is_customize_flow)
+            and (not is_shop_delete_flow)
             else []
         )
         visual_drink_hit = any(m is not None and sc >= 0.58 for m, sc in slot_matches)
         is_drink_reward = (
-            ("ドリンク" in full_joined)
-            or (dont_take_ln is not None)
-            or (preview_drink_id is not None and preview_card_id is None)
-            or (visual_drink_hit and preview_card_id is None)
+            (not want_deck_grid)
+            and (not is_move_to_hand_flow)
+            and (not is_upgrade_flow)
+            and (not is_customize_flow)
+            and (not is_shop_delete_flow)
+            and (
+                ("ドリンク" in full_joined)
+                or (dont_take_ln is not None)
+                or (preview_drink_id is not None and preview_card_id is None)
+                or (visual_drink_hit and preview_card_id is None)
+            )
         )
         has_drink_cap = has_cap_text or (
             dont_take_ln is not None and len(held_drinks) >= cap_count and not receive_active
@@ -5412,6 +5598,55 @@ class LiveScreenRecognizer:
         area = max(1, roi.shape[0] * roi.shape[1])
         return cnt >= max(24, int(area * 0.045))
 
+    def _detect_hand_card_customization(self, card_patch: np.ndarray) -> Tuple[bool, int]:
+        """Detect circular green 专精强化 badge on a hand card and OCR its level (1..3)."""
+        if card_patch is None or card_patch.size == 0:
+            return False, 0
+        ph, pw = card_patch.shape[:2]
+        if ph < 24 or pw < 24:
+            return False, 0
+        roi = card_patch[int(ph * 0.66) : int(ph * 0.84), int(pw * 0.38) : int(pw * 0.62)]
+        if roi.size == 0:
+            return False, 0
+        r = roi[:, :, 0].astype(np.int16)
+        g = roi[:, :, 1].astype(np.int16)
+        b = roi[:, :, 2].astype(np.int16)
+        strict_gm = (g >= 115) & ((g - r) >= 65) & ((g - b) >= 55) & (r < 95) & (b < 105)
+        cnt = int(strict_gm.sum())
+        area = max(1, roi.shape[0] * roi.shape[1])
+        if cnt < max(24, int(area * 0.012)):
+            return False, 0
+        ys, xs = np.where(strict_gm)
+        sub = roi[
+            max(0, int(ys.min()) + 1) : min(roi.shape[0], int(ys.max()) + 1),
+            max(0, int(xs.min()) + 1) : min(roi.shape[1], int(xs.max()) + 1),
+        ]
+        if sub.size >= 9 and self.en_ocr is not None:
+            wm = (sub[:, :, 0] > 185) & (sub[:, :, 1] > 185) & (sub[:, :, 2] > 185)
+            ys_w, xs_w = np.where(wm)
+            if len(xs_w) > 0:
+                dsub = wm[ys_w.min() : ys_w.max() + 1, xs_w.min() : xs_w.max() + 1].astype(np.uint8) * 255
+                up = cv2.resize(dsub, (max(1, dsub.shape[1] * 4), max(1, dsub.shape[0] * 4)), interpolation=cv2.INTER_CUBIC)
+                _, up = cv2.threshold(up, 115, 255, cv2.THRESH_BINARY)
+                inv = 255 - up
+                dh, dw = inv.shape[:2]
+                pad_y = 24
+                fscale = max(0.75, dh / 24.0)
+                (tw_p, _), _ = cv2.getTextSize("10+", cv2.FONT_HERSHEY_SIMPLEX, fscale, 4)
+                (sw_p, _), _ = cv2.getTextSize("+10", cv2.FONT_HERSHEY_SIMPLEX, fscale, 4)
+                x0 = 20
+                dx = x0 + tw_p + 10
+                sx = dx + dw + 10
+                canvas = np.full((dh + pad_y * 2, sx + sw_p + 24, 3), 255, dtype=np.uint8)
+                cv2.putText(canvas, "10+", (x0, pad_y + dh - 2), cv2.FONT_HERSHEY_SIMPLEX, fscale, (0, 0, 0), 4, cv2.LINE_AA)
+                canvas[pad_y : pad_y + dh, dx : dx + dw] = cv2.cvtColor(inv, cv2.COLOR_GRAY2RGB)
+                cv2.putText(canvas, "+10", (sx, pad_y + dh - 2), cv2.FONT_HERSHEY_SIMPLEX, fscale, (0, 0, 0), 4, cv2.LINE_AA)
+                txt = self.en_ocr.recognize_array(canvas).get("text", "")
+                m_c = re.search(r"10\+\s*([1-3])\s*\+10", txt)
+                if m_c:
+                    return True, int(m_c.group(1))
+        return True, 1
+
     def _detect_hand_card_slots(self, frame: np.ndarray) -> List[Tuple[int, int, int, int, bool]]:
         """Detect card column slots via light card title strip brightness projection + non-overlapping Trouble (眠気) scan."""
         h, w = frame.shape[:2]
@@ -5735,6 +5970,8 @@ class LiveScreenRecognizer:
         selected: bool,
         playable: bool,
         visual_playable: Optional[bool] = None,
+        customized: bool = False,
+        customization_count: int = 0,
     ) -> RecognizedCard:
         cyan_plus = bool(
             right_title_patch.size > 0
@@ -5745,6 +5982,7 @@ class LiveScreenRecognizer:
             up_row = self.db.get_card_by_id(matched["upgraded_id"])
             if up_row:
                 matched = up_row
+        eff_cust_cnt = int(customization_count or (1 if customized else 0))
         return RecognizedCard(
             card_id=matched["id"],
             name=matched["name"],
@@ -5756,7 +5994,63 @@ class LiveScreenRecognizer:
             dsl_summary=matched.get("description") or "",
             type=matched.get("type") or "active",
             rarity=matched.get("rarity") or "N",
+            customized=bool(customized or eff_cust_cnt > 0),
+            customization_count=eff_cust_cnt,
         )
+
+    def _parse_right_p_item_counters(self, frame: np.ndarray) -> Dict[int, int]:
+        """Read remaining trigger counter ('3回' / '2回' / '1回') under the top-right stage P-item slot 0."""
+        h, w = frame.shape[:2]
+        if h < 400 or w < 240:
+            return {}
+        dig_crop = frame[int(h * 0.160) : int(h * 0.188), int(w * 0.820) : int(w * 0.855)]
+        if dig_crop.size > 0 and self.en_ocr is not None:
+            core = self._extract_outlined_white_core(dig_crop, radius=2, white_min=200, dark_max=155)
+            core_px = int((core > 0).sum())
+            if 25 <= core_px <= 350:
+                ch, cw = core.shape
+                n_l, labels, stats_cc, _ = cv2.connectedComponentsWithStats((core > 0).astype(np.uint8))
+                clean = np.zeros((ch, cw), dtype=np.uint8)
+                for i in range(1, n_l):
+                    area = int(stats_cc[i, cv2.CC_STAT_AREA])
+                    bw_cc = int(stats_cc[i, cv2.CC_STAT_WIDTH])
+                    bh_cc = int(stats_cc[i, cv2.CC_STAT_HEIGHT])
+                    if area >= 6 and int(ch * 0.25) <= bh_cc <= int(ch * 0.92) and bw_cc <= int(cw * 0.80):
+                        clean[labels == i] = 255
+                ys, xs = np.where(clean > 0)
+                if len(xs) > 0:
+                    sub = clean[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
+                    up = cv2.resize(sub, (max(1, sub.shape[1] * 4), max(1, sub.shape[0] * 4)), interpolation=cv2.INTER_CUBIC)
+                    _, up = cv2.threshold(up, 115, 255, cv2.THRESH_BINARY)
+                    inv = 255 - up
+                    dh, dw = inv.shape[:2]
+                    pad_y = 28
+                    fscale = max(0.75, dh / 24.0)
+                    (tw_p, _), _ = cv2.getTextSize("10+", cv2.FONT_HERSHEY_SIMPLEX, fscale, 4)
+                    (sw_p, _), _ = cv2.getTextSize("+10", cv2.FONT_HERSHEY_SIMPLEX, fscale, 4)
+                    x0 = 24
+                    dx = x0 + tw_p + 10
+                    sx = dx + dw + 10
+                    canvas = np.full((dh + pad_y * 2, sx + sw_p + 30, 3), 255, dtype=np.uint8)
+                    cv2.putText(canvas, "10+", (x0, pad_y + dh - 2), cv2.FONT_HERSHEY_SIMPLEX, fscale, (0, 0, 0), 4, cv2.LINE_AA)
+                    canvas[pad_y : pad_y + dh, dx : dx + dw] = cv2.cvtColor(inv, cv2.COLOR_GRAY2RGB)
+                    cv2.putText(canvas, "+10", (sx, pad_y + dh - 2), cv2.FONT_HERSHEY_SIMPLEX, fscale, (0, 0, 0), 4, cv2.LINE_AA)
+                    txt = self.en_ocr.recognize_array(canvas).get("text", "")
+                    m = re.search(r"10\+\s*([1-9])\s*\+10", txt)
+                    if m:
+                        return {0: int(m.group(1))}
+        if self.ocr is not None:
+            jp_txt = self._ocr_crop_upscaled(
+                frame,
+                (int(w * 0.815), int(h * 0.155), int(w * 0.915), int(h * 0.195)),
+                scale=3,
+                mode="raw",
+                pad=12,
+            )
+            m_jp = re.search(r"([1-9])\s*[回団囹]", jp_txt)
+            if m_jp:
+                return {0: int(m_jp.group(1))}
+        return {}
 
     def _parse_left_buff_diamonds(self, frame: np.ndarray, *, plan: str = "logic") -> Dict[str, int]:
         """Detect left-HUD blue buff diamonds for Logic (好印象/やる気) and Sense (好調/集中/絶好調)."""
@@ -6631,6 +6925,7 @@ class LiveScreenRecognizer:
                     playable_flag = float(title_p.mean()) >= 145.0 or float(np.percentile(title_p, 88)) >= 200.0
                     if visual_playable is not None:
                         playable_flag = playable_flag and visual_playable
+                is_cust, cust_cnt = self._detect_hand_card_customization(frame[y1:y2, x1:x2])
                 cards.append(
                     self._build_recognized_card(
                         matched,
@@ -6640,6 +6935,8 @@ class LiveScreenRecognizer:
                         selected=is_sel,
                         playable=playable_flag,
                         visual_playable=visual_playable,
+                        customized=is_cust,
+                        customization_count=cust_cnt,
                     )
                 )
 
@@ -6678,6 +6975,7 @@ class LiveScreenRecognizer:
                     if (card_body_fb.size > 0 and float(card_body_fb.max()) > 0.0)
                     else None
                 )
+                is_cust_fb, cust_cnt_fb = self._detect_hand_card_customization(frame[c_y1:c_y2, c_x1:c_x2])
                 cards.append(
                     self._build_recognized_card(
                         matched,
@@ -6687,6 +6985,8 @@ class LiveScreenRecognizer:
                         selected=sel_fb,
                         playable=playable_fb,
                         visual_playable=vp_fb,
+                        customized=is_cust_fb,
+                        customization_count=cust_cnt_fb,
                     )
                 )
 
@@ -6717,6 +7017,7 @@ class LiveScreenRecognizer:
             buff_hud_occluded=buff_hud_occluded,
             idol_stats=meta["stats"],
             p_items=ctx["p_items"],
+            p_item_remaining_counts=self._parse_right_p_item_counters(frame),
             stage_bonuses=ctx["stage_bonuses"],
             cards=cards,
             hand_slot_count=max(len(slots), len(cards)),

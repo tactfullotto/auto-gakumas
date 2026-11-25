@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 
 from demo.schemas import BoundingBox, DecisionResult, LegalAction, ScreenObservation
@@ -28,6 +28,56 @@ from demo.maa_bridge.win32_controller import Win32Controller
 from demo.maa_bridge.custom_recognition import GakumasSceneRoutingRecognition
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_hand_card_core_motion(
+    frame_a: np.ndarray,
+    frame_b: np.ndarray,
+    cards: Sequence[Any],
+) -> Tuple[float, bool]:
+    """Compute motion MAD inside opaque card cores, ignoring animated 3D background gaps."""
+    if frame_a is None or frame_b is None or frame_a.size == 0 or frame_a.shape != frame_b.shape:
+        return (0.0, False)
+    if len(frame_a.shape) < 2:
+        return (0.0, False)
+    fh, fw = frame_a.shape[:2]
+    card_mads: List[float] = []
+    for c in cards or ():
+        bbox = getattr(c, "bbox", None)
+        if bbox is None:
+            continue
+        if isinstance(bbox, dict):
+            xmin = int(bbox.get("xmin", 0) or 0)
+            ymin = int(bbox.get("ymin", 0) or 0)
+            xmax = int(bbox.get("xmax", 0) or 0)
+            ymax = int(bbox.get("ymax", 0) or 0)
+        else:
+            xmin = int(getattr(bbox, "xmin", 0) or 0)
+            ymin = int(getattr(bbox, "ymin", 0) or 0)
+            xmax = int(getattr(bbox, "xmax", 0) or 0)
+            ymax = int(getattr(bbox, "ymax", 0) or 0)
+        cw = xmax - xmin
+        ch = ymax - ymin
+        if cw < 24 or ch < 24:
+            continue
+        x1 = max(0, min(fw - 1, int(xmin + cw * 0.16)))
+        x2 = max(x1 + 1, min(fw, int(xmax - cw * 0.16)))
+        y1 = max(0, min(fh - 1, int(ymin + ch * 0.32)))
+        y2 = max(y1 + 1, min(fh, int(ymax - ch * 0.08)))
+        crop_a = frame_a[y1:y2, x1:x2].astype(np.float32)
+        crop_b = frame_b[y1:y2, x1:x2].astype(np.float32)
+        card_mads.append(float(np.mean(np.abs(crop_b - crop_a))))
+    if card_mads:
+        return (max(card_mads), True)
+
+    y1 = max(0, min(fh - 1, int(fh * 0.84)))
+    y2 = max(y1 + 1, min(fh, int(fh * 0.89)))
+    x1 = max(0, min(fw - 1, int(fw * 0.18)))
+    x2 = max(x1 + 1, min(fw, int(fw * 0.82)))
+    fallback_mad = float(
+        np.mean(np.abs(frame_b[y1:y2, x1:x2].astype(np.float32) - frame_a[y1:y2, x1:x2].astype(np.float32)))
+    )
+    return (fallback_mad, False)
 
 
 class RunnerState(str, Enum):
@@ -396,6 +446,12 @@ class GakumasRunner:
         logger.info("Restored GakumasRunner checkpoint from %s (step=%d, deckN=%d).", target, self.current_step, len(self.tracker.produce_deck))
         return True
 
+    def _get_inner_recognizer(self):
+        return (
+            getattr(self.scene_routing_reco, "_live_recognizer", None)
+            or getattr(self.scene_routing_reco, "recognizer", None)
+        )
+
     def reset_produce_session(self, clear_checkpoint: bool = True) -> None:
         """Reset deck/LLM memory (and optional saved checkpoint) when starting a brand-new Produce run."""
         self.tracker.reset(keep_deck=False)
@@ -447,15 +503,24 @@ class GakumasRunner:
             # 2 & 3. Screencap retrieval + Vision perception (wait out NOW LOADING frames cleanly)
             frame: Optional[np.ndarray] = None
             obs: Optional[ScreenObservation] = None
+            precaptured_frame: Optional[np.ndarray] = None
+            precaptured_ts: float = 0.0
             max_loading_waits = 6 if (self.mode != "mock" and not isinstance(self.controller, MockController)) else 1
             for load_try in range(max_loading_waits):
                 frame = None
-                for attempt in range(self.max_retries):
-                    with self._ctrl_lock:
-                        frame = self.controller.screencap()
-                    if frame is not None and frame.size > 0:
-                        break
-                    time.sleep(0.1)
+                cap_ts = 0.0
+                if precaptured_frame is not None and precaptured_frame.size > 0:
+                    frame = precaptured_frame
+                    cap_ts = precaptured_ts
+                    precaptured_frame = None
+                else:
+                    for attempt in range(self.max_retries):
+                        with self._ctrl_lock:
+                            frame = self.controller.screencap()
+                        if frame is not None and frame.size > 0:
+                            cap_ts = time.perf_counter()
+                            break
+                        time.sleep(0.1)
 
                 if frame is None or frame.size == 0:
                     raise RuntimeError("Failed to capture valid screencap from controller.")
@@ -502,26 +567,45 @@ class GakumasRunner:
                     obs.scene_type == "battle_turn"
                     and isinstance(self.controller, (AdbController, Win32Controller))
                     and max_loading_waits > 1
-                    and load_try < 3
+                    and load_try < 2
                     and obs.cards
                     and frame is not None
                     and frame.size > 0
                 ):
-                    fh_m, fw_m = frame.shape[:2]
-                    hand_a = frame[int(fh_m * 0.73) : int(fh_m * 0.90), int(fw_m * 0.04) : int(fw_m * 0.96)]
-                    time.sleep(0.45)
+                    rem_wait = 0.30 - (time.perf_counter() - cap_ts)
+                    if rem_wait > 0.01:
+                        time.sleep(rem_wait)
                     with self._ctrl_lock:
                         probe_frame = self.controller.screencap()
                     if probe_frame is not None and probe_frame.shape == frame.shape:
-                        hand_b = probe_frame[int(fh_m * 0.73) : int(fh_m * 0.90), int(fw_m * 0.04) : int(fw_m * 0.96)]
-                        hand_motion = float(np.mean(np.abs(hand_b.astype(np.float32) - hand_a.astype(np.float32))))
-                        if hand_motion > 6.0:
+                        hand_motion, used_card_cores = _compute_hand_card_core_motion(
+                            frame, probe_frame, obs.cards
+                        )
+                        motion_thresh = 14.0 if used_card_cores else 16.0
+                        if hand_motion > motion_thresh:
                             logger.info(
-                                "Detected active battle hand animation (motion=%.1f, try %d/3); settling 0.85s...",
+                                "Detected active battle hand animation (card_motion=%.1f, cores=%s, try %d/2); settling...",
                                 hand_motion,
+                                used_card_cores,
                                 load_try + 1,
                             )
-                            time.sleep(0.85)
+                            time.sleep(0.45)
+                            with self._ctrl_lock:
+                                settled_frame = self.controller.screencap()
+                            settled_ts = time.perf_counter()
+                            if settled_frame is not None and settled_frame.shape == frame.shape:
+                                settle_motion, _ = _compute_hand_card_core_motion(
+                                    probe_frame, settled_frame, obs.cards
+                                )
+                                if settle_motion > motion_thresh:
+                                    time.sleep(0.45)
+                                    with self._ctrl_lock:
+                                        settled_frame2 = self.controller.screencap()
+                                    if settled_frame2 is not None and settled_frame2.shape == frame.shape:
+                                        settled_frame = settled_frame2
+                                        settled_ts = time.perf_counter()
+                                precaptured_frame = settled_frame
+                                precaptured_ts = settled_ts
                             continue
                 if (
                     obs.scene_type == "battle_turn"
@@ -537,6 +621,24 @@ class GakumasRunner:
                     )
                     if self._battle_toast_settle_sleep > 0:
                         time.sleep(self._battle_toast_settle_sleep)
+                    continue
+                if (
+                    obs.scene_type == "shop"
+                    and isinstance(self.controller, (AdbController, Win32Controller))
+                    and max_loading_waits > 1
+                    and load_try < 2
+                    and not any(
+                        k in str((o or {}).get("name") or "") or k in str((o or {}).get("shop_slot_key") or "")
+                        for o in (obs.options or [])
+                        for k in ("スキルカード", "Pドリンク", "交換する")
+                    )
+                ):
+                    logger.info(
+                        "Detected shop shelf transition with 0 product options (try %d/2); settling %.2fs before re-capture...",
+                        load_try + 1,
+                        max(0.85, float(self._shop_settle_sleep)),
+                    )
+                    time.sleep(max(0.85, float(self._shop_settle_sleep)))
                     continue
                 if (
                     obs.scene_type == "shop"
@@ -559,7 +661,7 @@ class GakumasRunner:
                             max_loading_waits,
                             self._shop_settle_sleep,
                         )
-                        reco_inner = getattr(self.scene_routing_reco, "recognizer", None)
+                        reco_inner = self._get_inner_recognizer()
                         if reco_inner is not None and hasattr(reco_inner, "_last_p_points"):
                             reco_inner._last_p_points = prev_shop_p
                         if self._shop_settle_sleep > 0:
@@ -579,13 +681,13 @@ class GakumasRunner:
                         else None
                     )
                 )
-                if ref_shop_p is not None and ref_shop_p >= 220 and cur_shop_p < ref_shop_p - 220:
+                if ref_shop_p is not None and ref_shop_p >= 180 and cur_shop_p < ref_shop_p - 180:
                     logger.warning(
                         "Preserving expected shop P-points %d over persistent implausible OCR drop (%d).",
                         ref_shop_p,
                         cur_shop_p,
                     )
-                    reco_inner = getattr(self.scene_routing_reco, "recognizer", None)
+                    reco_inner = self._get_inner_recognizer()
                     if reco_inner is not None and hasattr(reco_inner, "_last_p_points"):
                         reco_inner._last_p_points = ref_shop_p
                     if frame is not None:
@@ -593,7 +695,7 @@ class GakumasRunner:
                         if re_obs is not None:
                             obs = re_obs
                             cur_shop_p = int(getattr(obs, "p_points", 0) or 0)
-                    if cur_shop_p < ref_shop_p - 220:
+                    if cur_shop_p < ref_shop_p - 180:
                         obs.p_points = ref_shop_p
                         cur_shop_p = ref_shop_p
                 if cur_shop_p > 0:
@@ -832,7 +934,7 @@ class GakumasRunner:
                             self.controller.swipe(sx, sy1, sx, sy2, duration_ms=650)
                             time.sleep(0.35)
                     time.sleep(0.5)
-                    reco_inner = getattr(self.scene_routing_reco, "recognizer", None)
+                    reco_inner = self._get_inner_recognizer()
                     if reco_inner is not None and hasattr(reco_inner, "_reward_visited_slots"):
                         reco_inner._reward_visited_slots.clear()
                     with self._ctrl_lock:
@@ -973,6 +1075,28 @@ class GakumasRunner:
                             for o in (obs.options or [])
                         )
                     )
+                    _opt_blob = " ".join(
+                        f"{o.get('name') or ''} {o.get('description') or ''}"
+                        for o in (obs.options or [])
+                    )
+                    _post_battle_reward_toks = (
+                        "受け取る",
+                        "受け取らない",
+                        "再抽選",
+                        "獲得",
+                        "報酬",
+                        "CLEAR",
+                        "PERFECT",
+                        "削除",
+                        "強化",
+                        "カスタマイズ",
+                        "セレクトチェンジ",
+                        "特別指導",
+                    )
+                    has_post_battle_reward_cue = any(
+                        k in (obs.raw_text or "") or k in _opt_blob
+                        for k in _post_battle_reward_toks
+                    )
                     keep_mid_battle_move_modal = (
                         obs.scene_type == "card_reward"
                         and self.tracker.in_battle
@@ -990,6 +1114,7 @@ class GakumasRunner:
                                     for k in ("受け取る", "チェンジ", "削除", "強化", "カスタマイズ", "獲得")
                                 )
                             )
+                            or (not has_post_battle_reward_cue)
                         )
                     )
                     keep_mid_battle_skip = False
@@ -1353,9 +1478,9 @@ class GakumasRunner:
                         else:
                             time.sleep(0.65)
                     elif obs.scene_type == "popup" and chosen_name in (
-                        "交換", "交換する", "強化", "強化する", "削除", "削除する", "捨てる", "破棄", "破棄する", "決定"
+                        "交換", "交換する", "強化", "強化する", "削除", "削除する", "捨てる", "破棄", "破棄する", "決定", "更新する"
                     ):
-                        time.sleep(1.00)
+                        time.sleep(1.25 if chosen_name in ("交換", "交換する", "更新する") else 1.00)
                     elif is_drink_discard_click and obs.scene_type in ("card_reward", "produce_schedule"):
                         time.sleep(0.90)
                     else:
@@ -1464,23 +1589,23 @@ class GakumasRunner:
                 elif obs.scene_type == "shop":
                     self._pending_change_pickup_cid = None
                 if obs.scene_type == "card_reward" and picked_name == "再抽選":
-                    reco_inner = getattr(self.scene_routing_reco, "recognizer", None)
+                    reco_inner = self._get_inner_recognizer()
                     if reco_inner is not None and hasattr(reco_inner, "_reward_visited_slots"):
                         reco_inner._reward_visited_slots.clear()
                 elif obs.scene_type == "card_reward" and chosen_action.payload.get("slot_idx") is not None:
-                    reco_inner = getattr(self.scene_routing_reco, "recognizer", None)
+                    reco_inner = self._get_inner_recognizer()
                     if reco_inner is not None and hasattr(reco_inner, "_reward_visited_slots"):
                         reco_inner._reward_visited_slots.add(int(chosen_action.payload["slot_idx"]))
-                if obs.scene_type == "shop":
+                if obs.scene_type == "shop" or (obs.scene_type == "popup" and picked_name in ("更新する", "リフレッシュ")):
                     shop_slot_key = (chosen_action.payload or {}).get("shop_slot_key")
-                    reco_inner = getattr(self.scene_routing_reco, "recognizer", None)
-                    if picked_name == "リフレッシュ" or str(shop_slot_key or "") == "リフレッシュ":
+                    reco_inner = self._get_inner_recognizer()
+                    if picked_name in ("リフレッシュ", "更新する") or str(shop_slot_key or "") == "リフレッシュ":
                         if reco_inner is not None:
                             if hasattr(reco_inner, "_shop_visited_slots"):
                                 reco_inner._shop_visited_slots.clear()
                             if hasattr(reco_inner, "_shop_last_clicked_slot"):
                                 reco_inner._shop_last_clicked_slot = None
-                    elif shop_slot_key and ":" in str(shop_slot_key):
+                    elif obs.scene_type == "shop" and shop_slot_key and ":" in str(shop_slot_key):
                         if reco_inner is not None:
                             if hasattr(reco_inner, "_shop_visited_slots"):
                                 reco_inner._shop_visited_slots.add(str(shop_slot_key))
@@ -1497,7 +1622,7 @@ class GakumasRunner:
                         exp_p = max(0, int(base_p) - spent)
                         self._last_shop_expected_p = exp_p
                         self.tracker.p_points = exp_p
-                        reco_inner = getattr(self.scene_routing_reco, "recognizer", None)
+                        reco_inner = self._get_inner_recognizer()
                         if reco_inner is not None and hasattr(reco_inner, "_last_p_points"):
                             reco_inner._last_p_points = exp_p
                     if (picked_name == "リフレッシュ" or str((chosen_action.payload or {}).get("shop_slot_key") or "") == "リフレッシュ") and self.mode == "adb":

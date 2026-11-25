@@ -294,3 +294,84 @@ def test_hybrid_ismcts_end_to_end_and_card_conservation():
                 rand_scores.append(rsim.run_random_episode().final_score)
 
             assert float(np.mean(hybrid_scores)) > float(np.mean(rand_scores)) * 1.5
+
+
+def test_maskable_ppo_early_stopping_and_planner_disk_cache(tmp_path):
+    from demo.core.tracker import GameStateTracker
+    from demo.schemas import BoundingBox, LegalAction, RecognizedCard, ScreenObservation
+    from demo.sim.live_battle_planner import LiveBattlePlanner, LiveBattlePlannerConfig
+
+    with GakumasDB("gakumas_library.db") as db:
+        cfg = build_last_run_hif_preset(db=db, stage="round2")
+        with GakumasBattleEnv(cfg, db=db, score_scale=1_000_000.0, record_logs=False) as env:
+            ppo_cfg = MaskablePPOConfig(
+                hidden_dim=64,
+                total_episodes=640,
+                episodes_per_update=32,
+                ppo_epochs=2,
+                minibatch_size=128,
+                val_interval_updates=2,
+                val_episodes=6,
+                early_stop_patience=2,
+                early_stop_min_episodes=128,
+                early_stop_min_rel_delta=10.0,  # force stale counter to trigger right at patience=2
+                seed=777,
+            )
+            _, summary = MaskablePPOTrainer(env, ppo_cfg).train()
+            assert summary["stopped_early"] is True
+            assert summary["episodes_trained"] < 640
+
+        cache_dir = tmp_path / "battle_cache"
+        obs = ScreenObservation(
+            scene_type="battle_turn",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=9,
+            turn=1,
+            turns_remaining=4,
+            stamina=40,
+            max_stamina=44,
+            buffs={"goodImpressionTurns": 6, "motivation": 6},
+            cards=[
+                RecognizedCard(card_id=159, name="アイドル魂+", playable=True, bbox=BoundingBox(xmin=20, ymin=1184, xmax=181, ymax=1456)),
+                RecognizedCard(card_id=129, name="ワクワクが止まらない+", playable=True, bbox=BoundingBox(xmin=185, ymin=1184, xmax=346, ymax=1456)),
+            ],
+            options=[{"choice_id": 2, "name": "SKIP", "title": "SKIP"}],
+        )
+        acts = [
+            LegalAction(choice_id=0, action_type="play_card", description="アイドル魂+", bbox=BoundingBox(xmin=20, ymin=1184, xmax=181, ymax=1456), payload={"card_id": 159, "name": "アイドル魂+"}),
+            LegalAction(choice_id=1, action_type="play_card", description="ワクワクが止まらない+", bbox=BoundingBox(xmin=185, ymin=1184, xmax=346, ymax=1456), payload={"card_id": 129, "name": "ワクワクが止まらない+"}),
+            LegalAction(choice_id=2, action_type="end_turn", description="SKIP", bbox=BoundingBox(xmin=580, ymin=1100, xmax=700, ymax=1160), payload={"name": "SKIP"}),
+        ]
+        tr = GameStateTracker(plan="logic", p_idol_id=163)
+        tr.produce_deck = [920, 922, 159, 129, 127, 137, 23, 297, 299, 427]
+
+        p_cfg = LiveBattlePlannerConfig(
+            ppo_hidden_dim=32,
+            ppo_episodes=256,
+            ppo_episodes_per_update=32,
+            ismcts_simulations=4,
+            policy_cache_dir=str(cache_dir),
+        )
+        planner1 = LiveBattlePlanner(db=db, cfg=p_cfg)
+        planner1.decide_battle_action(obs, acts, tracker=tr)
+        cached_files = list(cache_dir.glob("*.npz"))
+        assert len(cached_files) == 1
+
+        # Fresh planner instance loads cached policy from disk without calling trainer.train()
+        train_calls = 0
+        orig_train = MaskablePPOTrainer.train
+
+        def _count_train(self_tr, *a, **kw):
+            nonlocal train_calls
+            train_calls += 1
+            return orig_train(self_tr, *a, **kw)
+
+        MaskablePPOTrainer.train = _count_train  # type: ignore[method-assign]
+        try:
+            planner2 = LiveBattlePlanner(db=db, cfg=p_cfg)
+            planner2.decide_battle_action(obs, acts, tracker=tr)
+            assert train_calls == 0
+            assert planner2._net is not None
+        finally:
+            MaskablePPOTrainer.train = orig_train  # type: ignore[method-assign]

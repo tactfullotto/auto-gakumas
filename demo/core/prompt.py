@@ -256,6 +256,11 @@ class PromptBuilder:
                     mem_extra_rem = int(custom_meta.get("extra_use_remaining") or (1 if has_mem_free_extra else 0))
                     mem_draw_on_play = int(custom_meta.get("draw_on_play") or 0)
                     is_sig = bool(card_data.get("is_signature") == 1 or card_data.get("force_initial_hand") == 1)
+                    cust_cnt = int(
+                        getattr(card, "customization_count", 0)
+                        or (1 if getattr(card, "customized", False) else 0)
+                    )
+                    is_cust = bool(getattr(card, "customized", False) or cust_cnt > 0)
                     dsl_act_out = raw_dsl_actions
                     if has_mem_free_extra and "cardusesremaining+=" not in dsl_act_out.lower():
                         dsl_act_out = f"{dsl_act_out}; cardUsesRemaining+=1".strip("; ")
@@ -266,6 +271,8 @@ class PromptBuilder:
                         else:
                             desc += " (无实际扣血)"
                     else:
+                        if is_cust:
+                            desc += f" [✨专精强化×{cust_cnt}]"
                         if is_sig and has_dsl_free_extra:
                             desc += " [⭐固有卡+1使用次数(不耗行动点)]"
                         elif has_dsl_free_extra:
@@ -306,6 +313,8 @@ class PromptBuilder:
                                 "memory_draw_on_play": mem_draw_on_play,
                                 "upgraded": card.upgraded,
                                 "hp_loss": card.hp_loss,
+                                "customized": is_cust,
+                                "customization_count": cust_cnt,
                             },
                         )
                     )

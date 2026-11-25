@@ -283,6 +283,7 @@ class LocalHybridDecisionAgent:
         self._shop_last_points = None
         self._shop_refresh_count = 0
         self._shop_refresh_noop_streak = 0
+        self._shop_refresh_since_purchase = 0
         self._shop_visit_count = 0
         self._in_shop_visit = False
         self._first_shop_delete_done = False
@@ -1329,9 +1330,31 @@ class LocalHybridDecisionAgent:
         if same_battle_sim and getattr(sim, "turns_remaining", None) is not None:
             rem_turns = min(rem_turns, int(sim.turns_remaining))
         late_window = rem_turns <= 3 or double_armed
+        hand_bases: set[int] = set()
+        if obs is not None and getattr(obs, "cards", None):
+            for hc in obs.cards:
+                hcid = int(getattr(hc, "card_id", 0) or 0)
+                if hcid > 0:
+                    hrow = self.db.get_card_by_id(hcid)
+                    hand_bases.add(int(hrow.get("base_id") or hcid) if hrow else hcid)
+        elif same_battle_sim and getattr(sim, "hand", None):
+            for hc in sim.hand:
+                cfg_h = getattr(hc, "cfg", None)
+                if cfg_h is not None:
+                    hb = int(getattr(cfg_h, "base_id", 0) or getattr(cfg_h, "card_id", 0) or 0)
+                    if hb > 0:
+                        hand_bases.add(hb)
+        has_813_in_hand = 813 in hand_bases
+        has_162_in_hand = 162 in hand_bases
         if base_id == 813 or "自然体の魅力" in text_all:
+            if has_813_in_hand and not double_armed and not has_162_in_hand:
+                return 15_500 if late_window else 8_000
+            if double_armed or has_162_in_hand:
+                return 22_000 if (late_window or double_armed) else 12_000
             return 20_000 if late_window else 9_000
         if base_id == 162 or "国民的アイドル" in text_all:
+            if has_813_in_hand and not double_armed and not has_162_in_hand:
+                return 22_000 if late_window else 12_500
             return 18_500 if late_window else 8_500
         if base_id == 775 or "話題沸騰" in text_all:
             return 14_000
@@ -2056,7 +2079,7 @@ class LocalHybridDecisionAgent:
                     unvisited_prevs = []
                 elif claim_name == "移動する":
                     max_seen_score = max(v[0] for v in self._reward_seen_slots.values())
-                    max_tutor_scans = 12 if max_seen_score <= -50_000 else 6
+                    max_tutor_scans = 16 if max_seen_score < 18_000 else 8
                     if len(self._reward_seen_slots) >= max_tutor_scans:
                         unvisited_prevs = []
                 if unvisited_prevs:
@@ -2568,6 +2591,7 @@ class LocalHybridDecisionAgent:
             self._shop_expecting_priority_card_confirm = pcid
             self._shop_attempted_card_ids.add(pcid)
             self._shop_attempted_card_ids.add(pbase)
+            self._shop_refresh_since_purchase = 0
             return DecisionResult(
                 choice_id=priority_card_exchange.choice_id,
                 reason=f"LocalAgent(shop): Purchasing priority skill card #{pcid} -> {priority_card_exchange.description}",
@@ -2592,6 +2616,7 @@ class LocalHybridDecisionAgent:
             self._shop_card_popup_guard = False
             self._shop_expecting_drink_confirm = True
             self._shop_attempted_drink_ids.add(int((drink_exchange.payload or {}).get("drink_id") or 0))
+            self._shop_refresh_since_purchase = 0
             return DecisionResult(
                 choice_id=drink_exchange.choice_id,
                 reason=f"LocalAgent(shop): Purchasing P-drink -> {drink_exchange.description}",
@@ -2607,6 +2632,7 @@ class LocalHybridDecisionAgent:
             and int((a.payload or {}).get("price") or 0) <= p_pts
             for a in allowed
         )
+        refresh_since_purchase = int(getattr(self, "_shop_refresh_since_purchase", 0) or 0)
         can_refresh_for_drinks = any(
             (
                 str((a.payload or {}).get("name") or "") == "リフレッシュ"
@@ -2615,8 +2641,9 @@ class LocalHybridDecisionAgent:
             and "リフレッシュ" not in self._shop_noop_features
             and self.preferences.spend_all_final_shop
             and self._shop_refresh_count < 8
-            and int((a.payload or {}).get("price") or 0) <= 200
-            and p_pts >= int((a.payload or {}).get("price") or 0) + 60
+            and refresh_since_purchase < 2
+            and int((a.payload or {}).get("price") or 0) <= 90
+            and p_pts >= int((a.payload or {}).get("price") or 0) + 75
             for a in allowed
         )
         # Iron rule in W8 インターバル: while held drinks < 4 and a drink or refresh is available,
@@ -2702,9 +2729,12 @@ class LocalHybridDecisionAgent:
         best_key = _slot_id(best)
         if best_key == "リフレッシュ":
             self._shop_refresh_count += 1
+            self._shop_refresh_since_purchase = int(getattr(self, "_shop_refresh_since_purchase", 0) or 0) + 1
             self._shop_last_clicked_feature = "リフレッシュ"
         elif best is not exit_act and best_key and best_key not in ("終了", "次へ", "交換する"):
             self._shop_clicked_slots.add(best_key)
+            if best_key in ("強化", "削除", "カスタマイズ", "セレクトチェンジ") or best_key.startswith("Pドリンク:"):
+                self._shop_refresh_since_purchase = 0
             if best_key in ("強化", "削除", "カスタマイズ", "セレクトチェンジ"):
                 self._shop_last_clicked_feature = best_key
         return DecisionResult(
@@ -2806,6 +2836,25 @@ class LocalHybridDecisionAgent:
                 return DecisionResult(
                     choice_id=cancel.choice_id,
                     reason="LocalAgent(popup): Cancelling unexpected card exchange confirmation",
+                    source="local_hybrid",
+                )
+        if (
+            ("休み確認" in raw_l or "休みますか" in raw_l)
+            and obs is not None
+            and obs.scenario_id in ("hif_honsen", "hif")
+            and int(obs.week or 0) == 6
+        ):
+            cancel_rest = next(
+                (
+                    a for a in safe_acts
+                    if any(k in str((a.payload or {}).get("name") or a.description) for k in ("キャンセル", "いいえ", "閉じる", "とじる"))
+                ),
+                None,
+            )
+            if cancel_rest is not None:
+                return DecisionResult(
+                    choice_id=cancel_rest.choice_id,
+                    reason="LocalAgent(popup): Cancelling W6 rest modal to inspect 相談",
                     source="local_hybrid",
                 )
         if self._shop_expecting_priority_card_confirm and (
@@ -2915,9 +2964,33 @@ class LocalHybridDecisionAgent:
                     )
                 )
             )
-            if scene in ("produce_schedule", "shop", "home", "produce_setup") or (
-                scene == "card_reward" and not is_mid_battle_move_modal
-            ):
+            _act_blob = " ".join(
+                f"{(a.payload or {}).get('name') or ''} {a.description or ''}" for a in legal_actions
+            )
+            has_post_battle_reward_cue = any(
+                k in raw_obs_txt or k in _act_blob
+                for k in (
+                    "受け取る",
+                    "受け取らない",
+                    "再抽選",
+                    "獲得",
+                    "報酬",
+                    "CLEAR",
+                    "PERFECT",
+                    "削除",
+                    "強化",
+                    "カスタマイズ",
+                    "セレクトチェンジ",
+                    "特別指導",
+                )
+            )
+            in_active_battle = bool(self.tracker is not None and getattr(self.tracker, "in_battle", False))
+            should_reset_on_reward = (
+                scene == "card_reward"
+                and not is_mid_battle_move_modal
+                and (not in_active_battle or has_post_battle_reward_cue)
+            )
+            if scene in ("produce_schedule", "shop", "home", "produce_setup") or should_reset_on_reward:
                 self.battle_planner.reset_battle()
         if scene in ("produce_schedule", "battle_turn", "home", "produce_setup"):
             self._in_shop_visit = False

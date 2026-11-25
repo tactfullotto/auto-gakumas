@@ -384,6 +384,52 @@ def test_hif_manual_loadout_memories_and_preferences_roundtrip(web_server):
     imp_st, imp_res = _post_json(f"{base_url}/api/hif/import-library", {"data": exported})
     assert imp_st == 200
     assert imp_res["state"]["deck_ids"] == [920, 922, 137, 299]
+    assert len(imp_res["state"]["memory_passives"]) == 1
+
+    # Regression: importing JSON where memory_slots has passives (+6 好調/+6 集中) and stale memory_passives: []
+    # must preserve slot-derived passives rather than overwriting them with [].
+    stale_payload = dict(exported)
+    stale_payload["memory_slots"] = [
+        {
+            "slot": 1,
+            "label": "メモリー #1",
+            "owner_name": "好调+6",
+            "passives": [
+                {"key": "start_good_condition", "label": "試験開始時 好調+Xターン", "value": 6},
+            ],
+        },
+        {
+            "slot": 2,
+            "label": "メモリー #2",
+            "owner_name": "集中+6",
+            "passives": [
+                {"key": "start_concentration", "label": "試験開始時 集中+X", "value": 6},
+            ],
+        },
+        {"slot": 3, "label": "メモリー #3", "owner_name": "", "passives": []},
+        {"slot": 4, "label": "メモリー #4", "owner_name": "", "passives": []},
+    ]
+    stale_payload["memory_passives"] = []
+    imp2_st, imp2_res = _post_json(f"{base_url}/api/hif/import-library", {"data": stale_payload})
+    assert imp2_st == 200
+    assert [
+        (p["key"], p["value"]) for p in imp2_res["state"]["memory_passives"]
+    ] == [("start_good_condition", 6), ("start_concentration", 6)]
+
+    # Standalone memory_passives with empty slot passives should mirror into slot 1 for editing
+    standalone_payload = dict(exported)
+    standalone_payload["memory_slots"] = [
+        {"slot": idx, "label": f"メモリー #{idx}", "owner_name": "", "passives": []}
+        for idx in range(1, 5)
+    ]
+    standalone_payload["memory_passives"] = [
+        {"key": "start_good_condition", "label": "試験開始時 好調+Xターン", "value": 6},
+        {"key": "start_concentration", "label": "試験開始時 集中+X", "value": 6},
+    ]
+    imp3_st, imp3_res = _post_json(f"{base_url}/api/hif/import-library", {"data": standalone_payload})
+    assert imp3_st == 200
+    assert len(imp3_res["state"]["memory_passives"]) == 2
+    assert len(imp3_res["state"]["memory_slots"][0]["passives"]) == 2
 
     # Security: path traversal in import filename must return HTTP 400/403
     for bad_name in ("../manifest.json", "demo/schemas.py", "..\\gakumas_library.db"):

@@ -2220,6 +2220,16 @@
     font-size: 12.5px;
   }
 
+  .hif-passive-val {
+    padding: 3px 6px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-glass);
+    background: var(--surface-elevated);
+    font-size: 12.5px;
+    font-weight: 700;
+    inline-size: 64px;
+  }
+
   .hif-slot-add-bar {
     display: flex;
     flex-wrap: wrap;

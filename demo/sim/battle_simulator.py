@@ -94,6 +94,33 @@ class CardConfig:
     customizations: Dict[int, int] = field(default_factory=dict)
     custom_modifiers: Dict[str, Any] = field(default_factory=dict)
     source_type: str = "produce"
+    _conditions: Tuple[Any, ...] = field(init=False, repr=False, compare=False)
+    _static_cost: Optional[Tuple[str, int]] = field(init=False, repr=False, compare=False)
+    _is_motivation_gainer: bool = field(init=False, repr=False, compare=False)
+    _has_motivation_cost: bool = field(init=False, repr=False, compare=False)
+    _has_card_uses_gain: bool = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        pe = self.parsed_effects if isinstance(self.parsed_effects, dict) else {}
+        self._conditions = tuple(pe.get("conditions") or ())
+        cost_clauses = pe.get("cost") or ()
+        act_list = cost_clauses[0].get("actions") or () if cost_clauses else ()
+        if not cost_clauses or not act_list:
+            self._static_cost = ("__none__", 0)
+        else:
+            act = act_list[0]
+            lhs = str(act.get("lhs") or "cost")
+            rhs = act.get("rhs", 0)
+            if isinstance(rhs, (int, float)):
+                self._static_cost = (lhs, int(float(rhs)))
+            elif isinstance(rhs, dict) and rhs.get("type") == "number":
+                self._static_cost = (lhs, int(float(rhs.get("value") or 0)))
+            else:
+                self._static_cost = None
+        dsl_txt = self.dsl_actions or ""
+        self._is_motivation_gainer = "motivation+=" in dsl_txt
+        self._has_motivation_cost = (self._static_cost is None) or (self._static_cost[0] == "motivation")
+        self._has_card_uses_gain = "cardUsesRemaining+=" in dsl_txt
 
 
 @dataclass
@@ -1065,6 +1092,7 @@ class HeadlessBattleSimulator:
         self.card_effect_counters: Dict[int, int] = {}
         self.card_turn_counters: Dict[int, int] = {}
 
+        self._has_any_motivation_card: bool = False
         self.next_uid = 1
         self._all_instances: Dict[int, CardInstance] = {}
         self.hand: List[CardInstance] = []
@@ -1140,6 +1168,8 @@ class HeadlessBattleSimulator:
         inst = CardInstance(uid=self.next_uid, cfg=cfg)
         self.next_uid += 1
         self._all_instances[inst.uid] = inst
+        if cfg._is_motivation_gainer or cfg._has_motivation_cost:
+            self._has_any_motivation_card = True
         return inst
 
     def _query_basic_padding_card_ids(self) -> List[int]:
@@ -1394,15 +1424,21 @@ class HeadlessBattleSimulator:
         return drawn
 
     def _effective_cost_with_nullify(self, cfg: CardConfig) -> Tuple[str, int, Optional[str]]:
-        cost_clauses = cfg.parsed_effects.get("cost") or []
-        if not cost_clauses:
-            return ("cost", 0, None)
-        act_list = cost_clauses[0].get("actions") or []
-        if not act_list:
-            return ("cost", 0, None)
-        act = act_list[0]
-        lhs = str(act.get("lhs") or "cost")
-        amt = int(float(self._eval_expr(act.get("rhs", 0))))
+        sc = cfg._static_cost
+        if sc is not None:
+            if sc[0] == "__none__":
+                return ("cost", 0, None)
+            lhs, amt = sc
+        else:
+            cost_clauses = cfg.parsed_effects.get("cost") or []
+            if not cost_clauses:
+                return ("cost", 0, None)
+            act_list = cost_clauses[0].get("actions") or []
+            if not act_list:
+                return ("cost", 0, None)
+            act = act_list[0]
+            lhs = str(act.get("lhs") or "cost")
+            amt = int(float(self._eval_expr(act.get("rhs", 0))))
         if lhs in ("cost", "stamina"):
             if amt > 0:
                 if cfg.card_type == "active" and int(self.buffs.get("nullifyCostActiveCards", 0) or 0) > 0:
@@ -1436,10 +1472,12 @@ class HeadlessBattleSimulator:
             return False
         if self.buffs.get("noMentalTurns", 0) > 0 and inst.cfg.card_type == "mental":
             return False
-        snap = self._snapshot_condition_state(card=inst, is_direct=False)
-        for cond_node in inst.cfg.parsed_effects.get("conditions") or []:
-            if not self._eval_condition(cond_node, snap=snap):
-                return False
+        conds = inst.cfg._conditions
+        if conds:
+            snap = self._snapshot_condition_state(card=inst, is_direct=False)
+            for cond_node in conds:
+                if not self._eval_condition(cond_node, snap=snap):
+                    return False
         cost_var, eff_amt = self._effective_cost(inst.cfg)
         if cost_var == "cost":
             return (self.genki + self.stamina) >= eff_amt
@@ -1466,7 +1504,7 @@ class HeadlessBattleSimulator:
         )
 
     def is_free_action_card(self, inst: CardInstance) -> bool:
-        return ("cardUsesRemaining+=" in (inst.cfg.dsl_actions or "")) or self.has_unused_memory_extra_use(inst)
+        return inst.cfg._has_card_uses_gain or self.has_unused_memory_extra_use(inst)
 
     def has_active_troubles(self) -> bool:
         return any(
@@ -1496,6 +1534,13 @@ class HeadlessBattleSimulator:
 
     def active_motivation_economy(self) -> Dict[str, int]:
         """Return order-invariant summary of Motivation spenders and gainers across active deck zones."""
+        if not self._has_any_motivation_card:
+            return {
+                "spenders_count": 0,
+                "spenders_total_cost": 0,
+                "gainers_count": 0,
+                "unplayable_mot_in_hand": 0,
+            }
         spenders_count = 0
         spenders_total_cost = 0
         gainers_count = 0
@@ -1503,13 +1548,15 @@ class HeadlessBattleSimulator:
         cur_mot = int(self.buffs.get("motivation", 0) or 0)
         for z_idx, zone in enumerate((self.hand, self.draw_pile, self.discard_pile)):
             for inst in zone:
-                c_var, c_amt = self._effective_cost(inst.cfg)
-                if c_var == "motivation" and c_amt > 0:
-                    spenders_count += 1
-                    spenders_total_cost += int(c_amt)
-                    if z_idx == 0 and cur_mot < c_amt:
-                        unplayable_mot_in_hand += 1
-                if "motivation+=" in (inst.cfg.dsl_actions or ""):
+                cfg = inst.cfg
+                if cfg._has_motivation_cost:
+                    c_var, c_amt = self._effective_cost(cfg)
+                    if c_var == "motivation" and c_amt > 0:
+                        spenders_count += 1
+                        spenders_total_cost += int(c_amt)
+                        if z_idx == 0 and cur_mot < c_amt:
+                            unplayable_mot_in_hand += 1
+                if cfg._is_motivation_gainer:
                     gainers_count += 1
         return {
             "spenders_count": spenders_count,
@@ -1645,9 +1692,55 @@ class HeadlessBattleSimulator:
         total += len(re.findall(r"\bdrawcard\b", rem_top))
         return total
 
+    @staticmethod
+    def is_pure_extra_use_drink(drink: DrinkConfig) -> bool:
+        """Return True for pure +card-use drinks with no draw/score/buff side effects (e.g. #18 初星ホエイプロテイン)."""
+        if drink.drink_id == 18:
+            return True
+        dsl_l = (drink.dsl_actions or "").lower()
+        if "cardusesremaining+=" not in dsl_l:
+            return False
+        if (
+            HeadlessBattleSimulator.is_tutor_drink(drink)
+            or HeadlessBattleSimulator.is_score_buff_drink(drink)
+            or HeadlessBattleSimulator.is_active_retrigger_drink(drink)
+            or HeadlessBattleSimulator.drink_draw_count(drink) > 0
+        ):
+            return False
+        rem = re.sub(r"cardusesremaining\s*\+=\s*\d+", "", dsl_l)
+        rem = re.sub(r"[\s;]+", "", rem)
+        return rem == ""
+
+    @staticmethod
+    def is_hand_upgrade_drink(drink: DrinkConfig) -> bool:
+        """Return True for drinks that upgrade the current hand (e.g. #21 初星ブーストエナジー)."""
+        return drink.drink_id == 21 or "upgradehand" in (drink.dsl_actions or "").lower()
+
+    def count_playable_non_free_cards(self, *, fin_window: int = 0, has_813: Optional[bool] = None) -> int:
+        """Count playable non-trouble cards in hand that actually consume a card use."""
+        cnt = 0
+        resolved_813: Optional[bool] = has_813
+        for inst in self.hand:
+            if self.is_trouble_card(inst.cfg) or self.is_free_action_card(inst):
+                continue
+            if not self.can_play_card(inst):
+                continue
+            if fin_window > 0 and self.double_card_effect_cards == 0:
+                if resolved_813 is None:
+                    resolved_813 = self.has_unexhausted_card_family(813)
+                if self.should_hold_for_finisher(card_cfg=inst.cfg, fin_window=fin_window, has_813=resolved_813):
+                    continue
+            cnt += 1
+        return cnt
+
     def can_use_drink(self, drink_cfg: DrinkConfig, *, hand_size: Optional[int] = None) -> bool:
-        """Core engine legality rule: forbid wasting tutor (#22) or pure-draw drinks at 5-card hand cap."""
+        """Core engine legality rule: forbid wasting tutor (#22)/draw drinks at 5-card cap or #18/#21 on empty hand."""
         h_sz = len(self.hand) if hand_size is None else int(hand_size)
+        if h_sz <= 0 and (
+            self.is_pure_extra_use_drink(drink_cfg)
+            or self.is_hand_upgrade_drink(drink_cfg)
+        ):
+            return False
         if h_sz >= self.MAX_HAND_SIZE:
             if self.is_tutor_drink(drink_cfg):
                 return False
@@ -1693,6 +1786,38 @@ class HeadlessBattleSimulator:
         if self.is_score_buff_drink(drink_cfg) and self.turns_remaining <= 1:
             return bool(can_play_first)
         return bool(h_sz >= self.MAX_HAND_SIZE or can_play_first)
+
+    def should_defer_drink_now(
+        self,
+        drink_cfg: DrinkConfig,
+        *,
+        hand_size: Optional[int] = None,
+        has_playable_non_finisher: Optional[bool] = None,
+        playable_non_free_cards: Optional[int] = None,
+        card_uses_remaining: Optional[int] = None,
+        fin_window: int = 0,
+        has_813: Optional[bool] = None,
+    ) -> bool:
+        """Defer drinks that overflow hand cap, waste upgradeHand on empty hand, or waste pure +1 use."""
+        if self.should_defer_drink_for_hand_cap(
+            drink_cfg,
+            hand_size=hand_size,
+            has_playable_non_finisher=has_playable_non_finisher,
+        ):
+            return True
+        h_sz = len(self.hand) if hand_size is None else int(hand_size)
+        if self.is_hand_upgrade_drink(drink_cfg) and h_sz <= 0:
+            return True
+        if self.is_pure_extra_use_drink(drink_cfg):
+            cur_uses = max(1, int(self.card_uses_remaining if card_uses_remaining is None else card_uses_remaining))
+            non_free = (
+                int(playable_non_free_cards)
+                if playable_non_free_cards is not None
+                else self.count_playable_non_free_cards(fin_window=fin_window, has_813=has_813)
+            )
+            if non_free <= cur_uses:
+                return True
+        return False
 
     def should_prune_blank_end_turn(
         self,
@@ -1750,9 +1875,16 @@ class HeadlessBattleSimulator:
                 return True
         return False
 
-    def is_safe_dominating_free_card(self, inst: CardInstance) -> bool:
+    def is_safe_dominating_free_card(
+        self,
+        inst: CardInstance,
+        *,
+        playable: Optional[bool] = None,
+    ) -> bool:
         """Return True when playing `inst` now strictly dominates spending the final action on a turn-ending card."""
-        if not self.can_play_card(inst) or not self.is_free_action_card(inst):
+        if playable is False:
+            return False
+        if (playable is None and not self.can_play_card(inst)) or not self.is_free_action_card(inst):
             return False
         cfg_c = inst.cfg
         # Any non-L card (Mental or Active) consumes double_card_effect_cards in _use_card
@@ -2164,10 +2296,32 @@ class HeadlessBattleSimulator:
                 if registered_before is not None
                 else list(self.triggers)
             )
-            cond_snap = condition_snapshot or self._snapshot_condition_state(
-                card=self.used_card,
-                is_direct=self._current_change_is_direct,
-            )
+            if condition_snapshot is not None:
+                cond_snap = condition_snapshot
+            else:
+                needs_snap = False
+                for tr in snapshot_triggers:
+                    if tr.phase != phase:
+                        continue
+                    if tr.limit is not None and tr.triggers_count >= tr.limit:
+                        continue
+                    if tr.ttl is not None and tr.ttl < 0:
+                        continue
+                    if tr.delay is not None and tr.delay >= 0:
+                        continue
+                    if tr.grants_double_card_effect and self.double_card_effect_cards > 0:
+                        continue
+                    if tr.conditions or tr.effects:
+                        needs_snap = True
+                        break
+                cond_snap = (
+                    self._snapshot_condition_state(
+                        card=self.used_card,
+                        is_direct=self._current_change_is_direct,
+                    )
+                    if needs_snap
+                    else None
+                )
 
             # Stage P-items firing at cardUsed (#404 咲季の完全食・改)
             if phase == "cardUsed":
@@ -2233,7 +2387,7 @@ class HeadlessBattleSimulator:
             # Stage P-items firing at afterCardUsed (e.g. 憧れ続けた輝き: 好調>=8, every 4th 好調 card)
             if phase == "afterCardUsed" and self.used_card is not None:
                 used_dsl = self.used_card.cfg.dsl_actions or ""
-                if "goodConditionTurns" in used_dsl:
+                if "goodConditionTurns+=" in used_dsl:
                     cur_gc = int(self.buffs.get("goodConditionTurns", 0) or 0)
                     for it in self.config.p_items:
                         if it.mode != "stage" or it.trigger_every_n_gc_cards <= 0:
@@ -2667,6 +2821,8 @@ class HeadlessBattleSimulator:
                         customizations=inst.cfg.customizations,
                         custom_modifiers=inst.cfg.custom_modifiers,
                     )
+                    if inst.cfg._is_motivation_gainer or inst.cfg._has_motivation_cost:
+                        self._has_any_motivation_card = True
             elif cname in ("useRandomCardFree", "useRandomFree"):
                 owner_uid = owner.uid if owner else (trig.owner_uid if trig else None)
                 matching_uids = self._eval_target_ast(act.get("target"), owner_uid=owner_uid)
@@ -3099,6 +3255,7 @@ class HeadlessBattleSimulator:
             uid: CardInstance(uid=c.uid, cfg=c.cfg) for uid, c in self._all_instances.items()
         }
         cloned._all_instances = cloned_instances
+        cloned._has_any_motivation_card = self._has_any_motivation_card
 
         def _map_inst(c: Optional[CardInstance]) -> Optional[CardInstance]:
             if c is None:
