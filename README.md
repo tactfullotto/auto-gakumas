@@ -69,8 +69,7 @@ A local web interface for configuring and launching produce runs without touchin
 
 **Launch:**
 ```bash
-python demo/app.py
-# Open http://localhost:5000
+python -m demo.web.server --host 127.0.0.1 --port 8765 --open
 ```
 
 **Features:**
@@ -145,8 +144,8 @@ python -m demo.run_hif_local \
 
 ### Web UI
 ```bash
-python demo/app.py
-# Open http://localhost:5000  →  H.I.F Workbench tab
+python -m demo.web.server --host 127.0.0.1 --port 8765 --open
+# Opens http://127.0.0.1:8765  →  H.I.F Workbench tab
 ```
 
 ---

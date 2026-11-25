@@ -69,8 +69,7 @@ LocalHybridDecisionAgent      ← 规则引擎 + 本地 ML
 
 **启动：**
 ```bash
-python demo/app.py
-# 在浏览器打开 http://localhost:5000
+python -m demo.web.server --host 127.0.0.1 --port 8765 --open
 ```
 
 **功能：**
@@ -147,8 +146,8 @@ python -m demo.run_hif_local \
 
 ### Web UI
 ```bash
-python demo/app.py
-# 打开 http://localhost:5000 → H.I.F Workbench 标签
+python -m demo.web.server --host 127.0.0.1 --port 8765 --open
+# 自动打开 http://127.0.0.1:8765 → H.I.F Workbench 标签
 ```
 
 ---

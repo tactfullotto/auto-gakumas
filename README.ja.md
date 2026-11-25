@@ -69,8 +69,7 @@ CLI を使わずにプロデュースを設定・起動できるローカル Web
 
 **起動：**
 ```bash
-python demo/app.py
-# ブラウザで http://localhost:5000 を開く
+python -m demo.web.server --host 127.0.0.1 --port 8765 --open
 ```
 
 **機能：**
@@ -147,8 +146,8 @@ python -m demo.run_hif_local \
 
 ### Web UI
 ```bash
-python demo/app.py
-# http://localhost:5000 → H.I.F Workbench タブを開く
+python -m demo.web.server --host 127.0.0.1 --port 8765 --open
+# http://127.0.0.1:8765 が自動で開きます → H.I.F Workbench タブ
 ```
 
 ---
