@@ -212,21 +212,45 @@ class GakumasActionCodec:
             action_map[self.end_turn_action_id] = ("end_turn", -1)
 
         if prune_dominated:
-            if self.finisher_play_max_turns_remaining > 0 and sim.double_card_effect_cards == 0:
-                has_813 = sim.has_unexhausted_card_family(813)
-                held_aids = {
+            has_813 = sim.has_unexhausted_card_family(813)
+            has_zeroing = sim.has_unexhausted_zeroing_finisher()
+            held_aids = {
+                aid
+                for aid, (kind, idx) in action_map.items()
+                if sim.should_hold_for_finisher(
+                    card_cfg=sim.hand[idx].cfg if kind == "card" else None,
+                    drink_cfg=sim.available_drinks[idx] if kind == "drink" else None,
+                    fin_window=self.finisher_play_max_turns_remaining,
+                    has_813=has_813,
+                    has_zeroing=has_zeroing,
+                )
+            }
+            if held_aids and len(held_aids) < len(action_map):
+                action_map = {aid: v for aid, v in action_map.items() if aid not in held_aids}
+                for aid in held_aids:
+                    mask[aid] = False
+
+            if sim.double_card_effect_cards > 0 or sim.has_armed_active_retrigger(same_turn_only=True):
+                other_2x_targets = any(
+                    kind == "card"
+                    and not sim.is_trouble_card(sim.hand[idx].cfg)
+                    and not sim.is_resource_zeroing_finisher(sim.hand[idx].cfg)
+                    and sim.hand[idx].cfg.rarity != "L"
+                    and (sim.double_card_effect_cards > 0 or sim.hand[idx].cfg.card_type == "active")
+                    for kind, idx in action_map.values()
+                )
+                forbid_2x_aids = {
                     aid
                     for aid, (kind, idx) in action_map.items()
-                    if sim.should_hold_for_finisher(
-                        card_cfg=sim.hand[idx].cfg if kind == "card" else None,
-                        drink_cfg=sim.available_drinks[idx] if kind == "drink" else None,
-                        fin_window=self.finisher_play_max_turns_remaining,
-                        has_813=has_813,
+                    if kind == "card"
+                    and sim.should_forbid_double_on_card(
+                        sim.hand[idx].cfg,
+                        has_other_double_target=other_2x_targets,
                     )
                 }
-                if held_aids and len(held_aids) < len(action_map):
-                    action_map = {aid: v for aid, v in action_map.items() if aid not in held_aids}
-                    for aid in held_aids:
+                if forbid_2x_aids and len(forbid_2x_aids) < len(action_map):
+                    action_map = {aid: v for aid, v in action_map.items() if aid not in forbid_2x_aids}
+                    for aid in forbid_2x_aids:
                         mask[aid] = False
 
             if sim.double_card_effect_cards > 0:
@@ -294,6 +318,7 @@ class GakumasActionCodec:
                     if kind == "card"
                     and sim.hand[idx].cfg.card_type == "active"
                     and sim.hand[idx].cfg.rarity != "L"
+                    and not sim.is_resource_zeroing_finisher(sim.hand[idx].cfg)
                 }
                 if active_aids:
                     action_map = {

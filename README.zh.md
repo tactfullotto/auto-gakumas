@@ -11,7 +11,7 @@
 `auto-gakumas` 通过 MuMu 模拟器完整驱动一次 Gakumas 制作周期：
 
 1. **日程 & 课程** — 按固定每周日程选择课程/休息。
-2. **卡牌奖励** — 评估并选取技能卡奖励；自动丢弃被禁/低价值卡；若换牌界面出现不可除外 M 卡则点击刷新。
+2. **卡牌奖励** — 评估并选取技能卡奖励；自动丢弃被禁/低价值卡；若换牌界面出现不可除外 M 卡则点击刷新；强制换牌时自动保护已定制强化卡。
 3. **商店** — 升级卡牌、购买饮料、在最终离开前耗尽 P 点；最后一次访问时刷新商店直至 P 点花尽。
 4. **H.I.F 本戦（第 1、2 局）** — 使用本地 `PPO + SO-ISMCTS` 决策引擎，无需任何云端 API 调用。
 
@@ -26,19 +26,20 @@ ADB (MuMu 127.0.0.1:16384)
         │
         ▼
 LiveScreenRecognizer          ← OpenCV + Tesseract OCR
-  • 场景检测
-  • 卡牌/饮料/分数 OCR
+  • 场景检测 & 橙色 L 角选框识别
+  • 卡牌/饮料/分数 OCR & 定制徽章检测
   • P点"三明治法"OCR（白色描边数字，抗HUD遮挡）
-  • 战斗手牌动画稳定等待
+  • 斜体纠偏剩余回合环 OCR + 连续 2 帧跳变恢复
+  • 战斗手牌动画稳定等待 & 選択中卡死重试
         │
         ▼
 LocalHybridDecisionAgent      ← 规则引擎 + 本地 ML
   ├── ScheduleAgent            （课程/休息选择）
-  ├── CardRewardAgent          （卡牌选取与丢弃规则）
+  ├── CardRewardAgent          （卡牌选取、换牌保护与丢弃规则）
   ├── ShopAgent                （升级/购买/刷新 + 访问次数追踪）
-  └── LiveBattlePlanner        ← PPO价值网络 + SO-ISMCTS
+  └── LiveBattlePlanner        ← PPO价值网络 + SO-ISMCTS + 步进自愈同步
             │
-            └── HeadlessBattleSimulator  （快速本地推演）
+            └── HeadlessBattleSimulator  （快速本地推演 & P道具触发）
 ```
 
 ### 核心模块
@@ -46,12 +47,13 @@ LocalHybridDecisionAgent      ← 规则引擎 + 本地 ML
 | 路径 | 说明 |
 |---|---|
 | `demo/run_hif_local.py` | 主入口；支持 `on_step_callback` / `on_frame_callback` 回调 |
-| `demo/agent/local_agent.py` | `LocalHybridDecisionAgent` 总调度；P-idol 数值 fallback；商店访问状态机 |
-| `demo/maa_bridge/runner.py` | 步进循环；战斗手牌动画等待；卡牌强化弹窗去歧义 |
-| `demo/vision/live_adb_recognizer.py` | `LiveScreenRecognizer`；P点三明治OCR；商店图标缓存 |
-| `demo/sim/live_battle_planner.py` | `LiveBattlePlanner`；finisher连击门控（好調≥13）；免费牌/SB饮料识别 |
-| `demo/sim/battle_simulator.py` | `HeadlessBattleSimulator`；5张手牌上限强制 |
-| `demo/sim/ismcts.py` | SO-ISMCTS；反 SKIP 剪枝；Trouble 牌除外兜底 |
+| `demo/agent/local_agent.py` | `LocalHybridDecisionAgent` 总调度；P-idol 数值 fallback；商店访问状态机；强制换牌定制卡保护 |
+| `demo/maa_bridge/runner.py` | 步进循环；战斗手牌动画等待；5 张扇形手牌点击收束与 `選択中` 卡死重试；强化弹窗去歧义 |
+| `demo/vision/live_adb_recognizer.py` | `LiveScreenRecognizer`；P点三明治OCR；斜体纠偏回合环OCR（暗化HUD兜底）；商店图标缓存 |
+| `demo/sim/live_battle_planner.py` | `LiveBattlePlanner`；finisher连击门控（好調≥13）；清零型终结卡规则；步进反馈自愈与回合同步 |
+| `demo/sim/battle_simulator.py` | `HeadlessBattleSimulator`；5张手牌上限；清零型终结卡与禁双倍规则；感性 P 道具（`#27092 届けたい想い` 等） |
+| `demo/sim/ismcts.py` | SO-ISMCTS；反 SKIP 剪枝；Trouble 牌除外兜底；清零型终结卡剪枝 |
+| `demo/sim/rl_env.py` | `GakumasActionCodec`；合法动作掩码与劣势动作剪枝 |
 | `demo/core/idol_guides.py` | P-idol 默认能力值查询与能力轴排序 |
 | `demo/core/hif_catalog.py` | `ProducePreferences`、HIF 回忆能力模板、职业元数据 |
 | `demo/core/tracker.py` | 局内状态追踪（牌组、手牌、P道具、制作步骤） |
@@ -94,7 +96,7 @@ python demo/app.py
 
 ### 饮料 #25 — 特製ハツボシエキス（严格门控）
 仅当以下**三条件同时满足**时才饮用：
-1. 手中已有一张非 Legend 的 Active 卡。
+1. 手中已有一张非 Legend 的 Active 卡（排除清零型终结卡）。
 2. 饮用后该 Active 卡立即可打出。
 3. 本回合随即打出该 Active 卡。
 
@@ -103,14 +105,18 @@ python demo/app.py
 ### 商店 — 花光 P 点
 最后一次访问商店时，持续刷新直至 P 点耗尽。优先升级卡牌，其次购买新卡。
 
-### 换牌 — M 卡刷新
-前期换牌若出现不可除外的 M 卡，点击刷新重滚换牌池。
+### 换牌 — M 卡刷新与定制卡保护
+- 前期换牌若出现不可除外的 M 卡，点击刷新重滚换牌池。
+- 强制 H.I.F `チェンジ` 界面下，自动保护已定制强化卡（`カスタマイズ済`），直接切换至未定制槽位，避免取消返回第 1 页死循环。
 
-### 战斗 — Finisher 连击门控
-`#162/#163 → #813/#814` 连击仅在追踪到 `goodConditionTurns ≥ 13` 时触发（或 OCR 被遮挡且处于最后 2 回合时允许）。
+### 战斗 — 终结卡连击与资源清零型终结卡规则
+- **成长型终结连击（`#162/#163 → #813/#814`）**：仅在追踪到 `goodConditionTurns ≥ 13` 时触发（或 OCR 被遮挡且处于最后 2 回合时允许）。
+- **资源清零型单发终结卡（`#618/#619 世界一の勇気`、`#152/#153 届いて`）**：严格留至最后 1 回合（`turns_remaining == 1`）；禁止消耗已就绪的 `2x`（`#162/#163` 或 `#25`）以免第二次触发打在已清零数值上；仅在最后 1 回合且缺手时检索。
 
-### 战斗 — 手牌动画稳定
-读牌前，Runner 会等待手牌区域帧差均值低于 6.0（最多3次探测 × 0.85秒），避免抽牌动画中误识别。
+### 战斗 — 出牌可靠性与模拟器自愈同步
+- **手牌动画稳定**：读牌前等待手牌区域帧差均值低于 6.0（最多 3 次探测 × 0.85 秒），避免抽牌动画中误识别。
+- **5 张扇形手牌收束点击与重试**：外侧槽位点击自动向内收束（`13.5%–86.5%` 宽度），二次确认点击抬起后位置；若卡牌卡在 `選択中` 则自动补点重试，未确认打出时不误记消耗。
+- **步进反馈自愈**：若 `limit=1` 卡在设备上未真正触发而仍留在手中，自动回滚模拟器幻觉状态（`double_card_effect_cards`、`cards_used`、误进回合），并基于手牌变化对齐真实剩余回合数。
 
 ---
 
@@ -153,7 +159,7 @@ python demo/app.py
 python -m pytest demo/tests/ -k "not test_live_xai_llm_decision_e2e" -q
 ```
 
-预期结果：**298 passed, 2 skipped**，约 91 秒。
+共 **342 项**离线单元与集成测试（排除真机 E2E）。
 
 ---
 

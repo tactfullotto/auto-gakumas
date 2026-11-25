@@ -164,6 +164,9 @@ class PItemConfig:
     grant_draw_cards: int = 0
     trigger_attr_turn: str = ""
     grant_genki: int = 0
+    trigger_turns_remaining_lte: int = 0
+    move_random_ssr_to_hand: int = 0
+    grant_conc_pct_of_gc: float = 0.0
 
 
 def generate_stage_turn_schedule(
@@ -796,6 +799,19 @@ def _build_sense_hif_p_items() -> List[PItemConfig]:
     """Build Sense H.I.F P-items ([ガラクタロード] 姫崎 莉波 & common Sense support items)."""
     return [
         PItemConfig(
+            item_id=27092,
+            name="届けたい想い",
+            rarity="SSR",
+            mode="stage",
+            source_type="pIdol",
+            description="残り3ターン以内のターン開始後、ランダムな山札か捨札のSSRを手札に移動 + 好調の20%分集中増加 + 固定体力消費1 (3回)",
+            trigger_turns_remaining_lte=3,
+            move_random_ssr_to_hand=1,
+            grant_conc_pct_of_gc=0.20,
+            stamina_cost_on_trigger=1,
+            max_triggers=3,
+        ),
+        PItemConfig(
             item_id=9139,
             name="憧れ続けた輝き",
             rarity="SSR",
@@ -1321,7 +1337,7 @@ class HeadlessBattleSimulator:
         return out
 
     def _compute_final_score_gain(self, raw_score: float, *, apply_sense_mods: bool = False) -> int:
-        if raw_score <= 0 and not apply_sense_mods:
+        if raw_score <= 0:
             return 0
         spec = self.current_turn_spec()
         if not apply_sense_mods:
@@ -1615,6 +1631,8 @@ class HeadlessBattleSimulator:
             for inst in self.hand:
                 if inst.cfg.card_type != "active" or inst.cfg.rarity == "L":
                     continue
+                if self.is_resource_zeroing_finisher(inst.cfg):
+                    continue
                 if not self.can_play_card(inst):
                     continue
                 cost_var, eff_amt = self._effective_cost(inst.cfg)
@@ -1636,6 +1654,57 @@ class HeadlessBattleSimulator:
         """Return True for limit=1 finishers whose score scales with total cardsUsed (e.g. #813/#814)."""
         return cfg.limit_count == 1 and (
             cfg.base_id == 813 or "cardsUsed" in (cfg.dsl_actions or "")
+        )
+
+    @staticmethod
+    def is_resource_zeroing_finisher(cfg: CardConfig) -> bool:
+        """Return True for limit=1 finishers that scale on a stat and immediately zero it (e.g. #618/#619, #152/#153)."""
+        if cfg.base_id in (618, 152):
+            return True
+        if cfg.limit_count != 1:
+            return False
+        dsl = cfg.dsl_actions or ""
+        if "score+=" not in dsl:
+            return False
+        return bool(
+            re.search(r"\b(goodConditionTurns|genki|goodImpressionTurns|concentration)\s*=\s*0\b", dsl)
+        )
+
+    def has_unexhausted_zeroing_finisher(self) -> bool:
+        """Return True if any resource-zeroing solo finisher (#618/#619, #152/#153) remains unexhausted."""
+        for zone in (self.hand, self.draw_pile, self.discard_pile):
+            if any(self.is_resource_zeroing_finisher(c.cfg) for c in zone):
+                return True
+        return False
+
+    def should_forbid_double_on_card(
+        self,
+        card_cfg: CardConfig,
+        *,
+        has_other_double_target: bool = True,
+    ) -> bool:
+        """Core engine rule: never waste armed 2x (#162/#163 or #25) on a resource-zeroing finisher."""
+        if not self.is_resource_zeroing_finisher(card_cfg) or card_cfg.rarity == "L":
+            return False
+        is_2x_target = self.double_card_effect_cards > 0 or (
+            self.has_armed_active_retrigger(same_turn_only=True) and card_cfg.card_type == "active"
+        )
+        if not is_2x_target:
+            return False
+        if self.turns_remaining > 1:
+            return True
+        if not has_other_double_target:
+            return False
+        if self.card_uses_remaining >= 2:
+            return True
+        return any(
+            self.can_play_card(inst)
+            and self.is_free_action_card(inst)
+            and not self.is_trouble_card(inst.cfg)
+            and not self.is_resource_zeroing_finisher(inst.cfg)
+            and inst.cfg.rarity != "L"
+            and (self.double_card_effect_cards > 0 or inst.cfg.card_type == "active")
+            for inst in self.hand
         )
 
     @staticmethod
@@ -1779,6 +1848,7 @@ class HeadlessBattleSimulator:
             else any(
                 self.can_play_card(inst)
                 and not self.is_late_scaling_finisher(inst.cfg)
+                and not (self.is_resource_zeroing_finisher(inst.cfg) and self.turns_remaining > 1)
                 and not self.is_trouble_card(inst.cfg)
                 for inst in self.hand
             )
@@ -1845,20 +1915,33 @@ class HeadlessBattleSimulator:
         drink_cfg: Optional[DrinkConfig] = None,
         fin_window: int,
         has_813: Optional[bool] = None,
+        has_zeroing: Optional[bool] = None,
     ) -> bool:
         """Hold finishers, 2x enablers, tutor drinks, and timed score-buff multipliers until the late burst window."""
-        if fin_window <= 0 or self.double_card_effect_cards > 0:
+        # Core engine rule: resource-zeroing solo finishers (#618/#619 gc=0, #152/#153 genki=0)
+        # MUST be held until the final turn (turns_remaining == 1), even if 2x is armed!
+        if card_cfg is not None and self.is_resource_zeroing_finisher(card_cfg) and self.turns_remaining > 1:
+            return True
+        if fin_window <= 0:
             return False
         has_fin = has_813 if has_813 is not None else self.has_unexhausted_card_family(813)
+        has_zfin = has_zeroing if has_zeroing is not None else self.has_unexhausted_zeroing_finisher()
+        has_any_fin = has_fin or has_zfin
+        # In a #813/#814 deck, armed 2x unlocks immediate burst (finisher / #22 tutor / #12/#14).
+        # In a pure resource-zeroing finisher deck (#618/#619, #152/#153 without #813), early #162/#163
+        # carries across turns and must NOT prematurely burn #22 tutor or #12/#14/#775 outside the burst window!
+        if self.double_card_effect_cards > 0 and (has_fin or not has_zfin):
+            return False
         if card_cfg is not None:
-            if self.turns_remaining > fin_window:
+            if self.double_card_effect_cards == 0 and self.turns_remaining > fin_window:
                 if self.is_late_scaling_finisher(card_cfg):
                     return True
+                # Only hold #162/#163 for 2x-compatible finishers (#813/#814), NEVER for resource-zeroing finishers
                 if has_fin and self.is_double_effect_enabler(card_cfg):
                     return True
-            if has_fin and self.is_timed_score_buff_card(card_cfg) and self.turns_remaining > max(3, fin_window + 1):
+            if has_any_fin and self.is_timed_score_buff_card(card_cfg) and self.turns_remaining > max(3, fin_window + 1):
                 return True
-        if drink_cfg is not None and has_fin:
+        if drink_cfg is not None and has_any_fin:
             if self.is_tutor_drink(drink_cfg) and self.turns_remaining > fin_window:
                 return True
             if self.is_score_buff_drink(drink_cfg):
@@ -1893,8 +1976,8 @@ class HeadlessBattleSimulator:
         # Do not force a lower-value Active card to consume #25 Active-only retrigger
         if self.has_armed_active_retrigger() and cfg_c.card_type == "active" and cfg_c.rarity != "L":
             return False
-        # Never auto-force #162/#163 double-effect enablers prematurely
-        if self.is_double_effect_enabler(cfg_c):
+        # Never auto-force #162/#163 double-effect enablers or resource-zeroing finishers prematurely
+        if self.is_double_effect_enabler(cfg_c) or self.is_resource_zeroing_finisher(cfg_c):
             return False
         # Do not force a limit_count==1 card early when one of its conditional bonus blocks is currently False
         if cfg_c.limit_count == 1 and self.turns_remaining > 2:
@@ -2384,6 +2467,46 @@ class HeadlessBattleSimulator:
                     if it.grant_genki > 0:
                         self.genki += it.grant_genki
 
+            # Stage P-items firing at afterStartOfTurn (e.g. #27092 届けたい想い: 残り3T以内 SSR移動 + 好調20%集中 + 固定体力-1)
+            if phase == "afterStartOfTurn":
+                for it in self.config.p_items:
+                    if it.mode != "stage" or it.trigger_turns_remaining_lte <= 0:
+                        continue
+                    if self.turns_remaining > it.trigger_turns_remaining_lte:
+                        continue
+                    if it.max_triggers is not None and self.p_item_trigger_counts[it.item_id] >= it.max_triggers:
+                        continue
+                    if it.stamina_cost_on_trigger > 0 and self.stamina < it.stamina_cost_on_trigger:
+                        continue
+                    self.p_item_trigger_counts[it.item_id] += 1
+                    if it.stamina_cost_on_trigger > 0:
+                        self.stamina = max(0, self.stamina - it.stamina_cost_on_trigger)
+                    if it.move_random_ssr_to_hand > 0 and len(self.hand) < self.MAX_HAND_SIZE:
+                        ssr_cands = [
+                            (zlist, inst)
+                            for zlist in (self.draw_pile, self.discard_pile)
+                            for inst in zlist
+                            if inst.cfg.rarity == "SSR"
+                        ]
+                        for _ in range(it.move_random_ssr_to_hand):
+                            if not ssr_cands or len(self.hand) >= self.MAX_HAND_SIZE:
+                                break
+                            zlist, moved_inst = ssr_cands.pop(self.rng.randrange(len(ssr_cands)))
+                            zlist.remove(moved_inst)
+                            self.hand.append(moved_inst)
+                            self.moved_card = moved_inst
+                            self._fire_phase("cardMovedToHand", is_direct=True)
+                    if it.grant_conc_pct_of_gc > 0:
+                        cur_gc = int(self.buffs.get("goodConditionTurns", 0) or 0)
+                        add_c = _safe_ceil(cur_gc * it.grant_conc_pct_of_gc)
+                        if add_c > 0:
+                            gain_mult = 1.0 + max(0.0, self.total_conc_gain_buff())
+                            gained = _safe_ceil(add_c * gain_mult)
+                            self._set_buff_value(
+                                "concentration",
+                                int(self.buffs.get("concentration", 0) or 0) + gained,
+                            )
+
             # Stage P-items firing at afterCardUsed (e.g. 憧れ続けた輝き: 好調>=8, every 4th 好調 card)
             if phase == "afterCardUsed" and self.used_card is not None:
                 used_dsl = self.used_card.cfg.dsl_actions or ""
@@ -2523,15 +2646,23 @@ class HeadlessBattleSimulator:
                 self.genki = max(0, self.genki + int(val))
                 return
 
-            if lhs == "genki" and op == "+=":
-                if self.buffs.get("nullifyGenkiTurns", 0) > 0:
-                    return
-                add_g = int(val)
-                if add_g > 0:
-                    raw_g = add_g + max(0, int(self.buffs.get("motivation", 0) or 0))
-                    if self.buffs.get("uneaseTurns", 0) > 0:
-                        raw_g = _safe_ceil(raw_g * 0.67)
-                    self.genki += raw_g
+            if lhs == "genki":
+                if op == "+=":
+                    if self.buffs.get("nullifyGenkiTurns", 0) > 0:
+                        return
+                    add_g = int(val)
+                    if add_g > 0:
+                        raw_g = add_g + max(0, int(self.buffs.get("motivation", 0) or 0))
+                        if self.buffs.get("uneaseTurns", 0) > 0:
+                            raw_g = _safe_ceil(raw_g * 0.67)
+                        self.genki += raw_g
+                elif op == "=":
+                    self.genki = max(0, int(val))
+                elif op == "-=":
+                    self.genki = max(0, self.genki - max(0, int(val)))
+                elif op == "/=":
+                    if val > 0:
+                        self.genki = max(0, int(self.genki // val))
                 return
 
             if lhs == "goodImpressionTurns":
@@ -2728,6 +2859,7 @@ class HeadlessBattleSimulator:
                             candidates.append((zlist, inst))
                 rarity_rank = {"SSR": 5, "SR": 4, "L": 3, "R": 2, "N": 1, "T": 0}
                 has_fin_in_hand = any(self.is_late_scaling_finisher(c.cfg) for c in self.hand)
+                has_zfin_in_hand = any(self.is_resource_zeroing_finisher(c.cfg) for c in self.hand)
                 has_162_in_hand = any(self.is_double_effect_enabler(c.cfg) for c in self.hand)
                 fin_unexhausted = self.has_unexhausted_card_family(813)
                 in_fin_window = (self.turns_remaining <= 2) or (self.double_card_effect_cards > 0)
@@ -2737,7 +2869,13 @@ class HeadlessBattleSimulator:
                     if c.card_type == "trouble":
                         return (-1, 0, 0, 0, 0, 0)
                     tier = 2
-                    if in_fin_window:
+                    if self.is_resource_zeroing_finisher(c):
+                        # Only tutor resource-zeroing finisher (#618/#619, #152/#153) on final turn when not in hand
+                        if self.turns_remaining <= 1 and not has_zfin_in_hand:
+                            tier = 6
+                        else:
+                            tier = 0
+                    elif in_fin_window:
                         if self.is_late_scaling_finisher(c) and not has_fin_in_hand:
                             tier = 6
                         elif (

@@ -99,6 +99,7 @@ class LiveScreenRecognizer:
         self._last_stamina: Tuple[int, int] = (44, 44) if self.scenario_id in ("hif_honsen", "hif") else (23, 31)
         self._last_p_points: int = 0
         self._last_turns_remaining: int = 8
+        self._turn_drop_candidate: Optional[Tuple[int, int]] = None
         self._in_battle_scene: bool = False
         self._non_battle_streak: int = 0
         self._shop_visited_slots: Set[str] = set()
@@ -3448,20 +3449,31 @@ class LiveScreenRecognizer:
                 elif (not allow_trouble_dark) and (p95 < 175.0 or (mean_v < 122.0 and sat < 45.0)):
                     # Dimmed / darkened unselectable card (e.g. 眠気 / locked card in チェンジ)
                     continue
-                top_br = frame[max(0, y1 - 16) : min(h, y1 + 6), max(0, x1 + 4) : min(w, x2 - 4)]
-                bot_br = frame[max(0, y2 - 6) : min(h, y2 + 16), max(0, x1 + 4) : min(w, x2 - 4)]
+                top_y2 = min(h, y1 + (14 if (y2 - y1) > int(h * 0.082) else 6))
+                top_br = frame[max(0, y1 - 14) : top_y2, max(0, x1 - 10) : min(w, x2 + 10)]
+                bot_br = frame[max(0, y2 - 6) : min(h, y2 + 14), max(0, x1 - 10) : min(w, x2 + 10)]
+                left_outer = frame[y1:y2, max(0, x1 - 11) : max(0, x1 - 1)]
+                right_outer = frame[y1:y2, min(w, x2 + 1) : min(w, x2 + 11)]
                 o_cnt = 0
                 for br in (top_br, bot_br):
                     if br.size > 0:
                         o_cnt += int(
-                            ((br[:, :, 0] > 230) & (br[:, :, 1] > 115) & (br[:, :, 1] < 185) & (br[:, :, 2] < 85)).sum()
+                            ((br[:, :, 0] > 230) & (br[:, :, 1] > 115) & (br[:, :, 1] < 190) & (br[:, :, 2] < 90)).sum()
                         )
+                outer_o_cnt = 0
+                for obr in (left_outer, right_outer):
+                    if obr.size > 0:
+                        outer_o_cnt += int(
+                            ((obr[:, :, 0] > 225) & (obr[:, :, 1] > 115) & (obr[:, :, 1] < 195) & (obr[:, :, 2] < 95)).sum()
+                        )
+                # Protruding left/right orange L-corner arms uniquely distinguish true selection from gold SSR borders
+                o_score = o_cnt + outer_o_cnt * 3
                 is_basic_gray = (
                     (sat < 48.0 and (mean_v >= 130.0 or float(patch.std()) >= 22.0))
                     if grid_mode == "shop_delete"
                     else ((mean_v < 142.0) and (p95 >= 175.0 or allow_trouble_dark))
                 )
-                raw_cells.append((x1, y1, x2, y2, o_cnt, is_basic_gray))
+                raw_cells.append((x1, y1, x2, y2, o_score, is_basic_gray))
         if not raw_cells:
             return []
         max_o = max(c[4] for c in raw_cells)
@@ -4054,17 +4066,17 @@ class LiveScreenRecognizer:
             sel_slot_idx = next((i for i, (_, _, _, _, is_sel) in enumerate(icon_slots) if is_sel), None) if want_deck_grid else None
             preview_is_customized = False
             if is_deck_trade_or_delete and not is_drink_reward and not is_customize_flow:
-                if sel_slot_idx is not None and sel_slot_idx < len(grid_custom_flags) and grid_custom_flags[sel_slot_idx]:
-                    preview_is_customized = True
-                elif h >= 400 and w >= 300:
-                    # Check left preview icon & top-left 'before' icon on チェンジ/削除 screens for green (1)/(2)/(3) customization badge
+                if h >= 400 and w >= 300:
+                    # Prefer un-occluded large detail-box icon (lp) & top 'before' icon (tp) for exact selected card
                     lp = frame[int(h * 0.165) : int(h * 0.265), int(w * 0.045) : int(w * 0.255)]
-                    if self._has_card_customization_badge(lp):
-                        preview_is_customized = True
-                    elif "チェンジ" in norm_joined:
-                        tp = frame[int(h * 0.055) : int(h * 0.155), int(w * 0.230) : int(w * 0.440)]
-                        if self._has_card_customization_badge(tp):
+                    tp = frame[int(h * 0.055) : int(h * 0.155), int(w * 0.230) : int(w * 0.440)] if "チェンジ" in norm_joined else None
+                    if lp.size > 0 and float(lp.std()) >= 15.0:
+                        if self._has_card_customization_badge(lp) or (tp is not None and self._has_card_customization_badge(tp)):
                             preview_is_customized = True
+                    elif sel_slot_idx is not None and sel_slot_idx < len(grid_custom_flags) and grid_custom_flags[sel_slot_idx]:
+                        preview_is_customized = True
+                elif sel_slot_idx is not None and sel_slot_idx < len(grid_custom_flags) and grid_custom_flags[sel_slot_idx]:
+                    preview_is_customized = True
             cust_tag = " 【已加点强化(カスタマイズ済)·换牌不继承!】" if preview_is_customized else ""
             options.append({
                 "choice_id": len(options),
@@ -6427,29 +6439,96 @@ class LiveScreenRecognizer:
             tc_wide = frame[int(h * 0.006) : int(h * 0.085), int(w * 0.011) : int(w * 0.315)]
             tc_found = False
             if h >= 400 and w >= 300:
-                sub = frame[int(h * 0.033) : int(h * 0.068), int(w * 0.048) : int(w * 0.118)]
-                if sub.size > 0:
-                    ring_mw = (sub[:, :, 0] > 215) & (sub[:, :, 1] > 215) & (sub[:, :, 2] > 215)
-                    if int(ring_mw.sum()) >= 25:
-                        dh, dw = ring_mw.shape
-                        canvas = Image.new("RGB", (dw * 2 + 260, max(80, dh * 2 + 30)), (255, 255, 255))
-                        draw = ImageDraw.Draw(canvas)
-                        try:
-                            jfont = ImageFont.truetype(r"C:\Windows\Fonts\msgothic.ttc", 42)
-                        except Exception:
-                            jfont = ImageFont.load_default(size=36)
-                        draw.text((15, (canvas.height - 42) // 2), "残り", fill=(0, 0, 0), font=jfont)
-                        dig_arr = np.where(ring_mw[:, :, None], 0, 255).astype(np.uint8).repeat(3, axis=2)
-                        dig_pil = Image.fromarray(dig_arr).resize((dw * 2, dh * 2), Image.Resampling.NEAREST)
-                        canvas.paste(dig_pil, (105, (canvas.height - dh * 2) // 2))
-                        draw.text((115 + dw * 2, (canvas.height - 42) // 2), "ターン", fill=(0, 0, 0), font=jfont)
-                        ring_txt = _clean_ocr_text(self.ocr.recognize_array(np.array(canvas)).get("text", ""))
-                        m_ring_d = re.search(r"(\d{1,2})", ring_txt)
-                        if m_ring_d:
-                            dv = int(m_ring_d.group(1))
-                            if 1 <= dv <= 15:
-                                raw_turn_cand = dv
-                                tc_found = True
+                # Full-stem digit box (0.041..0.076h) avoids clipping the bottom leg of italic '4' / '7' / '9'
+                sub_dig = frame[int(h * 0.041) : int(h * 0.076), int(w * 0.044) : int(w * 0.120)]
+                if sub_dig.size > 0:
+                    try:
+                        jfont_ring = ImageFont.truetype(r"C:\Windows\Fonts\msgothic.ttc", 42)
+                    except Exception:
+                        jfont_ring = ImageFont.load_default(size=36)
+                    cand_ring_masks: List[np.ndarray] = []
+                    m_hi = (sub_dig[:, :, 0] > 210) & (sub_dig[:, :, 1] > 210) & (sub_dig[:, :, 2] > 210)
+                    if int(m_hi.sum()) >= 22:
+                        cand_ring_masks.append(m_hi)
+                    else:
+                        # Dimmed-HUD fallback (e.g. tooltip/effect overlay): require dark outline so background glow is ignored
+                        m_dim_raw = self._extract_outlined_white_core(sub_dig, radius=3, white_min=135, dark_max=95)
+                        if int(m_dim_raw.sum()) >= 20:
+                            n_cc_r, lbl_r, st_r, _ = cv2.connectedComponentsWithStats(m_dim_raw.astype(np.uint8), connectivity=8)
+                            m_dim = np.zeros_like(m_dim_raw)
+                            for cid_r in range(1, n_cc_r):
+                                ar_r = int(st_r[cid_r, cv2.CC_STAT_AREA])
+                                ch_r = int(st_r[cid_r, cv2.CC_STAT_HEIGHT])
+                                cw_r = int(st_r[cid_r, cv2.CC_STAT_WIDTH])
+                                if ar_r >= 12 and ch_r >= int(sub_dig.shape[0] * 0.38) and cw_r <= int(sub_dig.shape[1] * 0.88):
+                                    m_dim[lbl_r == cid_r] = True
+                            if int(m_dim.sum()) >= 20:
+                                cand_ring_masks.append(m_dim)
+                    for base_rm in cand_ring_masks:
+                        if tc_found:
+                            break
+                        for rm_var in (self._deshear_mask(base_rm, shear=-0.20), base_rm):
+                            for pfx_r in ("HP:", "LV:"):
+                                dv_en = self._ocr_bw_banner_number(
+                                    rm_var,
+                                    prefix=pfx_r,
+                                    max_val=15,
+                                    scale=3,
+                                    min_val=1,
+                                    max_digits=2,
+                                    en_first=True,
+                                )
+                                if dv_en is not None and 1 <= dv_en <= 15:
+                                    raw_turn_cand = dv_en
+                                    tc_found = True
+                                    break
+                            if tc_found:
+                                break
+                            ys_r, xs_r = np.where(rm_var)
+                            if len(xs_r) >= 12:
+                                crop_r = rm_var[int(ys_r.min()) : int(ys_r.max()) + 1, int(xs_r.min()) : int(xs_r.max()) + 1]
+                                dh_r, dw_r = crop_r.shape
+                                canvas_r = Image.new("RGB", (dw_r * 2 + 260, max(80, dh_r * 2 + 30)), (255, 255, 255))
+                                draw_r = ImageDraw.Draw(canvas_r)
+                                draw_r.text((15, (canvas_r.height - 42) // 2), "残り", fill=(0, 0, 0), font=jfont_ring)
+                                dig_arr_r = np.where(crop_r[:, :, None], 0, 255).astype(np.uint8).repeat(3, axis=2)
+                                dig_pil_r = Image.fromarray(dig_arr_r).resize(
+                                    (max(4, dw_r * 2), max(8, dh_r * 2)), Image.Resampling.BICUBIC
+                                )
+                                canvas_r.paste(dig_pil_r, (105, (canvas_r.height - dh_r * 2) // 2))
+                                draw_r.text((115 + dw_r * 2, (canvas_r.height - 42) // 2), "ターン", fill=(0, 0, 0), font=jfont_ring)
+                                ring_txt_r = _clean_ocr_text(self.ocr.recognize_array(np.array(canvas_r)).get("text", ""))
+                                m_ring_r = re.search(r"(\d{1,2})", ring_txt_r)
+                                if m_ring_r:
+                                    dv_r = int(m_ring_r.group(1))
+                                    if 1 <= dv_r <= 15:
+                                        raw_turn_cand = dv_r
+                                        tc_found = True
+                                        break
+                if not tc_found:
+                    sub = frame[int(h * 0.033) : int(h * 0.068), int(w * 0.048) : int(w * 0.118)]
+                    if sub.size > 0:
+                        ring_mw = (sub[:, :, 0] > 215) & (sub[:, :, 1] > 215) & (sub[:, :, 2] > 215)
+                        if int(ring_mw.sum()) >= 25:
+                            dh, dw = ring_mw.shape
+                            canvas = Image.new("RGB", (dw * 2 + 260, max(80, dh * 2 + 30)), (255, 255, 255))
+                            draw = ImageDraw.Draw(canvas)
+                            try:
+                                jfont = ImageFont.truetype(r"C:\Windows\Fonts\msgothic.ttc", 42)
+                            except Exception:
+                                jfont = ImageFont.load_default(size=36)
+                            draw.text((15, (canvas.height - 42) // 2), "残り", fill=(0, 0, 0), font=jfont)
+                            dig_arr = np.where(ring_mw[:, :, None], 0, 255).astype(np.uint8).repeat(3, axis=2)
+                            dig_pil = Image.fromarray(dig_arr).resize((dw * 2, dh * 2), Image.Resampling.NEAREST)
+                            canvas.paste(dig_pil, (105, (canvas.height - dh * 2) // 2))
+                            draw.text((115 + dw * 2, (canvas.height - 42) // 2), "ターン", fill=(0, 0, 0), font=jfont)
+                            ring_txt = _clean_ocr_text(self.ocr.recognize_array(np.array(canvas)).get("text", ""))
+                            m_ring_d = re.search(r"(\d{1,2})", ring_txt)
+                            if m_ring_d:
+                                dv = int(m_ring_d.group(1))
+                                if 1 <= dv <= 15:
+                                    raw_turn_cand = dv
+                                    tc_found = True
             if not tc_found and tc_wide.size > 0:
                 mw = (tc_wide[:, :, 0] > 195) & (tc_wide[:, :, 1] > 195) & (tc_wide[:, :, 2] > 195)
                 mw[int(tc_wide.shape[0] * 0.38) :, int(tc_wide.shape[1] * 0.43) :] = False
@@ -6534,13 +6613,30 @@ class LiveScreenRecognizer:
                             turn_cand = val
             raw_turn_cand = turn_cand
 
+        if not was_in_battle:
+            self._turn_drop_candidate = None
         if raw_turn_cand is not None and 1 <= raw_turn_cand <= 15:
             if was_in_battle and self._last_turns_remaining > 0:
-                # Within a single continuous battle, remaining turns may stay same or decrease smoothly (max step drop 2)
-                if raw_turn_cand <= self._last_turns_remaining and (self._last_turns_remaining - raw_turn_cand) <= 2:
+                # Within a single continuous battle, remaining turns normally drop by <=2 per step;
+                # if 2+ turns were missed earlier, recover once 2 consecutive battle frames confirm the lower turn.
+                diff_turns = self._last_turns_remaining - raw_turn_cand
+                if raw_turn_cand <= self._last_turns_remaining and diff_turns <= 2:
                     turns_remaining = raw_turn_cand
+                    self._turn_drop_candidate = None
+                elif raw_turn_cand < self._last_turns_remaining and diff_turns > 2:
+                    prev_drop = self._turn_drop_candidate
+                    if prev_drop is not None and raw_turn_cand <= prev_drop[0] and (prev_drop[0] - raw_turn_cand) <= 1:
+                        drop_streak = prev_drop[1] + 1
+                    else:
+                        drop_streak = 1
+                    if drop_streak >= 2:
+                        turns_remaining = raw_turn_cand
+                        self._turn_drop_candidate = None
+                    else:
+                        self._turn_drop_candidate = (raw_turn_cand, drop_streak)
             else:
                 turns_remaining = raw_turn_cand
+                self._turn_drop_candidate = None
         self._last_turns_remaining = turns_remaining
         if is_exam_hud and self.scenario_id in ("hif_honsen", "hif") and turns_remaining >= 11:
             meta["week"] = 9

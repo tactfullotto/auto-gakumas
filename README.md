@@ -11,7 +11,7 @@
 `auto-gakumas` drives MuMu emulator through an entire Gakumas produce cycle:
 
 1. **Schedule & Lessons** — follows a fixed weekly schedule, selects lessons and rest.
-2. **Card Rewards** — evaluates and picks card rewards; auto-discards banned/low-value cards; retries shop refresh if unremovable M-cards appear in swap screen.
+2. **Card Rewards** — evaluates and picks card rewards; auto-discards banned/low-value cards; retries shop refresh if unremovable M-cards appear in swap screen; protects customized cards on mandatory swaps.
 3. **Shop** — upgrades cards, buys drinks, spends remaining P-points before final departure; refreshes shop to maximize spend in the last visit.
 4. **H.I.F 本戦 (Rounds 1 & 2)** — plays both battle rounds using a local `PPO + SO-ISMCTS` decision engine with no cloud API calls.
 
@@ -26,19 +26,20 @@ ADB (MuMu 127.0.0.1:16384)
         │
         ▼
 LiveScreenRecognizer          ← OpenCV + Tesseract OCR
-  • scene detection
-  • card/drink/score OCR
+  • scene detection & L-corner deck selection
+  • card/drink/score OCR & customization badge check
   • P-point sandwich OCR (outlined white digits, anti-occlusion)
-  • battle hand animation stabiliser
+  • italic-deshear turn-ring OCR + 2-frame drop recovery
+  • battle hand animation stabiliser & stuck-selection retry
         │
         ▼
 LocalHybridDecisionAgent      ← rule engine + local ML
   ├── ScheduleAgent            (lesson / rest selection)
-  ├── CardRewardAgent          (card pick & discard rules)
+  ├── CardRewardAgent          (card pick, swap protection & discard rules)
   ├── ShopAgent                (upgrade / buy / refresh + visit tracking)
-  └── LiveBattlePlanner        ← PPO value network + SO-ISMCTS
+  └── LiveBattlePlanner        ← PPO value network + SO-ISMCTS + step self-healing
             │
-            └── HeadlessBattleSimulator  (fast local rollouts)
+            └── HeadlessBattleSimulator  (fast local rollouts & P-item triggers)
 ```
 
 ### Key modules
@@ -46,12 +47,13 @@ LocalHybridDecisionAgent      ← rule engine + local ML
 | Path | Description |
 |---|---|
 | `demo/run_hif_local.py` | Main entry point; supports `on_step_callback` / `on_frame_callback` hooks |
-| `demo/agent/local_agent.py` | `LocalHybridDecisionAgent` orchestrator; P-idol stat fallback; shop visit state machine |
-| `demo/maa_bridge/runner.py` | Step loop; battle hand animation wait; card-upgrade popup disambiguation |
-| `demo/vision/live_adb_recognizer.py` | `LiveScreenRecognizer`; P-point sandwich OCR; shop icon cache |
-| `demo/sim/live_battle_planner.py` | `LiveBattlePlanner`; finisher combo gating (好調 ≥ 13); free-action & SB-drink detection |
-| `demo/sim/battle_simulator.py` | `HeadlessBattleSimulator`; hand cap enforcement |
-| `demo/sim/ismcts.py` | SO-ISMCTS; anti-SKIP pruning; trouble-exile fallback |
+| `demo/agent/local_agent.py` | `LocalHybridDecisionAgent` orchestrator; P-idol stat fallback; shop visit state machine; mandatory swap protection |
+| `demo/maa_bridge/runner.py` | Step loop; battle hand animation wait; 5-card fanned tap clamping & `選択中` stuck-card retry; upgrade popup disambiguation |
+| `demo/vision/live_adb_recognizer.py` | `LiveScreenRecognizer`; P-point sandwich OCR; italic-deshear turn-ring OCR (dimmed-HUD fallback); shop icon cache |
+| `demo/sim/live_battle_planner.py` | `LiveBattlePlanner`; finisher combo gating (好調 ≥ 13); resource-zeroing finisher rules; step-feedback self-healing & turn reconciliation |
+| `demo/sim/battle_simulator.py` | `HeadlessBattleSimulator`; 5-card hand cap; resource-zeroing finisher & 2x-forbid rules; Sense P-items (`#27092 届けたい想い`, etc.) |
+| `demo/sim/ismcts.py` | SO-ISMCTS; anti-SKIP pruning; trouble-exile fallback; zeroing-finisher pruning |
+| `demo/sim/rl_env.py` | `GakumasActionCodec`; legal action masking & dominated-action pruning |
 | `demo/core/idol_guides.py` | P-idol default stat lookup & stat-axis ordering |
 | `demo/core/hif_catalog.py` | `ProducePreferences`, HIF memory ability templates, plan metadata |
 | `demo/core/tracker.py` | In-run state tracker (deck, hand, P-items, produce step) |
@@ -94,21 +96,25 @@ Never select, buy, or use. Auto-discarded via `捨てる` if received.
 
 ### Drink #25 — 特製ハツボシエキス (strict gating)
 Only consumed when **all three** conditions hold:
-1. A non-Legend Active card is already in hand.
+1. A non-Legend Active card (excluding resource-zeroing finishers) is already in hand.
 2. The active card is playable immediately after the drink effect.
 3. Commits to playing that Active card the same turn.
 
 ### Shop — spend all P-points
 On the final shop visit, refresh the store until all P-points are exhausted. Upgrades prioritised over new cards.
 
-### Card swap — M-card refresh
-If an unremovable M-card appears in the early-game card exchange, click refresh to reroll.
+### Card swap — M-card refresh & customization protection
+- If an unremovable M-card appears in the early-game card exchange, click refresh to reroll.
+- On mandatory H.I.F `チェンジ` screens, customized cards (`カスタマイズ済`) are protected by immediately switching to a non-customized slot instead of looping on cancel.
 
-### Battle — finisher combo gating
-Cards `#162/#163 → #813/#814` combo is only allowed when tracked `goodConditionTurns ≥ 13` (or OCR is occluded in the last 2 turns while the finisher is visually playable).
+### Battle — finisher combo & resource-zeroing finisher rules
+- **Scaling finisher (`#162/#163 → #813/#814`)**: combo is only allowed when tracked `goodConditionTurns ≥ 13` (or OCR is occluded in the last 2 turns while the finisher is visually playable).
+- **Resource-zeroing solo finishers (`#618/#619 世界一の勇気`, `#152/#153 届いて`)**: held strictly until the final turn (`turns_remaining == 1`), never paired with armed `2x` (`#162/#163` or `#25`) so the second trigger doesn't fire on a zeroed stat, and tutored only on the final turn if missing from hand.
 
-### Battle — hand animation stabiliser
-Before reading cards, the runner waits for hand-area motion < 6.0 mean-pixel-delta (up to 3 probes × 0.85 s) to avoid misreads during draw animations.
+### Battle — tap reliability & simulator self-healing
+- **Hand animation stabiliser**: waits for hand-area motion < 6.0 mean-pixel-delta (up to 3 probes × 0.85 s) before reading cards.
+- **5-card fanned tap clamping & retry**: clamps outer card taps inward (`13.5%–86.5%` width), confirms on the lifted hitbox, and retries automatically if a card remains stuck in `選択中`.
+- **Step-feedback self-healing**: if a `limit=1` card fails to fire on device and stays in hand, rolls back phantom simulator state (`double_card_effect_cards`, `cards_used`, premature turn advance) and reconciles remaining turns against hand changes.
 
 ---
 
@@ -151,7 +157,7 @@ python demo/app.py
 python -m pytest demo/tests/ -k "not test_live_xai_llm_decision_e2e" -q
 ```
 
-Expected: **298 passed, 2 skipped** in ~91s.
+342 offline unit & integration tests (excluding live-device E2E).
 
 ---
 

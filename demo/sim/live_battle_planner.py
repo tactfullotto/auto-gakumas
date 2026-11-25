@@ -68,19 +68,22 @@ _ATTR_NAME_TO_CODE: Dict[str, str] = {
     "ポーカル": "Vo",
     "ホーカル": "Vo",
     "オーカル": "Vo",
+    "ーカル": "Vo",
     "ダンス": "Da",
     "タンス": "Da",
     "ビジュアル": "Vi",
     "ビシュアル": "Vi",
+    "ヒジュアル": "Vi",
+    "ピジュアル": "Vi",
     "ジュアル": "Vi",
 }
 
 
 def _parse_live_turn_multiplier(obs: ScreenObservation) -> Optional[Tuple[str, float]]:
-    """Parse live turn attribute and percentage multiplier (e.g. ポーカル4887 -> ('Vo', 48.87))."""
+    """Parse live turn attribute and percentage multiplier (e.g. ポーカル4887 / ダンスろ947 -> ('Da', 69.47))."""
     text = f"{obs.week_activity or ''} {obs.raw_text or ''}"
     m = re.search(
-        r"(ボーカル|ポーカル|ホーカル|オーカル|ダンス|タンス|ビジュアル|ビシュアル|ジュアル)[^\d]{0,5}(\d{3,4})\s*%?",
+        r"(ボーカル|ポーカル|ホーカル|オーカル|ーカル|ダンス|タンス|ビジュアル|ビシュアル|ヒジュアル|ピジュアル|ジュアル)[^0-9ろロ]{0,5}([0-9ろロ]{3,4})\s*%?",
         text,
     )
     if not m:
@@ -88,7 +91,10 @@ def _parse_live_turn_multiplier(obs: ScreenObservation) -> Optional[Tuple[str, f
     attr = _ATTR_NAME_TO_CODE.get(m.group(1))
     if not attr:
         return None
-    mult = float(int(m.group(2))) / 100.0
+    digits = m.group(2).replace("ろ", "6").replace("ロ", "6")
+    if not digits.isdigit():
+        return None
+    mult = float(int(digits)) / 100.0
     if 10.0 <= mult <= 80.0:
         return (attr, round(mult, 2))
     return None
@@ -477,6 +483,8 @@ class LiveBattlePlanner:
         self._active_signature: Optional[Tuple[Any, ...]] = None
         self._battle_initial_turns: Optional[int] = None
         self._last_turns_remaining: Optional[int] = None
+        self._last_raw_obs_turns_remaining: Optional[int] = None
+        self._pending_step_feedback: Optional[Dict[str, Any]] = None
         self._last_week: Optional[int] = None
         self._last_trusted_obs_score: int = 0
 
@@ -511,6 +519,8 @@ class LiveBattlePlanner:
         self._active_signature = None
         self._battle_initial_turns = None
         self._last_turns_remaining = None
+        self._last_raw_obs_turns_remaining = None
+        self._pending_step_feedback = None
         self._last_week = None
         self._last_trusted_obs_score = 0
         self._battle_cfg = None
@@ -528,8 +538,13 @@ class LiveBattlePlanner:
             return True
         if self._last_week is not None and obs.week != self._last_week:
             return True
-        # Distinguish genuine new round/battle (large reset jump) from +1 extra-turn card (#171)
-        if self._last_turns_remaining is not None and obs.turns_remaining > self._last_turns_remaining + 1:
+        # Distinguish genuine new round/battle (large reset jump in raw HUD turns) from +1 extra-turn card (#171)
+        ref_rem = (
+            self._last_raw_obs_turns_remaining
+            if self._last_raw_obs_turns_remaining is not None
+            else self._last_turns_remaining
+        )
+        if ref_rem is not None and obs.turns_remaining > ref_rem + 1:
             return True
         return False
 
@@ -539,15 +554,27 @@ class LiveBattlePlanner:
             deck_ids = [int(c.card_id) for c in obs.cards]
         else:
             seen_ids = set(deck_ids)
+            seen_bases: set[int] = set()
+            for d_cid in deck_ids:
+                d_row = self.db.get_card_by_id(int(d_cid))
+                seen_bases.add(int(d_row.get("base_id") or d_cid) if d_row else int(d_cid))
             for c in obs.cards or ():
                 cid_i = int(c.card_id)
-                if cid_i > 0 and cid_i not in seen_ids:
-                    deck_ids.append(cid_i)
-                    seen_ids.add(cid_i)
+                if cid_i <= 0 or cid_i in seen_ids:
+                    continue
+                c_row = self.db.get_card_by_id(cid_i)
+                c_base = int(c_row.get("base_id") or cid_i) if c_row else cid_i
+                if c_base in seen_bases:
+                    continue
+                deck_ids.append(cid_i)
+                seen_ids.add(cid_i)
+                seen_bases.add(c_base)
         total_turns = max(1, int(obs.turns_remaining or obs.total_weeks or 10))
         self._battle_initial_turns = total_turns
         self._last_week = int(obs.week)
         self._last_turns_remaining = total_turns
+        self._last_raw_obs_turns_remaining = total_turns
+        self._pending_step_feedback = None
         self._last_trusted_obs_score = 0
 
         p_idol_id = getattr(tracker, "p_idol_id", None)
@@ -870,8 +897,101 @@ class LiveBattlePlanner:
     def _sync_sim_to_observation(self, obs: ScreenObservation, legal_actions: Sequence[LegalAction]) -> None:
         assert self._sim is not None and self._battle_initial_turns is not None
         sim = self._sim
+        from collections import Counter
 
-        live_rem = max(1, int(obs.turns_remaining or 1))
+        fb = self._pending_step_feedback
+        self._pending_step_feedback = None
+
+        raw_obs_rem = max(1, int(obs.turns_remaining or 1))
+        self._last_raw_obs_turns_remaining = raw_obs_rem
+
+        obs_card_bases: List[int] = []
+        for c in (obs.cards or ()):
+            cid_c = int(getattr(c, "card_id", 0) or 0)
+            if cid_c > 0:
+                crow_c = self.db.get_card_by_id(cid_c)
+                obs_card_bases.append(int(crow_c.get("base_id") or cid_c) if crow_c else cid_c)
+
+        # Self-heal if previous play_card on a limit_count=1 card (e.g. #162/#163) failed to fire on device
+        # and stayed in hand: roll back phantom double_card_effect_cards / cards_used / premature turn advance.
+        if fb is not None and fb.get("action_type") == "play_card" and fb.get("limit_count") == 1 and obs_card_bases:
+            b_id_fb = int(fb.get("base_id") or 0)
+            seen_base_now = obs_card_bases.count(b_id_fb)
+            max_after_exhaust = max(0, int(fb.get("total_base_copies") or 1) - 1)
+            unfired_same_turn = (
+                not fb.get("has_draw")
+                and not fb.get("sim_advanced_turn")
+                and seen_base_now >= int(fb.get("pre_base_in_hand") or 1)
+            )
+            if b_id_fb > 0 and (seen_base_now > max_after_exhaust or unfired_same_turn):
+                logger.warning(
+                    "Detected unfired limit=1 card #%s still in hand (%d > %d); rolling back phantom sim state (2x %d->%d).",
+                    fb.get("card_id"),
+                    seen_base_now,
+                    max_after_exhaust,
+                    sim.double_card_effect_cards,
+                    int(fb.get("pre_double", 0)),
+                )
+                sim.double_card_effect_cards = int(fb.get("pre_double", 0))
+                sim.cards_used = int(fb.get("pre_cards_used", sim.cards_used))
+                sim.active_cards_used = int(fb.get("pre_active_used", sim.active_cards_used))
+                if fb.get("sim_advanced_turn"):
+                    sim.turn = int(fb.get("pre_turn", sim.turn))
+                    sim.turns_elapsed = max(0, sim.turn - 1)
+                    sim.turns_remaining = max(1, int(fb.get("pre_rem", sim.turns_remaining)))
+                    fb["sim_advanced_turn"] = False
+                sim.card_uses_remaining = max(1, int(fb.get("pre_uses", 1)))
+                fb = None
+
+        live_rem = raw_obs_rem
+        if fb is not None and not fb.get("is_extra_turn"):
+            cur_bases = Counter(obs_card_bases)
+            pre_bases = Counter(fb.get("pre_hand_bases") or [])
+            rem_after_play = Counter(pre_bases)
+            if fb.get("action_type") == "play_card":
+                played_b = int(fb.get("base_id") or 0)
+                if rem_after_play.get(played_b, 0) > 0:
+                    rem_after_play[played_b] -= 1
+                    if rem_after_play[played_b] <= 0:
+                        rem_after_play.pop(played_b, None)
+
+            if fb.get("sim_advanced_turn"):
+                if fb.get("action_type") == "end_turn":
+                    real_turn_advanced = bool((not obs_card_bases) or (cur_bases != pre_bases))
+                else:
+                    unplayed_discarded = bool(rem_after_play - cur_bases)
+                    fresh_drawn_without_draw_eff = bool((not fb.get("has_draw")) and (cur_bases - rem_after_play))
+                    real_turn_advanced = bool(unplayed_discarded or fresh_drawn_without_draw_eff)
+
+                if not real_turn_advanced and raw_obs_rem >= int(fb.get("pre_rem", raw_obs_rem)):
+                    # Real game is still on the previous turn (e.g. unmodeled +1 card use); restore pre-turn counter
+                    sim.turn = int(fb.get("pre_turn", sim.turn))
+                    sim.turns_elapsed = max(0, sim.turn - 1)
+                    sim.turns_remaining = max(1, int(fb.get("pre_rem", raw_obs_rem)))
+                    sim.card_uses_remaining = max(1, int(obs.card_uses_remaining or 1))
+                    live_rem = sim.turns_remaining
+                elif real_turn_advanced and raw_obs_rem > max(1, sim.turns_remaining):
+                    # HUD turn OCR is stuck on an earlier turn; trust simulator's decremented turns_remaining
+                    live_rem = max(1, sim.turns_remaining)
+                    obs.turns_remaining = live_rem
+            else:
+                if raw_obs_rem > max(1, sim.turns_remaining):
+                    # Within an active battle without extra-turn cards, turns_remaining can never increase
+                    live_rem = max(1, sim.turns_remaining)
+                    obs.turns_remaining = live_rem
+                elif (
+                    fb.get("action_type") == "play_card"
+                    and raw_obs_rem == sim.turns_remaining
+                    and sim.turns_remaining > 1
+                    and len(rem_after_play) >= 1
+                    and not (rem_after_play & cur_bases)
+                    and len(obs_card_bases) >= 3
+                    and not fb.get("has_draw")
+                ):
+                    # Sim thought extra uses remained, but all unplayed cards vanished & a fresh hand was drawn
+                    live_rem = max(1, sim.turns_remaining - 1)
+                    obs.turns_remaining = live_rem
+
         if live_rem > sim.turns_remaining:
             extra_t = live_rem - sim.turns_remaining
             top_spec = sim.turn_schedule[-1] if sim.turn_schedule else TurnMultiplierSpec("Vo", 40.0)
@@ -880,6 +1000,7 @@ class LiveBattlePlanner:
             self._battle_initial_turns = live_rem
 
         actual_turn = max(1, self._battle_initial_turns - live_rem + 1)
+        obs.turn = actual_turn
         is_new_turn = actual_turn != sim.turn
         if is_new_turn:
             if actual_turn > sim.turn:
@@ -1165,6 +1286,23 @@ class LiveBattlePlanner:
             base_id == 813 or "cardsUsed" in str(crow.get("dsl_actions") or "")
         )
 
+    def _is_resource_zeroing_finisher_card(self, card_id: int) -> bool:
+        """Return True for limit=1 finishers that scale on a stat and zero it out (e.g. #618/#619, #152/#153)."""
+        if int(card_id or 0) <= 0:
+            return False
+        crow = self.db.get_card_by_id(int(card_id))
+        if not crow:
+            return int(card_id) in (618, 619, 152, 153)
+        base_id = int(crow.get("base_id") or card_id)
+        if base_id in (618, 152):
+            return True
+        if crow.get("limit_count") != 1:
+            return False
+        dsl = str(crow.get("dsl_actions") or "")
+        return "score+=" in dsl and bool(
+            re.search(r"\b(goodConditionTurns|genki|goodImpressionTurns|concentration)\s*=\s*0\b", dsl)
+        )
+
     def _is_double_effect_enabler_card(self, card_id: int) -> bool:
         """Return True for cards that grant doubleCardEffectCards+= (e.g. #162/#163)."""
         if int(card_id or 0) <= 0:
@@ -1297,12 +1435,18 @@ class LiveBattlePlanner:
                 )
                 return u_act.choice_id, reason_u, {"best_q_score": float(self._sim.score), "unmapped_override": True}
 
-        live_rem_turns = int(obs.turns_remaining or 1)
+        live_rem_turns = max(1, int(self._sim.turns_remaining or obs.turns_remaining or 1))
         has_unexhausted_813 = self._sim.has_unexhausted_card_family(813) or any(
             self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0))
             for a in legal_actions
             if a.action_type == "play_card"
         )
+        has_unexhausted_zeroing = self._sim.has_unexhausted_zeroing_finisher() or any(
+            self._is_resource_zeroing_finisher_card(int((a.payload or {}).get("card_id") or 0))
+            for a in legal_actions
+            if a.action_type == "play_card"
+        )
+        has_any_late_fin = has_unexhausted_813 or has_unexhausted_zeroing
         fin_window = (
             max(1, int(self.cfg.finisher_hold_min_turns_remaining) - 1)
             if self.cfg.prefer_double_effect_before_finisher
@@ -1317,6 +1461,7 @@ class LiveBattlePlanner:
         has_playable_non_l_active = any(
             act.action_type == "play_card"
             and self._is_non_l_active_card_id(int((act.payload or {}).get("card_id") or 0))
+            and not self._is_resource_zeroing_finisher_card(int((act.payload or {}).get("card_id") or 0))
             for act in legal_actions
         )
 
@@ -1328,6 +1473,7 @@ class LiveBattlePlanner:
         has_playable_non_fin = any(
             a.action_type == "play_card"
             and not self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0))
+            and not (live_rem_turns > 1 and self._is_resource_zeroing_finisher_card(int((a.payload or {}).get("card_id") or 0)))
             and int((a.payload or {}).get("card_id") or 0) != 23
             for a in legal_actions
         )
@@ -1338,6 +1484,8 @@ class LiveBattlePlanner:
                 continue
             cid_nf = int((act.payload or {}).get("card_id") or 0)
             if cid_nf == 23:
+                continue
+            if live_rem_turns > 1 and self._is_resource_zeroing_finisher_card(cid_nf):
                 continue
             if (
                 fin_window > 0
@@ -1394,21 +1542,31 @@ class LiveBattlePlanner:
                             return False
                         if dr_cfg is not None and not self._sim.can_use_active_retrigger_drink_now(dr_cfg):
                             return False
-                    if fin_window > 0 and self._sim.double_card_effect_cards == 0 and has_unexhausted_813:
+                    hold_drinks_now = fin_window > 0 and has_any_late_fin and (
+                        self._sim.double_card_effect_cards == 0
+                        or (has_unexhausted_zeroing and not has_unexhausted_813)
+                    )
+                    if hold_drinks_now:
                         if self._is_tutor_drink(did) and live_rem_turns >= self.cfg.finisher_hold_min_turns_remaining:
                             return False
                         is_sb, sb_dur, _amt = self._score_buff_drink_info(did)
                         if is_sb and 0 < sb_dur < 999 and live_rem_turns > sb_dur:
                             return False
-                elif act.action_type == "play_card" and fin_window > 0 and self._sim.double_card_effect_cards == 0:
+                elif act.action_type == "play_card":
                     cid = int((act.payload or {}).get("card_id") or 0)
-                    if hold_for_final_turns and (
-                        self._is_late_scaling_finisher_card(cid)
-                        or (self._is_double_effect_enabler_card(cid) and has_unexhausted_813)
-                    ):
+                    # Core engine rule: hold resource-zeroing solo finishers (#618/#619, #152/#153) until final turn
+                    if live_rem_turns > 1 and self._is_resource_zeroing_finisher_card(cid):
                         return False
+                    if fin_window > 0 and self._sim.double_card_effect_cards == 0:
+                        if hold_for_final_turns and (
+                            self._is_late_scaling_finisher_card(cid)
+                            or (self._is_double_effect_enabler_card(cid) and has_unexhausted_813)
+                        ):
+                            return False
                     if (
-                        has_unexhausted_813
+                        fin_window > 0
+                        and has_any_late_fin
+                        and (self._sim.double_card_effect_cards == 0 or (has_unexhausted_zeroing and not has_unexhausted_813))
                         and self._is_timed_score_buff_card_id(cid)
                         and live_rem_turns > max(3, self.cfg.finisher_hold_min_turns_remaining)
                     ):
@@ -1461,12 +1619,47 @@ class LiveBattlePlanner:
                         allowed_root = fin_pool
                         locked_fin_2x = True
 
+            if (
+                not locked_fin_2x
+                and allowed_root
+                and (self._sim.double_card_effect_cards > 0 or self._sim.has_armed_active_retrigger(same_turn_only=True))
+            ):
+                other_root_2x_target = any(
+                    aid_to_ui[aid].action_type == "play_card"
+                    and int((aid_to_ui[aid].payload or {}).get("card_id") or 0) != 23
+                    and not self._is_resource_zeroing_finisher_card(int((aid_to_ui[aid].payload or {}).get("card_id") or 0))
+                    and (
+                        self._sim.double_card_effect_cards > 0
+                        or self._is_non_l_active_card_id(int((aid_to_ui[aid].payload or {}).get("card_id") or 0))
+                    )
+                    for aid in allowed_root
+                )
+                forbid_root_2x: set[int] = set()
+                for aid in allowed_root:
+                    if aid_to_ui[aid].action_type != "play_card":
+                        continue
+                    cid_2x = int((aid_to_ui[aid].payload or {}).get("card_id") or 0)
+                    if not self._is_resource_zeroing_finisher_card(cid_2x):
+                        continue
+                    inst_2x = next(
+                        (c for c in self._sim.hand if c.cfg.card_id == cid_2x or c.cfg.base_id == cid_2x),
+                        None,
+                    )
+                    if inst_2x is not None and self._sim.should_forbid_double_on_card(
+                        inst_2x.cfg,
+                        has_other_double_target=other_root_2x_target,
+                    ):
+                        forbid_root_2x.add(aid)
+                if forbid_root_2x and len(forbid_root_2x) < len(allowed_root):
+                    allowed_root = {aid for aid in allowed_root if aid not in forbid_root_2x}
+
             if (not locked_fin_2x) and self._sim.has_armed_active_retrigger(same_turn_only=True) and allowed_root:
                 active_root_aids = {
                     aid
                     for aid in allowed_root
                     if aid_to_ui[aid].action_type == "play_card"
                     and self._is_non_l_active_card_id(int((aid_to_ui[aid].payload or {}).get("card_id") or 0))
+                    and not self._is_resource_zeroing_finisher_card(int((aid_to_ui[aid].payload or {}).get("card_id") or 0))
                 }
                 if active_root_aids:
                     armed_pool = {
@@ -1590,7 +1783,7 @@ class LiveBattlePlanner:
                 u_cid_best = int((best_u_act.payload or {}).get("card_id") or 0)
                 hold_unmapped_for_late = (
                     chosen_ui.action_type == "end_turn"
-                    and int(obs.turns_remaining or 1) >= self.cfg.finisher_hold_min_turns_remaining
+                    and live_rem_turns >= self.cfg.finisher_hold_min_turns_remaining
                     and (
                         self._is_late_scaling_finisher_card(u_cid_best)
                         or self._is_double_effect_enabler_card(u_cid_best)
@@ -1660,7 +1853,7 @@ class LiveBattlePlanner:
                 has_unmapped = any(act.choice_id not in ui_to_aid for act in non_trouble_cards)
                 has_free_or_final = (
                     obs.stamina >= 6
-                    or int(obs.turns_remaining or 1) <= 1
+                    or live_rem_turns <= 1
                     or any("不耗行动点" in a.description or "🟢0消耗" in a.description for a in non_trouble_cards)
                 )
                 if has_unmapped or has_free_or_final:
@@ -2081,20 +2274,90 @@ class LiveBattlePlanner:
         if action is None or self._sim is None or self._sim.turns_remaining <= 0:
             return
         try:
+            sim = self._sim
+            pre_turn = sim.turn
+            pre_rem = sim.turns_remaining
+            pre_uses = sim.card_uses_remaining
+            pre_double = sim.double_card_effect_cards
+            pre_cards_used = sim.cards_used
+            pre_active_used = sim.active_cards_used
+            pre_hand_bases = [c.cfg.base_id for c in sim.hand]
+
             if action.action_type == "play_card":
                 cid = int((action.payload or {}).get("card_id") or 0)
-                idx = next((i for i, inst in enumerate(self._sim.hand) if inst.cfg.card_id == cid), None)
+                idx = next((i for i, inst in enumerate(sim.hand) if inst.cfg.card_id == cid), None)
                 if idx is None:
-                    idx = next((i for i, inst in enumerate(self._sim.hand) if inst.cfg.base_id == cid), None)
-                if idx is not None and self._sim.can_play_card(self._sim.hand[idx]):
-                    self._sim.step("card", idx)
+                    idx = next((i for i, inst in enumerate(sim.hand) if inst.cfg.base_id == cid), None)
+                if idx is not None and sim.can_play_card(sim.hand[idx]):
+                    inst = sim.hand[idx]
+                    dsl_l = (inst.cfg.dsl_actions or "").lower()
+                    is_extra_turn = (
+                        "turnsremaining+=" in dsl_l
+                        or inst.cfg.card_id in (170, 171, 728)
+                    )
+                    top_dsl = re.split(r"\bat\s*:", re.sub(r"\{[^}]*\}", "", dsl_l), maxsplit=1)[0]
+                    pre_base_in_hand = pre_hand_bases.count(inst.cfg.base_id)
+                    total_base_copies = sum(
+                        1
+                        for zone in (sim.hand, sim.draw_pile, sim.discard_pile, sim.exhaust_pile)
+                        for zc in zone
+                        if zc.cfg.base_id == inst.cfg.base_id
+                    )
+                    pre_p_trig = dict(sim.p_item_trigger_counts)
+                    sim.step("card", idx)
+                    p_item_drew = any(
+                        it.mode == "stage"
+                        and int(getattr(it, "grant_draw_cards", 0) or 0) > 0
+                        and sim.p_item_trigger_counts.get(it.item_id, 0) > pre_p_trig.get(it.item_id, 0)
+                        for it in (sim.config.p_items or ())
+                    )
+                    has_draw = (
+                        "drawcard" in top_dsl
+                        or int(getattr(inst.cfg, "memory_draw_on_play", 0) or 0) > 0
+                        or p_item_drew
+                    )
+                    self._pending_step_feedback = {
+                        "action_type": "play_card",
+                        "card_id": inst.cfg.card_id,
+                        "base_id": inst.cfg.base_id,
+                        "limit_count": inst.cfg.limit_count,
+                        "is_double_enabler": self._is_double_effect_enabler_card(inst.cfg.card_id),
+                        "is_extra_turn": is_extra_turn,
+                        "has_draw": has_draw,
+                        "pre_base_in_hand": max(1, pre_base_in_hand),
+                        "total_base_copies": max(1, total_base_copies),
+                        "pre_turn": pre_turn,
+                        "pre_rem": pre_rem,
+                        "pre_uses": pre_uses,
+                        "pre_double": pre_double,
+                        "pre_cards_used": pre_cards_used,
+                        "pre_active_used": pre_active_used,
+                        "pre_hand_bases": pre_hand_bases,
+                        "sim_advanced_turn": bool(sim.turn > pre_turn),
+                    }
             elif action.action_type == "use_drink":
                 did = int((action.payload or {}).get("drink_id") or 0)
-                idx = next((i for i, dr in enumerate(self._sim.available_drinks) if dr.drink_id == did), None)
+                idx = next((i for i, dr in enumerate(sim.available_drinks) if dr.drink_id == did), None)
                 if idx is not None:
-                    self._sim.step("drink", idx)
+                    sim.step("drink", idx)
+                    self._pending_step_feedback = {
+                        "action_type": "use_drink",
+                        "is_extra_turn": False,
+                        "pre_turn": pre_turn,
+                        "pre_rem": pre_rem,
+                        "pre_hand_bases": pre_hand_bases,
+                        "sim_advanced_turn": False,
+                    }
             elif action.action_type == "end_turn":
-                self._sim.step("end_turn", -1)
+                sim.step("end_turn", -1)
+                self._pending_step_feedback = {
+                    "action_type": "end_turn",
+                    "is_extra_turn": False,
+                    "pre_turn": pre_turn,
+                    "pre_rem": pre_rem,
+                    "pre_hand_bases": pre_hand_bases,
+                    "sim_advanced_turn": bool(sim.turn > pre_turn),
+                }
         except Exception:
             # Keep live runner resilient even if UI execution differed slightly
             pass

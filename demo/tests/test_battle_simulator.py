@@ -932,3 +932,184 @@ def test_core_engine_hard_rules_no_drink22_at_5_hand_and_no_skip_with_trouble():
         assert codec.end_turn_action_id not in amap_tr
         assert list(amap_tr.values()) == [("card", 0)]
 
+
+def test_resource_zeroing_finishers_dsl_and_anti_double_rules():
+    """Verify #618/#619 (gc=0), #152/#153 (genki=0), #92/#93 (genki/=2), #27092 P-item, multiplier OCR, and tutor."""
+    from demo.agent.local_agent import LocalHybridDecisionAgent
+    from demo.schemas import ScreenObservation
+    from demo.sim.battle_simulator import (
+        BattleConfig,
+        CardInstance,
+        HeadlessBattleSimulator,
+        TurnMultiplierSpec,
+        _build_sense_hif_p_items,
+        _make_card_config,
+        _make_drink_config,
+    )
+    from demo.sim.live_battle_planner import _parse_live_turn_multiplier
+    from demo.sim.rl_env import GakumasActionCodec
+
+    with GakumasDB("gakumas_library.db") as db:
+        # 1. Exact DSL semantics: #619 (gc=0 & score+=0 -> exact +0), #153 (genki=0), #93 (genki/=2)
+        def _run_one(cid: int, *, dbl: int, gc: int = 0, pc: int = 0, conc: int = 0, genki: int = 0):
+            cfg = _make_card_config(db, cid)
+            bcfg = BattleConfig(
+                scenario_id="hif_honsen",
+                stage_name="unit",
+                p_idol_id=114,
+                idol_name="倉本 千奈",
+                plan="sense" if cid in (618, 619) else "logic",
+                idol_stats={"vocal": 1500, "dance": 1500, "visual": 1500},
+                total_turns=9,
+                max_stamina=100,
+                initial_stamina=100,
+                turn_schedule=[TurnMultiplierSpec("Da", 44.82) for _ in range(9)],
+                deck=[cfg],
+                p_items=[],
+            )
+            s = HeadlessBattleSimulator(bcfg)
+            inst = CardInstance(uid=1, cfg=cfg)
+            s.hand = [inst]
+            s.turns_remaining = 1
+            s.card_uses_remaining = 1
+            s.buffs["goodConditionTurns"] = gc
+            s.buffs["perfectConditionTurns"] = pc
+            s.buffs["concentration"] = conc
+            s.genki = genki
+            s.double_card_effect_cards = dbl
+            s._use_card(inst)
+            return s.score, int(s.buffs.get("goodConditionTurns", 0) or 0), int(s.genki)
+
+        sc619_1x, gc619_1x, _ = _run_one(619, dbl=0, gc=49, pc=15, conc=12)
+        sc619_2x, gc619_2x, _ = _run_one(619, dbl=1, gc=49, pc=15, conc=12)
+        assert sc619_1x == 158_081
+        assert sc619_2x == 158_081  # exact +0 on 2nd trigger (matches live W7 S222->S223!)
+        assert gc619_1x == 0 and gc619_2x == 0
+
+        sc153_1x, _, gk153_1x = _run_one(153, dbl=0, genki=100)
+        sc153_2x, _, gk153_2x = _run_one(153, dbl=1, genki=100)
+        assert sc153_1x > 0
+        assert sc153_2x == sc153_1x  # genki zeroed on 1st trigger -> 2nd trigger adds 0
+        assert gk153_1x == 0 and gk153_2x == 0
+
+        sc93_1x, _, gk93_1x = _run_one(93, dbl=0, genki=100)
+        sc93_2x, _, gk93_2x = _run_one(93, dbl=1, genki=100)
+        assert gk93_1x == 50
+        assert gk93_2x == 25
+        assert sc93_1x < sc93_2x < sc93_1x * 2  # 2nd trigger uses halved genki (50)
+
+        # 2. Core engine hold & anti-2x rules for #619 and #153
+        sim = _new_clean_sim(db, enable_404=False, enable_509=False)
+        sim.plan = "sense"
+        sim.turns_remaining = 5
+        sim.stamina = 40
+        sim.card_uses_remaining = 1
+        sim.buffs["goodConditionTurns"] = 49
+        sim.hand.clear()
+        sim.draw_pile.clear()
+        sim.discard_pile.clear()
+        for cid in (619, 163, 295, 117):
+            inst = _spawn_test_card(sim, db, cid, sim.hand)
+            sim.config.deck.append(inst.cfg)
+        d22 = _make_drink_config(db, 22)
+        d25 = _make_drink_config(db, 25)
+        d12 = _make_drink_config(db, 12)
+        sim.available_drinks = [d22, d25, d12]
+        sim.config.drinks = [d22, d25, d12]
+        codec = GakumasActionCodec(sim.config, db=db, finisher_play_max_turns_remaining=2)
+
+        # T5/rem=5: #619 held, #22 & #12 held, #163 NOT held (no #813 in deck!), #25 not allowed when #619 is only active
+        assert sim.should_hold_for_finisher(card_cfg=sim.hand[0].cfg, fin_window=2) is True  # #619
+        assert sim.should_hold_for_finisher(card_cfg=sim.hand[1].cfg, fin_window=2) is False  # #163 free to double buffs
+        assert sim.should_hold_for_finisher(drink_cfg=d22, fin_window=2) is True
+        assert sim.should_hold_for_finisher(drink_cfg=d12, fin_window=2) is True
+        assert sim.can_use_active_retrigger_drink_now(d25) is False
+
+        # Even if double_card_effect_cards==1 on T5/rem=5, #619 AND #22/#12 MUST STILL be held!
+        # With empty hand (after playing #162), engine must SKIP to carry 2x to next turn instead of burning #22 early.
+        sim.double_card_effect_cards = 1
+        assert sim.should_hold_for_finisher(drink_cfg=d22, fin_window=2) is True
+        assert sim.should_hold_for_finisher(drink_cfg=d12, fin_window=2) is True
+        _, amap_t5 = codec.legal_mask_and_map(sim, prune_dominated=True)
+        assert all(
+            not (k == "card" and sim.hand[idx].cfg.card_id == 619)
+            for k, idx in amap_t5.values()
+        )
+        assert all(
+            not (k == "drink" and sim.available_drinks[idx].drink_id in (22, 12))
+            for k, idx in amap_t5.values()
+        )
+        saved_hand = list(sim.hand)
+        sim.draw_pile.append(saved_hand[0])  # #619 still unexhausted in draw pile
+        sim.hand.clear()
+        _, amap_empty_2x = codec.legal_mask_and_map(sim, prune_dominated=True)
+        assert list(amap_empty_2x.values()) == [("end_turn", -1)]
+        sim.draw_pile.clear()
+        sim.hand = saved_hand
+
+        # Final turn (rem=1) with double_card_effect_cards==1 and free #117 in hand: #117 takes 2x first, #619 forbidden until 2x spent
+        sim.turns_remaining = 1
+        sim.card_uses_remaining = 1
+        _, amap_t1_free = codec.legal_mask_and_map(sim, prune_dominated=True)
+        assert all(
+            not (k == "card" and sim.hand[idx].cfg.card_id == 619)
+            for k, idx in amap_t1_free.values()
+        )
+
+        # Final turn (rem=1) with ONLY [#619, #295] and card_uses_remaining==1 (no free card): #619 MUST remain legal!
+        sim.hand = [c for c in sim.hand if c.cfg.card_id in (619, 295)]
+        _, amap_t1_last = codec.legal_mask_and_map(sim, prune_dominated=True)
+        assert any(k == "card" and sim.hand[idx].cfg.card_id == 619 for k, idx in amap_t1_last.values())
+
+        # 3. #27092 届けたい想い P-item fires at afterStartOfTurn when turns_remaining <= 3
+        p27092 = next(it for it in _build_sense_hif_p_items() if it.item_id == 27092)
+        c619 = _make_card_config(db, 619)
+        c74 = _make_card_config(db, 74)
+        bcfg_p = BattleConfig(
+            scenario_id="hif_honsen",
+            stage_name="p27092",
+            p_idol_id=114,
+            idol_name="倉本 千奈",
+            plan="sense",
+            idol_stats={"vocal": 1500, "dance": 1500, "visual": 1500},
+            total_turns=9,
+            max_stamina=50,
+            initial_stamina=50,
+            turn_schedule=[TurnMultiplierSpec("Da", 40.0) for _ in range(9)],
+            deck=[c619, c74, c74, c74],
+            p_items=[p27092],
+        )
+        sim_p = HeadlessBattleSimulator(bcfg_p)
+        sim_p.hand = []
+        sim_p.draw_pile = [CardInstance(uid=10, cfg=c619)]
+        sim_p.discard_pile = []
+        sim_p.turns_remaining = 3
+        sim_p.buffs["goodConditionTurns"] = 50
+        sim_p.buffs["concentration"] = 10
+        sim_p.stamina = 30
+        sim_p._fire_phase("afterStartOfTurn", is_direct=False)
+        assert any(c.cfg.card_id == 619 for c in sim_p.hand)
+        assert sim_p.buffs["concentration"] == 20  # +20% of 50 = +10
+        assert sim_p.stamina == 29
+        assert sim_p.p_item_trigger_counts[27092] == 1
+
+        # 4. Multiplier OCR handles ろ->6 and truncated ーカル
+        assert _parse_live_turn_multiplier(ScreenObservation(scene="battle_turn", week_activity="試験 ダンスろ947%")) == ("Da", 69.47)
+        assert _parse_live_turn_multiplier(ScreenObservation(scene="battle_turn", week_activity="試験 ビジュアルー5ろ17%")) == ("Vi", 56.17)
+        assert _parse_live_turn_multiplier(ScreenObservation(scene="battle_turn", week_activity="試験 ーカル2017%")) == ("Vo", 20.17)
+
+        # 5. Tutor modal scoring in #619-only deck
+        agent = LocalHybridDecisionAgent(db=db)
+        obs_t5 = ScreenObservation(scene="card_reward", week=7, turns_remaining=5)
+        obs_t1 = ScreenObservation(scene="card_reward", week=7, turns_remaining=1)
+        assert agent._score_battle_tutor_card(
+            card_id=619, title="世界一の勇気+", desc="", obs=obs_t5, target_effect="goodConditionTurns", guide=None, plan="sense", p_idol_id=114
+        ) < 0
+        assert agent._score_battle_tutor_card(
+            card_id=619, title="世界一の勇気+", desc="", obs=obs_t1, target_effect="goodConditionTurns", guide=None, plan="sense", p_idol_id=114
+        ) == 22_000
+        assert agent._score_battle_tutor_card(
+            card_id=163, title="国民的アイドル+", desc="", obs=obs_t5, target_effect="goodConditionTurns", guide=None, plan="sense", p_idol_id=114
+        ) < 8_500
+
+

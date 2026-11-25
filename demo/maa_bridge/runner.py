@@ -1267,13 +1267,38 @@ class GakumasRunner:
                         source="rule_skip",
                     )
             elif obs.scene_type == "card_reward" and self._reward_step_count >= 20 and legal_actions:
-                is_active_removal_screen = any(
-                    str((a.payload or {}).get("name") or "") in ("チェンジする", "削除する")
-                    for a in legal_actions
+                change_confirm_act = next(
+                    (a for a in legal_actions if str((a.payload or {}).get("name") or "") == "チェンジする"),
+                    None,
                 )
+                delete_confirm_act = next(
+                    (a for a in legal_actions if str((a.payload or {}).get("name") or "") == "削除する"),
+                    None,
+                )
+                is_active_removal_screen = (change_confirm_act is not None) or (delete_confirm_act is not None)
                 if is_active_removal_screen and self._reward_step_count < 24:
                     safe_reward_act = None
-                elif is_active_removal_screen:
+                elif change_confirm_act is not None:
+                    # H.I.F チェンジ is mandatory (Page 1 has no skip, so キャンセル loops forever!):
+                    # confirm swap on any non-customized card, or switch to a non-customized slot first.
+                    if not (change_confirm_act.payload or {}).get("is_customized"):
+                        safe_reward_act = change_confirm_act
+                        self._reward_step_count = 0
+                    else:
+                        nc_prevs = [
+                            a for a in legal_actions
+                            if any(
+                                tok in str((a.payload or {}).get("name") or "")
+                                for tok in ("换出候选卡", "待选卡", "预览")
+                            )
+                            and not (a.payload or {}).get("is_customized")
+                        ]
+                        safe_reward_act = (
+                            nc_prevs[self._reward_step_count % len(nc_prevs)]
+                            if nc_prevs
+                            else change_confirm_act
+                        )
+                elif delete_confirm_act is not None:
                     safe_reward_act = next(
                         (
                             a for a in legal_actions
@@ -1368,6 +1393,43 @@ class GakumasRunner:
                         for c in (obs.cards or [])
                     )
                 )
+                confirm_click_coords = click_coords
+                if (
+                    is_live_ctrl
+                    and isinstance(self.controller, (AdbController, Win32Controller))
+                    and chosen_action is not None
+                    and chosen_action.action_type == "play_card"
+                    and frame is not None
+                    and frame.size > 0
+                ):
+                    fh_c, fw_c = frame.shape[:2]
+                    n_hand_slots = max(len(obs.cards or []), int(getattr(obs, "hand_slot_count", 0) or 0))
+                    tap_x = click_coords[0]
+                    if n_hand_slots >= 5:
+                        # Clamp 5-card fanned outer slots inward away from screen borders / neighbor overlap
+                        tap_x = max(int(round(fw_c * 0.135)), min(int(round(fw_c * 0.865)), tap_x))
+                    lifted_y = max(int(round(fh_c * 0.75)), click_coords[1] - int(round(fh_c * 0.022)))
+                    click_coords = (tap_x, lifted_y if already_selected else click_coords[1])
+                    confirm_click_coords = (tap_x, lifted_y)
+
+                def _slot_still_selected_in_frame(f_chk: Optional[np.ndarray], cx_chk: int) -> bool:
+                    if f_chk is None or f_chk.size == 0 or len(f_chk.shape) < 3:
+                        return False
+                    hp_s, wp_s = f_chk.shape[:2]
+                    sx1 = max(0, cx_chk - int(round(wp_s * 0.075)))
+                    sx2 = min(wp_s, cx_chk + int(round(wp_s * 0.075)))
+                    if sx2 <= sx1 + 4:
+                        return False
+                    rib = f_chk[int(hp_s * 0.906) : int(hp_s * 0.930), sx1:sx2]
+                    rib_orange = int(
+                        ((rib[:, :, 0] > 225) & (rib[:, :, 1] > 140) & (rib[:, :, 1] < 215) & (rib[:, :, 2] < 95)).sum()
+                    ) if rib.size else 0
+                    sel_band = f_chk[int(hp_s * 0.902) : int(hp_s * 0.934), sx1:sx2]
+                    badge_cnt = int(
+                        ((sel_band[:, :, 0] > 215) & (sel_band[:, :, 1] > 150) & (sel_band[:, :, 2] < 95)).sum()
+                    ) if sel_band.size else 0
+                    return rib_orange > 450 or badge_cnt >= 220
+
                 pre_play_hand: Optional[np.ndarray] = None
                 if (
                     is_live_ctrl
@@ -1398,8 +1460,9 @@ class GakumasRunner:
                 )
                 if click_ok and needs_double_tap:
                     time.sleep(0.75 if obs.scene_type in ("produce_schedule", "produce_event") else 0.65)
+                    tap2_xy = confirm_click_coords if chosen_action.action_type == "play_card" else click_coords
                     with self._ctrl_lock:
-                        self.controller.click(click_coords[0], click_coords[1])
+                        self.controller.click(tap2_xy[0], tap2_xy[1])
                 if click_ok and is_live_ctrl and chosen_action is not None and chosen_action.action_type in ("play_card", "use_drink", "end_turn"):
                     if chosen_action.action_type == "play_card":
                         dsl_l = (chosen_action.payload.get("dsl_actions") or "").lower()
@@ -1411,7 +1474,7 @@ class GakumasRunner:
                             "cardusesremaining+=" in dsl_l
                             or chosen_action.payload.get("card_id") in (755, 756, 757, 758)
                         )
-                        # Verify the card actually launched (animation changed the hand); if swallowed by lingering animation, retry cleanly
+                        # Verify the card actually launched (not swallowed AND not stuck lifted in '選択中' state)
                         verif_elapsed = 0.0
                         if pre_play_hand is not None and isinstance(self.controller, (AdbController, Win32Controller)):
                             time.sleep(0.95)
@@ -1422,33 +1485,48 @@ class GakumasRunner:
                                 fh_p, fw_p = post_f.shape[:2]
                                 post_hand = post_f[int(fh_p * 0.73) : int(fh_p * 0.90), int(fw_p * 0.04) : int(fw_p * 0.96)]
                                 play_diff = float(np.mean(np.abs(post_hand.astype(np.float32) - pre_play_hand.astype(np.float32))))
-                                if play_diff < 5.5:
+                                stuck_selected = _slot_still_selected_in_frame(post_f, confirm_click_coords[0])
+                                if play_diff < 5.5 or stuck_selected:
                                     logger.info(
-                                        "Play card tap may have been swallowed by animation (diff=%.1f); settling 0.9s and retrying tap...",
+                                        "Play card unlaunched (diff=%.1f, stuck_selected=%s); retrying confirm tap at %s...",
                                         play_diff,
+                                        stuck_selected,
+                                        confirm_click_coords,
                                     )
-                                    time.sleep(0.90)
-                                    with self._ctrl_lock:
-                                        self.controller.click(click_coords[0], click_coords[1])
-                                    time.sleep(0.65)
+                                    if stuck_selected:
+                                        time.sleep(0.35)
+                                        with self._ctrl_lock:
+                                            self.controller.click(confirm_click_coords[0], confirm_click_coords[1])
+                                        time.sleep(0.75)
+                                    else:
+                                        time.sleep(0.90)
+                                        with self._ctrl_lock:
+                                            self.controller.click(click_coords[0], click_coords[1])
+                                        time.sleep(0.65)
+                                        with self._ctrl_lock:
+                                            self.controller.click(confirm_click_coords[0], confirm_click_coords[1])
+                                        time.sleep(0.75)
                                     with self._ctrl_lock:
                                         post_f2 = self.controller.screencap()
                                     if post_f2 is not None and post_f2.shape == frame.shape:
                                         post_hand2 = post_f2[int(fh_p * 0.73) : int(fh_p * 0.90), int(fw_p * 0.04) : int(fw_p * 0.96)]
                                         play_diff2 = float(np.mean(np.abs(post_hand2.astype(np.float32) - pre_play_hand.astype(np.float32))))
-                                        if play_diff2 < 5.5:
+                                        stuck_selected2 = _slot_still_selected_in_frame(post_f2, confirm_click_coords[0])
+                                        if play_diff2 < 5.5 or stuck_selected2:
                                             with self._ctrl_lock:
-                                                self.controller.click(click_coords[0], click_coords[1])
+                                                self.controller.click(confirm_click_coords[0], confirm_click_coords[1])
                                             time.sleep(0.90)
                                             with self._ctrl_lock:
                                                 post_f3 = self.controller.screencap()
                                             if post_f3 is not None and post_f3.shape == frame.shape:
                                                 post_hand3 = post_f3[int(fh_p * 0.73) : int(fh_p * 0.90), int(fw_p * 0.04) : int(fw_p * 0.96)]
                                                 play_diff3 = float(np.mean(np.abs(post_hand3.astype(np.float32) - pre_play_hand.astype(np.float32))))
-                                                if play_diff3 < 5.5:
+                                                stuck_selected3 = _slot_still_selected_in_frame(post_f3, confirm_click_coords[0])
+                                                if play_diff3 < 5.5 or stuck_selected3:
                                                     logger.warning(
-                                                        "Card play unconfirmed after retry (diff=%.1f); skipping tracker/sim play record so card is not falsely marked exhausted.",
+                                                        "Card play unconfirmed after retry (diff=%.1f, stuck_selected=%s); skipping tracker/sim play record so card is not falsely marked exhausted.",
                                                         play_diff3,
+                                                        stuck_selected3,
                                                     )
                                                     card_play_confirmed = False
                         total_play_wait = 4.60 if is_extra_turn else (3.70 if is_continuous_play else 4.20)

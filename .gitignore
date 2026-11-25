@@ -3,6 +3,8 @@
 *.csv
 debug_frames*/
 produce_library_live*.json
+produce_library_*_*.json
+hif_config_*_resume_seed.json
 
 # Database WAL / cache files
 *.db-shm

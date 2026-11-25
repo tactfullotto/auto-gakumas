@@ -8756,6 +8756,241 @@ def test_drink18_and_drink21_deferred_when_extra_use_or_hand_empty(tmp_path):
         db.close()
 
 
+def test_unfired_163_play_rolls_back_phantom_2x_and_retries_before_814():
+    """Regression (W7 Step 202->203): if #162/#163 stays in hand after notify_action_executed, 2x must roll back to 0 so #814 is never fired naked."""
+    from demo.core.db import GakumasDB
+    from demo.core.tracker import GameStateTracker
+    from demo.schemas import BoundingBox, LegalAction, RecognizedCard, ScreenObservation
+    from demo.sim.live_battle_planner import LiveBattlePlanner, LiveBattlePlannerConfig
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        tr = GameStateTracker()
+        tr.p_idol_id = 139
+        tr.produce_deck = [812, 814, 112, 145, 147, 295, 166, 117, 165, 599, 163, 706, 776, 301, 23, 87, 593, 585, 889, 74]
+
+        planner = LiveBattlePlanner(
+            db=db,
+            cfg=LiveBattlePlannerConfig(ppo_episodes=2, ppo_episodes_per_update=2, ismcts_simulations=12, seed=7),
+        )
+        box = BoundingBox(xmin=0, ymin=0, xmax=80, ymax=120)
+
+        def _rc(cid: int, name: str) -> RecognizedCard:
+            return RecognizedCard(card_id=cid, name=name, playable=True, visual_playable=True, bbox=box)
+
+        # Step 202: rem=2, 5-card hand with #162/#163 and #813/#814
+        obs_202 = ScreenObservation(
+            scene_type="battle_turn",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=7,
+            turn=8,
+            turns_remaining=2,
+            stamina=35,
+            max_stamina=44,
+            genki=26,
+            score=155476,
+            buffs={"goodConditionTurns": 109, "perfectConditionTurns": 15, "concentration": 16},
+            cards=[
+                _rc(162, "国民的アイドル"),
+                _rc(813, "自然体の魅力"),
+                _rc(74, "アドリブ"),
+                _rc(295, "スポットライト+"),
+                _rc(775, "話題沸騰"),
+            ],
+            hand_slot_count=5,
+            drinks=[],
+        )
+        acts_202 = [
+            LegalAction(choice_id=0, action_type="play_card", description="打出卡牌: 国民的アイドル [⚡免费+1使用次数(不耗行动点)]", bbox=box, payload={"card_id": 162, "base_id": 162, "limit_count": 1, "dsl_actions": "doubleCardEffectCards+=1; cardUsesRemaining+=1", "name": "国民的アイドル"}),
+            LegalAction(choice_id=1, action_type="play_card", description="打出卡牌: 自然体の魅力", bbox=box, payload={"card_id": 813, "base_id": 813, "limit_count": 1, "dsl_actions": "score+=stamina*8; score+=2+cardsUsed*9", "name": "自然体の魅力"}),
+            LegalAction(choice_id=2, action_type="play_card", description="打出卡牌: アドリブ", bbox=box, payload={"card_id": 74, "base_id": 74, "dsl_actions": "score+=5; goodConditionTurns+=3", "name": "アドリブ"}),
+            LegalAction(choice_id=3, action_type="play_card", description="打出卡牌: スポットライト+", bbox=box, payload={"card_id": 295, "base_id": 294, "dsl_actions": "genki+=9; goodConditionTurns+=6", "name": "スポットライト+"}),
+            LegalAction(choice_id=4, action_type="play_card", description="打出卡牌: 話題沸騰", bbox=box, payload={"card_id": 775, "base_id": 775, "limit_count": 1, "dsl_actions": "goodConditionTurnsMultiplier=2; score+=37; setScoreBuff(0.3,1)", "name": "話題沸騰"}),
+            LegalAction(choice_id=5, action_type="end_turn", description="SKIP", bbox=box, payload={"name": "SKIP"}),
+        ]
+
+        cid_202, _r202, _ = planner.decide_battle_action(obs_202, acts_202, tracker=tr)
+        assert cid_202 == 0
+        planner.notify_action_executed(acts_202[0])
+        assert planner._sim.double_card_effect_cards == 1
+
+        # Step 203: edge tap missed on device -> #162 is STILL in obs.cards!
+        obs_203 = obs_202.model_copy(
+            update={
+                "cards": [
+                    _rc(162, "国民的アイドル"),
+                    _rc(813, "自然体の魅力"),
+                    _rc(74, "アドリブ"),
+                    _rc(295, "スポットライト+"),
+                ],
+                "hand_slot_count": 4,
+            }
+        )
+        acts_203 = [acts_202[0], acts_202[1], acts_202[2], acts_202[3], acts_202[5]]
+        cid_203, _r203, _ = planner.decide_battle_action(obs_203, acts_203, tracker=tr)
+        # Must roll back phantom 2x and re-play #162 BEFORE firing #813!
+        assert planner._sim.double_card_effect_cards == 0
+        assert cid_203 == 0
+    finally:
+        db.close()
+
+
+def test_stuck_exam_turn_ocr_advances_via_sim_and_fires_163_814_combo():
+    """Regression (W9 Steps 285->297): stuck HUD turns_remaining=5 must still count down 5->4->3->2->1 and fire #12/#163->#814."""
+    from demo.core.db import GakumasDB
+    from demo.core.tracker import GameStateTracker
+    from demo.schemas import BoundingBox, LegalAction, RecognizedCard, RecognizedDrink, ScreenObservation
+    from demo.sim.live_battle_planner import LiveBattlePlanner, LiveBattlePlannerConfig
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        tr = GameStateTracker()
+        tr.p_idol_id = 139
+        tr.produce_deck = [812, 814, 112, 145, 147, 295, 166, 117, 165, 599, 163, 707, 776, 301, 23, 87, 593, 585, 890, 74, 642, 667]
+
+        planner = LiveBattlePlanner(
+            db=db,
+            cfg=LiveBattlePlannerConfig(ppo_episodes=2, ppo_episodes_per_update=2, ismcts_simulations=16, seed=11),
+        )
+        box = BoundingBox(xmin=0, ymin=0, xmax=80, ymax=120)
+
+        def _rc(cid: int, name: str) -> RecognizedCard:
+            return RecognizedCard(card_id=cid, name=name, playable=True, visual_playable=True, bbox=box)
+
+        drinks = [
+            RecognizedDrink(drink_id=12, name="ブーストエキス", playable=True, bbox=box),
+            RecognizedDrink(drink_id=22, name="初星黒酢", playable=True, bbox=box),
+        ]
+
+        # Initialize battle at T8/rem=5 (matching Step 285), play non-free #642 to end T8
+        obs_t8 = ScreenObservation(
+            scene_type="battle_turn",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=9,
+            turn=8,
+            turns_remaining=5,
+            stamina=32,
+            max_stamina=44,
+            genki=9,
+            score=54941,
+            buffs={"goodConditionTurns": 70, "perfectConditionTurns": 1, "concentration": 30},
+            cards=[_rc(642, "ステージングの基本")],
+            drinks=drinks,
+        )
+        act_642 = LegalAction(choice_id=0, action_type="play_card", description="打出卡牌: ステージングの基本", bbox=box, payload={"card_id": 642, "base_id": 641, "limit_count": 1, "dsl_actions": "goodConditionTurnsMultiplier=2; score+=10", "name": "ステージングの基本"})
+        act_end = LegalAction(choice_id=9, action_type="end_turn", description="SKIP", bbox=box, payload={"name": "SKIP"})
+        planner.decide_battle_action(obs_t8, [act_642, act_end], tracker=tr)
+        # Align initial_turns to 12 like real W9 battle
+        planner._battle_initial_turns = 12
+        planner._sim.turn = 8
+        planner._sim.turns_remaining = 5
+        planner.notify_action_executed(act_642)
+        assert planner._sim.turns_remaining == 4
+
+        # T9 (actual rem=4, HUD stuck at rem=5): play #301 to finish T9
+        obs_t9 = obs_t8.model_copy(update={"turns_remaining": 5, "cards": [_rc(163, "国民的アイドル+"), _rc(301, "至高のエンタメ+"), _rc(814, "自然体の魅力+")]})
+        act_301 = LegalAction(choice_id=1, action_type="play_card", description="打出卡牌: 至高のエンタメ+", bbox=box, payload={"card_id": 301, "base_id": 300, "limit_count": 1, "dsl_actions": "at:turn { drawCard; limit:1 }", "name": "至高のエンタメ+"})
+        planner.decide_battle_action(obs_t9, [act_301, act_end], tracker=tr)
+        assert planner._sim.turns_remaining == 4
+        assert obs_t9.turns_remaining == 4
+        planner.notify_action_executed(act_301)
+
+        # T10 (actual rem=3, HUD still stuck at rem=5): play #294 to finish T10
+        obs_t10 = obs_t8.model_copy(update={"turns_remaining": 5, "cards": [_rc(74, "アドリブ"), _rc(294, "スポットライト"), _rc(814, "自然体の魅力+")]})
+        act_294 = LegalAction(choice_id=1, action_type="play_card", description="打出卡牌: スポットライト", bbox=box, payload={"card_id": 294, "base_id": 294, "dsl_actions": "genki+=7; goodConditionTurns+=5", "name": "スポットライト"})
+        planner.decide_battle_action(obs_t10, [act_294, act_end], tracker=tr)
+        assert planner._sim.turns_remaining == 3
+        assert obs_t10.turns_remaining == 3
+        planner.notify_action_executed(act_294)
+
+        # T11 (actual rem=2, HUD STILL stuck at rem=5!): hand has [#163, #776, #814, #74] + drinks [#12, #22]
+        obs_t11 = obs_t8.model_copy(
+            update={
+                "turns_remaining": 5,
+                "stamina": 41,
+                "genki": 24,
+                "score": 145668,
+                "buffs": {"goodConditionTurns": 120, "perfectConditionTurns": 9, "concentration": 37},
+                "cards": [
+                    _rc(163, "国民的アイドル+"),
+                    _rc(776, "話題沸騰+"),
+                    _rc(814, "自然体の魅力+"),
+                    _rc(74, "アドリブ"),
+                ],
+                "drinks": drinks,
+            }
+        )
+        acts_t11 = [
+            LegalAction(choice_id=0, action_type="play_card", description="打出卡牌: 国民的アイドル+ [⚡免费+1使用次数(不耗行动点)]", bbox=box, payload={"card_id": 163, "base_id": 162, "limit_count": 1, "dsl_actions": "genki+=8; doubleCardEffectCards+=1; cardUsesRemaining+=1", "name": "国民的アイドル+"}),
+            LegalAction(choice_id=1, action_type="play_card", description="打出卡牌: 話題沸騰+", bbox=box, payload={"card_id": 776, "base_id": 775, "limit_count": 1, "dsl_actions": "goodConditionTurnsMultiplier=2.5; score+=50; setScoreBuff(0.3,1)", "name": "話題沸騰+"}),
+            LegalAction(choice_id=2, action_type="play_card", description="打出卡牌: 自然体の魅力+", bbox=box, payload={"card_id": 814, "base_id": 813, "limit_count": 1, "dsl_actions": "fixedStamina+=maxStamina*0.2; score+=stamina*10; score+=2+cardsUsed*14", "name": "自然体の魅力+"}),
+            LegalAction(choice_id=3, action_type="play_card", description="打出卡牌: アドリブ", bbox=box, payload={"card_id": 74, "base_id": 74, "dsl_actions": "score+=5; goodConditionTurns+=3", "name": "アドリブ"}),
+            LegalAction(choice_id=4, action_type="use_drink", description="使用饮料: ブーストエキス", bbox=box, payload={"drink_id": 12, "name": "ブーストエキス"}),
+            LegalAction(choice_id=5, action_type="use_drink", description="使用饮料: 初星黒酢", bbox=box, payload={"drink_id": 22, "name": "初星黒酢"}),
+            act_end,
+        ]
+        cid_t11, reason_t11, _ = planner.decide_battle_action(obs_t11, acts_t11, tracker=tr)
+        assert planner._sim.turns_remaining == 2
+        assert obs_t11.turns_remaining == 2
+        assert "rem=2" in reason_t11
+        # Must NEVER dump #74 アドリブ when #12 / #163 -> #814 burst is unlocked at rem=2!
+        assert cid_t11 in (0, 1, 4)
+        assert cid_t11 != 3
+    finally:
+        db.close()
+
+
+def test_exam_turn_ring_ocr_and_two_frame_deadlock_recovery():
+    """Verify full-stem exam turn-ring OCR on saved live11 frames and 2-frame recovery across >2 turn drops."""
+    from pathlib import Path
+    import numpy as np
+    from PIL import Image
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    rec = LiveScreenRecognizer(scenario_id="hif_honsen", plan="sense")
+    p_rem2 = Path("debug_frames_live11/battle_W9_rem2_step296.png")
+    p_rem4 = Path("debug_frames_live11/battle_W9_rem4_step291.png")
+    p_rem4_w7 = Path("debug_frames_live11/battle_W7_rem4_step175.png")
+    p_rem6 = Path("debug_frames_live11/battle_W7_rem6_step168.png")
+    for p_img, expected_rem in ((p_rem4, 4), (p_rem4_w7, 4)):
+        if p_img.exists():
+            rec._in_battle_scene = False
+            rec._last_turns_remaining = 12
+            obs_chk = rec.recognize(np.array(Image.open(p_img).convert("RGB")))
+            assert obs_chk.scene_type == "battle_turn"
+            assert obs_chk.turns_remaining == expected_rem
+    if p_rem6.exists():
+        # Dimmed mid-animation frame: verify _parse_battle_screen dimmed-ring fallback reads 6 cleanly
+        img6 = np.array(Image.open(p_rem6).convert("RGB"))
+        rec._in_battle_scene = False
+        rec._last_turns_remaining = 10
+        obs6 = rec._parse_battle_screen(
+            img6,
+            [{"text": "ビジュアル 4800%", "bbox": [120, 40, 220, 75]}],
+            "sense",
+            {"week": 7, "week_label": "H.I.F本戦ラウンド1", "total_weeks": 9, "stamina": 42, "max_stamina": 44, "p_points": 255, "stats": {"vocal": 2000, "dance": 2600, "visual": 2300}},
+            turn_box_txt="残りターン",
+        )
+        assert obs6.turns_remaining == 6
+    if p_rem2.exists():
+        img2 = np.array(Image.open(p_rem2).convert("RGB"))
+        rec._in_battle_scene = True
+        rec._last_turns_remaining = 5
+        rec._turn_drop_candidate = None
+        # Frame 1 with diff=3 (5->2) records candidate without immediate jump
+        obs_a = rec.recognize(img2)
+        assert obs_a.turns_remaining == 5
+        assert rec._turn_drop_candidate == (2, 1)
+        # Frame 2 confirms rem=2 and breaks out of the stuck=5 deadlock!
+        obs_b = rec.recognize(img2)
+        assert obs_b.turns_remaining == 2
+        assert rec._turn_drop_candidate is None
+    rec.db.close()
+
+
+
 
 
 

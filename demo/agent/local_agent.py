@@ -1346,6 +1346,27 @@ class LocalHybridDecisionAgent:
                         hand_bases.add(hb)
         has_813_in_hand = 813 in hand_bases
         has_162_in_hand = 162 in hand_bases
+        has_813_in_deck = has_813_in_hand or bool(same_battle_sim and sim.has_unexhausted_card_family(813))
+        has_zeroing_in_hand = any(b in (618, 152) for b in hand_bases) or bool(
+            same_battle_sim
+            and any(sim.is_resource_zeroing_finisher(hc.cfg) for hc in (getattr(sim, "hand", None) or ()))
+        )
+        row_dsl = str(row.get("dsl_actions") or "") if row else ""
+        is_zeroing_fin = (
+            base_id in (618, 152)
+            or "世界一の勇気" in text_all
+            or "届いて" in text_all
+            or (
+                "score+=" in row_dsl
+                and bool(re.search(r"\b(goodConditionTurns|genki|goodImpressionTurns|concentration)\s*=\s*0\b", row_dsl))
+            )
+        )
+        if is_zeroing_fin:
+            # Resource-zeroing solo finisher (#618/#619 gc=0, #152/#153 genki=0):
+            # top priority ONLY on final turn when missing from hand; never tutor early!
+            if rem_turns <= 1 and not has_zeroing_in_hand:
+                return 22_000
+            return -2_500
         if base_id == 813 or "自然体の魅力" in text_all:
             if has_813_in_hand and not double_armed and not has_162_in_hand:
                 return 15_500 if late_window else 8_000
@@ -1355,7 +1376,10 @@ class LocalHybridDecisionAgent:
         if base_id == 162 or "国民的アイドル" in text_all:
             if has_813_in_hand and not double_armed and not has_162_in_hand:
                 return 22_000 if late_window else 12_500
-            return 18_500 if late_window else 8_500
+            if has_813_in_deck and not double_armed and not has_162_in_hand:
+                return 18_500 if late_window else 8_500
+            if rem_turns <= 1 and has_zeroing_in_hand:
+                return -1_000
         if base_id == 775 or "話題沸騰" in text_all:
             return 14_000
         if base_id == 811 or "お姉さんの感覚" in text_all:
@@ -1854,9 +1878,13 @@ class LocalHybridDecisionAgent:
             if is_removal and preview_acts:
                 claim_slot = (claim_act.payload or {}).get("slot_idx")
                 cur_slot = (
-                    int(self._last_clicked_grid_slot)
-                    if self._last_clicked_grid_slot is not None
-                    else (int(claim_slot) if claim_slot is not None else self._infer_current_reward_slot(preview_acts))
+                    int(claim_slot)
+                    if claim_slot is not None
+                    else (
+                        int(self._last_clicked_grid_slot)
+                        if self._last_clicked_grid_slot is not None
+                        else self._infer_current_reward_slot(preview_acts)
+                    )
                 )
                 claim_is_custom = bool((claim_act.payload or {}).get("is_customized"))
                 cur_score = (
@@ -1976,9 +2004,30 @@ class LocalHybridDecisionAgent:
                         reason="LocalAgent(removal): Requesting scroll to opposite end of deck to find weaker card",
                         source="local_hybrid",
                     )
+                if claim_is_custom and claim_name == "チェンジする":
+                    # On mandatory H.I.F チェンジ, cancelling only loops back to Page 1 (which has no skip);
+                    # immediately switch to the best non-customized deck slot instead!
+                    non_cust_alts = [
+                        p for p in preview_acts
+                        if not (p.payload or {}).get("is_customized")
+                        and self._extract_reward_slot_idx(p) != cur_slot
+                    ]
+                    if non_cust_alts:
+                        best_nc = max(
+                            non_cust_alts,
+                            key=lambda p: self._reward_grid_scores.get(self._extract_reward_slot_idx(p) or -1, -9_999),
+                        )
+                        nc_slot = self._extract_reward_slot_idx(best_nc)
+                        if nc_slot is not None:
+                            self._last_clicked_grid_slot = nc_slot
+                        return DecisionResult(
+                            choice_id=best_nc.choice_id,
+                            reason=f"LocalAgent(removal): Protecting customized slot #{cur_slot + 1}; switching to non-customized slot -> {best_nc.description}",
+                            source="local_hybrid",
+                        )
                 if (
                     cancel_act is not None
-                    and claim_name in ("チェンジする", "削除する")
+                    and claim_name == "削除する"
                     and (
                         (cur_score < -250 and (not self._came_from_change_pickup) and self._reward_cancel_attempts == 0)
                         or (claim_is_custom and self._reward_cancel_attempts < 2)

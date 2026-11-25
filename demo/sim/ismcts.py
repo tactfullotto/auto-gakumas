@@ -232,20 +232,47 @@ class ISMCTSAgent:
                     root_mask[a] = True
 
             fin_window = getattr(self.codec, "finisher_play_max_turns_remaining", 2)
-            if fin_window > 0 and sim.double_card_effect_cards == 0:
-                has_813 = sim.has_unexhausted_card_family(813)
-                hold_filtered = [
+            has_813 = sim.has_unexhausted_card_family(813)
+            has_zeroing = sim.has_unexhausted_zeroing_finisher()
+            hold_filtered = [
+                a
+                for a in root_legal
+                if not sim.should_hold_for_finisher(
+                    card_cfg=sim.hand[root_map[a][1]].cfg if root_map.get(a, ("", -1))[0] == "card" else None,
+                    drink_cfg=sim.available_drinks[root_map[a][1]] if root_map.get(a, ("", -1))[0] == "drink" else None,
+                    fin_window=fin_window,
+                    has_813=has_813,
+                    has_zeroing=has_zeroing,
+                )
+            ]
+            if hold_filtered and len(hold_filtered) != len(root_legal):
+                root_legal = hold_filtered
+                root_mask = np.zeros_like(root_mask)
+                for a in root_legal:
+                    root_mask[a] = True
+
+            if sim.double_card_effect_cards > 0 or sim.has_armed_active_retrigger(same_turn_only=True):
+                other_2x_targets = any(
+                    root_map.get(a, ("", -1))[0] == "card"
+                    and not sim.is_trouble_card(sim.hand[root_map[a][1]].cfg)
+                    and not sim.is_resource_zeroing_finisher(sim.hand[root_map[a][1]].cfg)
+                    and sim.hand[root_map[a][1]].cfg.rarity != "L"
+                    and (sim.double_card_effect_cards > 0 or sim.hand[root_map[a][1]].cfg.card_type == "active")
+                    for a in root_legal
+                )
+                no_2x_zero_filtered = [
                     a
                     for a in root_legal
-                    if not sim.should_hold_for_finisher(
-                        card_cfg=sim.hand[root_map[a][1]].cfg if root_map.get(a, ("", -1))[0] == "card" else None,
-                        drink_cfg=sim.available_drinks[root_map[a][1]] if root_map.get(a, ("", -1))[0] == "drink" else None,
-                        fin_window=fin_window,
-                        has_813=has_813,
+                    if not (
+                        root_map.get(a, ("", -1))[0] == "card"
+                        and sim.should_forbid_double_on_card(
+                            sim.hand[root_map[a][1]].cfg,
+                            has_other_double_target=other_2x_targets,
+                        )
                     )
                 ]
-                if hold_filtered and len(hold_filtered) != len(root_legal):
-                    root_legal = hold_filtered
+                if no_2x_zero_filtered and len(no_2x_zero_filtered) != len(root_legal):
+                    root_legal = no_2x_zero_filtered
                     root_mask = np.zeros_like(root_mask)
                     for a in root_legal:
                         root_mask[a] = True
@@ -330,6 +357,7 @@ class ISMCTSAgent:
                     if root_map.get(a, ("", -1))[0] == "card"
                     and sim.hand[root_map[a][1]].cfg.card_type == "active"
                     and sim.hand[root_map[a][1]].cfg.rarity != "L"
+                    and not sim.is_resource_zeroing_finisher(sim.hand[root_map[a][1]].cfg)
                 }
                 if active_root:
                     pruned_legal = [
