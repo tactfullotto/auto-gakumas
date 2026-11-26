@@ -183,6 +183,7 @@ class GameStateTracker:
         memory_slots: Optional[List[Dict[str, Any]]] = None,
         memory_passives: Optional[List[Dict[str, Any]]] = None,
         card_customizations: Optional[Dict[Any, Dict[str, Any]]] = None,
+        db: Optional[Any] = None,
     ) -> None:
         """Merge user-entered memory hooks, customizations, and passive slots onto scanned initial loadout."""
         for k, v in (hooks or {}).items():
@@ -202,6 +203,18 @@ class GameStateTracker:
                 cid = int(k)
             except (TypeError, ValueError):
                 continue
+            if db is not None and hasattr(db, "get_card_by_id"):
+                crow = db.get_card_by_id(cid)
+                if crow:
+                    for fk in ("base_id", "upgraded_id"):
+                        sib = crow.get(fk)
+                        if sib is not None:
+                            try:
+                                sib_id = int(sib)
+                            except (TypeError, ValueError):
+                                sib_id = 0
+                            if sib_id > 0 and sib_id != cid:
+                                self.card_customizations.pop(sib_id, None)
             merged_c = dict(self.card_customizations.get(cid) or {})
             merged_c.update(v)
             self.card_customizations[cid] = merged_c
@@ -705,9 +718,20 @@ class GameStateTracker:
                     or ("重複不可" in str(row.get("description") or ""))
                 )
             )
+            is_temp_basic_filler = bool(
+                row is not None
+                and str(row.get("rarity") or "").upper() == "N"
+                and not row.get("upgraded")
+                and "基本" in str(row.get("name") or "")
+            )
             while seen_n > available_known:
                 if is_unique_card and self.has_card_family(cid, db=db):
                     break
+                if is_temp_basic_filler:
+                    # Temporary basic card injected mid-battle (e.g. #429 H.I.F応援棒): track in battle_draw_pile only.
+                    self.battle_draw_pile.append(cid)
+                    available_known += 1
+                    continue
                 self.produce_deck.append(cid)
                 self.battle_draw_pile.append(cid)
                 available_known += 1

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 import difflib
+from itertools import product
+import json
 import re
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -126,6 +129,30 @@ KNOWN_P_ITEM_DEFS: List[Dict[str, Any]] = [
         "rarity": "SSR",
         "description": "好調効果のスキルカード獲得時、ランダムなPドリンクを獲得",
     },
+    {
+        "item_id": 9136,
+        "name": "夢を創るステッキ",
+        "aliases": ("夢を創るステッキ",),
+        "mode": "stage",
+        "source_type": "pIdol",
+        "rarity": "SSR",
+        "p_idol_id": 136,
+        "upgraded": False,
+        "upgrade_pair_id": 91361,
+        "description": "3ターンごとのターン終了時、元気の110%分パラメータ上昇・元気を0にする・次のターン、スキルカードを引く（レッスン内3回）",
+    },
+    {
+        "item_id": 91361,
+        "name": "夢を創るステッキ+",
+        "aliases": ("夢を創るステッキ+",),
+        "mode": "stage",
+        "source_type": "pIdol",
+        "rarity": "SSR",
+        "p_idol_id": 136,
+        "upgraded": True,
+        "upgrade_pair_id": 9136,
+        "description": "3ターンごとのターン終了時、元気の130%分パラメータ上昇・元気を0にする・次のターン、スキルカードを引く（レッスン内3回）",
+    },
 ]
 
 
@@ -141,37 +168,51 @@ def _normalize_title_line(raw: str) -> str:
 def match_p_item_by_text(title: str, body: str = "") -> Dict[str, Any]:
     """Resolve scanned P-item title & body OCR text to structured metadata."""
     clean_t = _normalize_title_line(title).replace("工", "I")
+    norm_t = clean_t.replace("（", "(").replace("）", ")").replace("＋", "+")
+    t_has_plus = norm_t.endswith("+")
+
+    def _to_meta(item_def: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "item_id": item_def["item_id"],
+            "name": clean_t or item_def["name"],
+            "canonical_name": item_def["name"],
+            "mode": item_def["mode"],
+            "source_type": item_def["source_type"],
+            "rarity": item_def["rarity"],
+            "description": body or item_def["description"],
+        }
+
+    # Pass 1: exact alias match (preserves + vs unupgraded distinction e.g. 夢を創るステッキ vs 夢を創るステッキ+)
+    for item_def in KNOWN_P_ITEM_DEFS:
+        for alias in item_def["aliases"]:
+            norm_a = alias.replace("（", "(").replace("）", ")").replace("＋", "+")
+            if norm_a == norm_t:
+                return _to_meta(item_def)
+
+    # Pass 2: substring match preferring same trailing '+' status and longer aliases
+    sub_candidates: List[Tuple[int, int, Dict[str, Any]]] = []
+    for item_def in KNOWN_P_ITEM_DEFS:
+        for alias in item_def["aliases"]:
+            norm_a = alias.replace("（", "(").replace("）", ")").replace("＋", "+")
+            if norm_a and (norm_a in norm_t or norm_t in norm_a):
+                plus_match = 1 if (norm_a.endswith("+") == t_has_plus) else 0
+                sub_candidates.append((plus_match, len(norm_a), item_def))
+    if sub_candidates:
+        sub_candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return _to_meta(sub_candidates[0][2])
+
     best_def: Optional[Dict[str, Any]] = None
     best_ratio = 0.0
     for item_def in KNOWN_P_ITEM_DEFS:
         for alias in item_def["aliases"]:
-            norm_a = alias.replace("（", "(").replace("）", ")")
-            norm_t = clean_t.replace("（", "(").replace("）", ")")
-            if norm_a in norm_t or norm_t in norm_a:
-                return {
-                    "item_id": item_def["item_id"],
-                    "name": clean_t or item_def["name"],
-                    "canonical_name": item_def["name"],
-                    "mode": item_def["mode"],
-                    "source_type": item_def["source_type"],
-                    "rarity": item_def["rarity"],
-                    "description": body or item_def["description"],
-                }
+            norm_a = alias.replace("（", "(").replace("）", ")").replace("＋", "+")
             ratio = difflib.SequenceMatcher(None, norm_a, norm_t).ratio()
             if ratio > best_ratio:
                 best_ratio = ratio
                 best_def = item_def
 
     if best_def is not None and best_ratio >= 0.72:
-        return {
-            "item_id": best_def["item_id"],
-            "name": clean_t or best_def["name"],
-            "canonical_name": best_def["name"],
-            "mode": best_def["mode"],
-            "source_type": best_def["source_type"],
-            "rarity": best_def["rarity"],
-            "description": body or best_def["description"],
-        }
+        return _to_meta(best_def)
 
     # Body-text fallback when title OCR is garbled near viewport boundaries
     body_rules = (
@@ -187,6 +228,8 @@ def match_p_item_by_text(title: str, body: str = "") -> Dict[str, Any]:
         (("絶好調4ターン" in body and "元気+10" in body), 9140),
         (("ひとりだち" in body or ("50%以下" in body and "ダンス" in body)), 9141),
         (("好調効果のスキルカード獲得時" in body and "Pドリンク" in body), 9142),
+        (("3ターンごと" in body and ("元気の130%" in body or ("元気を0" in body and "130%" in body))), 91361),
+        (("3ターンごと" in body and ("元気を0" in body or "元気の110%" in body)), 9136),
     )
     for matched_cond, known_id in body_rules:
         if matched_cond:
@@ -215,6 +258,594 @@ def match_p_item_by_text(title: str, body: str = "") -> Dict[str, Any]:
     }
 
 
+_FULLWIDTH_TRANS = str.maketrans(
+    "０１２３４５６７８９＋－−％（）×：，．　",
+    "0123456789+--%()x:,. ",
+)
+
+_TEXT_NUM_PATTERNS: Tuple[Tuple[str, str], ...] = (
+    ("score", r"(?<!増加)パラメータ\+(\d+)"),
+    ("genki", r"(?<!カード)元気\+(\d+)"),
+    ("goodImpressionTurns", r"好印象\+(\d+)"),
+    ("motivation", r"やる気\+(\d+)"),
+    ("goodConditionTurns", r"(?<!絶)好調(\d+)ターン"),
+    ("perfectConditionTurns", r"絶好調(\d+)ターン"),
+    ("concentration", r"集中\+(\d+)"),
+    ("halfCostTurns", r"消費体力減少(\d+)ターン"),
+    ("fullPowerCharge", r"全力値\+(\d+)"),
+    ("growth_score", r"パラメータ値増加\+(\d+)"),
+    ("genki_per_card", r"元気増加量\+(\d+)"),
+)
+
+_TEXT_PCT_PATTERNS: Tuple[Tuple[str, str], ...] = (
+    ("scoreBy_goodImpressionTurns", r"好印象の(\d+)%分パラメータ"),
+    ("scoreBy_motivation", r"やる気の(\d+)%分パラメータ"),
+    ("scoreBy_genki", r"元気の(\d+)%分パラメータ"),
+    ("scoreBy_goodConditionTurns", r"(?<!絶)好調の(\d+)%分パラメータ"),
+    ("gi_effect_buff_pct", r"好印象強化\+(\d+)%"),
+)
+
+_TYPED_COST_PATTERNS: Tuple[Tuple[str, str], ...] = (
+    ("stamina", r"体力消費(\d+)"),
+    ("goodImpressionTurns", r"好印象消費(\d+)"),
+    ("motivation", r"やる気消費(\d+)"),
+    ("concentration", r"集中消費(\d+)"),
+    ("goodConditionTurns", r"(?<!絶)好調消費(\d+)"),
+    ("perfectConditionTurns", r"絶好調消費(\d+)"),
+    ("fullPowerCharge", r"全力値消費(\d+)"),
+)
+
+_COND_MIN_PATTERNS: Tuple[Tuple[str, str], ...] = (
+    ("genki", r"元気が(\d+)"),
+    ("goodImpressionTurns", r"好印象が(\d+)"),
+    ("goodConditionTurns", r"(?<!絶)好調が(\d+)"),
+    ("concentration", r"集中が(\d+)"),
+    ("preservationTimes", r"温存になった回数が(\d+)"),
+)
+
+_DIRECT_GAIN_FIELDS = frozenset({
+    "genki",
+    "goodImpressionTurns",
+    "motivation",
+    "goodConditionTurns",
+    "perfectConditionTurns",
+    "concentration",
+    "halfCostTurns",
+    "fullPowerCharge",
+})
+
+_SCALE_IDENT_KEYS = frozenset({
+    "goodImpressionTurns",
+    "motivation",
+    "genki",
+    "goodConditionTurns",
+})
+
+
+def _normalize_ocr_effect_text(text: str) -> str:
+    """Normalize Japanese OCR card description text for reliable customization matching."""
+    if not text:
+        return ""
+    s = _clean_ocr_text(str(text)).translate(_FULLWIDTH_TRANS)
+    s = re.sub(r"([パラメータ元気好印象好調絶好調集中やる気全力値上昇増加回数強])十(\d+)", r"\1+\2", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _extract_text_customization_features(norm_text: str) -> Dict[str, Any]:
+    """Extract comparable numeric, percentage, cost, condition, and clause features from card body text."""
+    nums: Dict[str, List[int]] = {k: [] for k, _ in _TEXT_NUM_PATTERNS}
+    for key, pat in _TEXT_NUM_PATTERNS:
+        nums[key] = [int(m.group(1)) for m in re.finditer(pat, norm_text)]
+
+    score_hits = 0
+    for m in re.finditer(r"(?<!増加)パラメータ\+(\d+)(?:\([^)]*?(\d+)回[^)]*\))?", norm_text):
+        score_hits += int(m.group(2) or 1)
+
+    pcts: Dict[str, List[int]] = {}
+    for key, pat in _TEXT_PCT_PATTERNS:
+        pcts[key] = [int(m.group(1)) for m in re.finditer(pat, norm_text)]
+
+    typed_costs: Dict[str, Optional[int]] = {}
+    for key, pat in _TYPED_COST_PATTERNS:
+        m = re.search(pat, norm_text)
+        typed_costs[key] = int(m.group(1)) if m else None
+
+    cond_mins: Dict[str, List[int]] = {}
+    for key, pat in _COND_MIN_PATTERNS:
+        cond_mins[key] = [int(m.group(1)) for m in re.finditer(pat, norm_text)]
+
+    flags = {
+        "has_fih": ("レッスン開始時手札に入る" in norm_text) or ("開始時手札に入る" in norm_text),
+        "has_limit_1": bool(re.search(r"レッスン中\s*1\s*回", norm_text)),
+        "has_extra_use": ("スキルカード使用数追加" in norm_text) or ("使用数追加+" in norm_text),
+        "has_upgrade_hand": bool(re.search(r"手札.*強化|レッスン中強化", norm_text)),
+        "has_preservation": "温存に変更" in norm_text,
+        "has_strength": "強気に変更" in norm_text,
+        "has_stance_lv2": ("強気2段階目" in norm_text) or ("温存2段階目" in norm_text),
+        "has_hold": "保留に移動" in norm_text,
+        "has_turn_add": "ターン追加" in norm_text,
+        "has_top_of_deck": "山札の一番上に移動" in norm_text,
+        "has_gc_mult_2": "好調効果を2倍" in norm_text,
+        "has_conc_mult_3": "集中効果を3倍" in norm_text,
+        "has_mot_mult_15": bool(re.search(r"やる気.*?1\.?5倍", norm_text)),
+        "has_eff_text": bool(
+            re.search(r"(?:パラメータ|元気|好印象|やる気|集中|好調|全力|変更|保留|除外)", norm_text)
+        ),
+    }
+    return {
+        "nums": nums,
+        "score_hits": score_hits,
+        "pcts": pcts,
+        "typed_costs": typed_costs,
+        "cond_mins": cond_mins,
+        "flags": flags,
+        "text_len": len(norm_text),
+    }
+
+
+def _extract_mul_scale(rhs: Dict[str, Any]) -> Optional[Tuple[str, int]]:
+    """Return `(ident, pct_int)` if `rhs` represents `<ident> * <number>` or `<number> * <ident>`."""
+    if not isinstance(rhs, dict):
+        return None
+    if rhs.get("type") == "identifier":
+        nm = str(rhs.get("name") or "")
+        if nm in _SCALE_IDENT_KEYS or nm == "cardsUsed":
+            return nm, 100
+        return None
+    if rhs.get("type") == "binary" and rhs.get("op") == "*":
+        left = rhs.get("left") or {}
+        right = rhs.get("right") or {}
+        if left.get("type") == "identifier" and right.get("type") == "number":
+            return str(left.get("name") or ""), int(round(float(right.get("value") or 0.0) * 100))
+        if right.get("type") == "identifier" and left.get("type") == "number":
+            return str(right.get("name") or ""), int(round(float(left.get("value") or 0.0) * 100))
+    return None
+
+
+def _extract_ast_customization_features(
+    parsed: Dict[str, Any],
+    *,
+    force_initial_hand: bool,
+    limit_count: Optional[int],
+    dsl_actions: str,
+    customization_levels: Optional[Dict[int, int]] = None,
+) -> Dict[str, Any]:
+    """Project `apply_card_customizations()` output into the same feature schema as OCR card text."""
+    nums: Dict[str, List[int]] = {k: [] for k, _ in _TEXT_NUM_PATTERNS}
+    score_hits = 0
+    pcts: Dict[str, List[int]] = {k: [] for k, _ in _TEXT_PCT_PATTERNS}
+    typed_costs: Dict[str, Optional[int]] = {k: None for k, _ in _TYPED_COST_PATTERNS}
+    cond_mins: Dict[str, List[int]] = {k: [] for k, _ in _COND_MIN_PATTERNS}
+    flags: Dict[str, Any] = {
+        "has_fih": bool(force_initial_hand),
+        "has_limit_1": (limit_count == 1),
+        "has_extra_use": ("cardUsesRemaining+=" in str(dsl_actions or "")),
+        "has_upgrade_hand": False,
+        "has_preservation": False,
+        "has_strength": False,
+        "has_stance_lv2": any(int(cid) in (40, 41) and int(lv or 0) > 0 for cid, lv in (customization_levels or {}).items()),
+        "has_hold": False,
+        "has_turn_add": False,
+        "has_top_of_deck": False,
+        "has_gc_mult_2": False,
+        "has_conc_mult_3": False,
+        "has_mot_mult_15": False,
+    }
+
+    cost_var = "cost"
+    cost_amt = 0
+    for cblock in parsed.get("cost") or ():
+        if not isinstance(cblock, dict):
+            continue
+        for act in cblock.get("actions") or ():
+            if not isinstance(act, dict) or act.get("type") != "assignment" or act.get("op") != "-=":
+                continue
+            rhs = act.get("rhs")
+            if isinstance(rhs, dict) and rhs.get("type") == "number":
+                lhs = str(act.get("lhs") or "cost")
+                val = int(round(float(rhs.get("value") or 0)))
+                cost_var = lhs
+                cost_amt = max(0, val)
+                if lhs in typed_costs:
+                    typed_costs[lhs] = cost_amt
+
+    def _walk_conditions(node: Any) -> None:
+        if isinstance(node, list):
+            for it in node:
+                _walk_conditions(it)
+            return
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "comparison" and node.get("op") in (">=", ">"):
+            left = node.get("left") or {}
+            right = node.get("right") or {}
+            if left.get("type") == "identifier" and right.get("type") == "number":
+                nm = str(left.get("name") or "")
+                if nm in cond_mins:
+                    cond_mins[nm].append(int(round(float(right.get("value") or 0))))
+        for sub_k in ("conditions", "left", "right", "operand"):
+            if sub_k in node:
+                _walk_conditions(node.get(sub_k))
+
+    def _walk_actions(node: Any) -> None:
+        nonlocal score_hits
+        if isinstance(node, list):
+            for it in node:
+                _walk_actions(it)
+            return
+        if not isinstance(node, dict):
+            return
+        if "conditions" in node:
+            _walk_conditions(node.get("conditions"))
+        ntype = node.get("type")
+        if ntype == "assignment":
+            lhs = str(node.get("lhs") or "")
+            op = str(node.get("op") or "")
+            rhs = node.get("rhs") or {}
+            if op == "+=":
+                if lhs == "score":
+                    if rhs.get("type") == "number":
+                        nums["score"].append(int(round(float(rhs.get("value") or 0))))
+                        score_hits += 1
+                    else:
+                        sc = _extract_mul_scale(rhs)
+                        if sc and sc[0] in _SCALE_IDENT_KEYS:
+                            pcts[f"scoreBy_{sc[0]}"].append(sc[1])
+                elif lhs in _DIRECT_GAIN_FIELDS:
+                    if rhs.get("type") == "number":
+                        iv = int(round(float(rhs.get("value") or 0)))
+                        if iv > 0:
+                            nums[lhs].append(iv)
+                    elif lhs == "genki" and rhs.get("type") == "binary":
+                        # Handle `12*cardsUsed+2` style scaling (#102 おっきなおにぎり+)
+                        for side in (rhs.get("left"), rhs.get("right")):
+                            sc = _extract_mul_scale(side) if isinstance(side, dict) else None
+                            if sc and sc[0] == "cardsUsed":
+                                nums["genki_per_card"].append(max(1, sc[1] // 100))
+                elif lhs == "g.score" and rhs.get("type") == "number":
+                    nums["growth_score"].append(int(round(float(rhs.get("value") or 0))))
+                elif lhs == "cardUsesRemaining" and rhs.get("type") == "number" and float(rhs.get("value") or 0) > 0:
+                    flags["has_extra_use"] = True
+                elif lhs == "turnsRemaining" and rhs.get("type") == "number" and float(rhs.get("value") or 0) > 0:
+                    flags["has_turn_add"] = True
+            elif op == "=" and rhs.get("type") == "number":
+                fval = float(rhs.get("value") or 0.0)
+                if lhs == "goodConditionTurnsMultiplier" and int(round(fval)) == 2:
+                    flags["has_gc_mult_2"] = True
+                elif lhs == "concentrationMultiplier" and int(round(fval)) == 3:
+                    flags["has_conc_mult_3"] = True
+                elif lhs == "motivationMultiplier" and abs(fval - 1.5) < 1e-6:
+                    flags["has_mot_mult_15"] = True
+        elif ntype == "call":
+            cname = str(node.get("name") or "")
+            args = node.get("args") or []
+            if cname == "upgradeHand":
+                flags["has_upgrade_hand"] = True
+            elif cname in ("holdSelected", "holdRandom"):
+                flags["has_hold"] = True
+            elif cname in ("moveRandomToTopOfDeck", "moveSelectedToTopOfDeck"):
+                flags["has_top_of_deck"] = True
+            elif cname == "setStance" and args:
+                st = str((args[0] or {}).get("name") or "")
+                if st == "preservation":
+                    flags["has_preservation"] = True
+                elif st == "strength":
+                    flags["has_strength"] = True
+            elif cname == "setGoodImpressionTurnsEffectBuff" and args:
+                a0 = args[0] or {}
+                if a0.get("type") == "number":
+                    pcts["gi_effect_buff_pct"].append(int(round(float(a0.get("value") or 0.0) * 100)))
+
+        for sub_k in ("actions", "effects"):
+            if sub_k in node:
+                _walk_actions(node.get(sub_k))
+
+    _walk_conditions(parsed.get("conditions") or ())
+    _walk_actions(parsed.get("actions") or ())
+    _walk_actions(parsed.get("effects") or ())
+
+    return {
+        "nums": nums,
+        "score_hits": score_hits,
+        "pcts": pcts,
+        "typed_costs": typed_costs,
+        "cond_mins": cond_mins,
+        "flags": flags,
+        "cost_var": cost_var,
+        "cost_amt": cost_amt,
+    }
+
+
+def _score_customization_candidate(
+    *,
+    combo: Dict[int, int],
+    cand: Dict[str, Any],
+    base: Dict[str, Any],
+    obs: Dict[str, Any],
+    observed_cost: Optional[int],
+    valid_candidate_costs: set[int],
+    badge_detected: bool,
+    badge_count: Optional[int],
+    has_customization_marker: bool,
+) -> Optional[float]:
+    """Score how well a candidate customization combo explains OCR text & icon visuals vs baseline."""
+    has_visual_evidence = bool(badge_detected or has_customization_marker)
+    total_lv = sum(combo.values())
+    if total_lv > 3:
+        return None
+    if total_lv == 0:
+        return 0.0
+
+    # Without an icon badge / customization marker, disallow silent/memory-ambiguous flags (#29/#36/#37/#38)
+    if not has_visual_evidence and any(cid in (29, 36, 37, 38) for cid in combo):
+        return None
+
+    score = 0.0
+    strong_text_evidence = 0
+
+    # 1. Flat numeric fields & score hit count (#4 パラメータ上昇回数+ etc.)
+    for key in cand["nums"]:
+        b_vals = base["nums"][key]
+        c_vals = cand["nums"][key]
+        if Counter(c_vals) == Counter(b_vals):
+            continue
+        o_vals = obs["nums"][key]
+        if not o_vals and not b_vals and len(c_vals) == 1:
+            # New numeric line added by customization, missing from OCR
+            score -= 3.5
+            continue
+        b_ctr = Counter(b_vals)
+        c_ctr = Counter(c_vals)
+        o_ctr = Counter(o_vals)
+        added_vals = list((c_ctr - b_ctr).elements())
+        removed_vals = list((b_ctr - c_ctr).elements())
+        if Counter(o_vals) == c_ctr:
+            score += 5.0
+            strong_text_evidence += 1
+        elif added_vals and all(o_ctr[v] >= c_ctr[v] for v in set(added_vals)):
+            score += 4.0 + (1.0 if all(o_ctr[v] < b_ctr[v] for v in set(removed_vals)) else 0.0)
+            strong_text_evidence += 1
+        elif c_vals and o_vals and max(c_vals) in o_vals and max(c_vals) not in b_vals:
+            # Handle #4 + #64 where AST mutates first copy [12, 9] while game renders `パラメータ+12(2回)`
+            score += 4.5
+            strong_text_evidence += 1
+        elif removed_vals and all(o_ctr[v] >= b_ctr[v] for v in set(removed_vals)):
+            score -= 4.5
+        else:
+            score -= 2.5
+
+    if cand["score_hits"] != base["score_hits"] and obs["score"]:
+        if obs["score_hits"] >= cand["score_hits"]:
+            score += 4.0
+            strong_text_evidence += 1
+        elif obs["score_hits"] <= base["score_hits"]:
+            score -= 4.5
+
+    # 2. Percentage scaling fields
+    for key in cand["pcts"]:
+        b_vals = base["pcts"][key]
+        c_vals = cand["pcts"][key]
+        if Counter(c_vals) == Counter(b_vals):
+            continue
+        o_vals = obs["pcts"][key]
+        b_ctr, c_ctr, o_ctr = Counter(b_vals), Counter(c_vals), Counter(o_vals)
+        added_vals = list((c_ctr - b_ctr).elements())
+        if added_vals and all(o_ctr[v] >= c_ctr[v] for v in set(added_vals)):
+            score += 4.5 + (0.8 if all(v not in o_vals for v in (b_ctr - c_ctr)) else 0.0)
+            strong_text_evidence += 1
+        else:
+            score -= 4.5
+
+    # 3. Typed cost reductions (#30..#35, #104)
+    for t_key in cand["typed_costs"]:
+        b_cost = base["typed_costs"][t_key]
+        c_cost = cand["typed_costs"][t_key]
+        if b_cost == c_cost:
+            continue
+        o_cost = obs["typed_costs"][t_key]
+        if c_cost == 0:
+            if o_cost == 0 or (o_cost is None and obs["text_len"] >= 12):
+                score += 4.5
+                strong_text_evidence += 1
+            elif o_cost == b_cost:
+                score -= 4.5
+        else:
+            if o_cost == c_cost:
+                score += 4.5
+                strong_text_evidence += 1
+            elif o_cost == b_cost:
+                score -= 4.5
+
+    # 4. Condition minimum threshold changes (#85, #87, #88, #97, #100, #101, #105)
+    for k in cand["cond_mins"]:
+        b_vals = base["cond_mins"][k]
+        c_vals = cand["cond_mins"][k]
+        if Counter(c_vals) == Counter(b_vals):
+            continue
+        o_vals = obs["cond_mins"][k]
+        added_vals = list((Counter(c_vals) - Counter(b_vals)).elements())
+        if added_vals and all(v in o_vals for v in added_vals):
+            score += 4.5
+            strong_text_evidence += 1
+        elif b_vals and any(v in o_vals for v in b_vals):
+            score -= 4.5
+
+    # 5. Added/changed clause flags
+    clause_flags = (
+        "has_upgrade_hand",
+        "has_preservation",
+        "has_strength",
+        "has_stance_lv2",
+        "has_hold",
+        "has_turn_add",
+        "has_top_of_deck",
+        "has_gc_mult_2",
+        "has_conc_mult_3",
+        "has_mot_mult_15",
+    )
+    for fk in clause_flags:
+        if cand["flags"][fk] and not base["flags"][fk]:
+            if obs["flags"][fk]:
+                score += 4.2
+                strong_text_evidence += 1
+            else:
+                score -= 4.5
+
+    # 6. Memory-sensitive flags (#36 force_initial_hand, #37 limit remove, #38 cardUsesRemaining+=1)
+    if cand["flags"]["has_fih"] and not base["flags"]["has_fih"]:
+        if obs["flags"]["has_fih"]:
+            score += 3.0
+        else:
+            score -= 5.0
+    if cand["flags"]["has_extra_use"] and not base["flags"]["has_extra_use"]:
+        if obs["flags"]["has_extra_use"]:
+            score += 3.0
+        else:
+            score -= 5.0
+    if base["flags"]["has_limit_1"] and not cand["flags"]["has_limit_1"]:
+        has_substantive_body = obs["flags"]["has_eff_text"] and obs["text_len"] >= 18
+        if has_substantive_body and not obs["flags"]["has_limit_1"]:
+            score += 3.0
+        else:
+            score -= 5.0
+
+    # 7. Standard cost reduction (#29 g.cost+=2)
+    if 29 in combo:
+        if observed_cost is not None and observed_cost in valid_candidate_costs:
+            if observed_cost == cand["cost_amt"]:
+                score += 4.2
+            else:
+                score -= 4.5
+        elif observed_cost is not None and base["cost_amt"] != cand["cost_amt"]:
+            pass
+
+    if not has_visual_evidence:
+        if strong_text_evidence == 0 or score < 3.5:
+            return None
+
+    if has_visual_evidence and badge_count in (1, 2, 3):
+        if total_lv == badge_count:
+            score += 2.5
+        elif total_lv > badge_count:
+            score -= 3.5
+        else:
+            score -= 1.5
+
+    return score
+
+
+def infer_card_customizations_from_scan(
+    db: GakumasDB,
+    card_row: Dict[str, Any],
+    body_txt: str,
+    *,
+    badge_detected: bool = False,
+    badge_count: Optional[int] = None,
+    observed_cost: Optional[int] = None,
+    has_customization_marker: bool = False,
+) -> Dict[str, Any]:
+    """Infer specific card customization IDs and levels from left-icon badge + OCR effect text."""
+    raw_avail = card_row.get("available_customization_ids_json")
+    try:
+        avail_ids = [int(x) for x in json.loads(raw_avail or "[]") if int(x) > 0]
+    except Exception:
+        avail_ids = []
+    if not avail_ids:
+        return {}
+
+    cust_rows: Dict[int, Dict[str, Any]] = {}
+    ranges: List[List[int]] = []
+    for cid in avail_ids:
+        crow = db.get_customization_by_id(cid)
+        if crow is None:
+            continue
+        cust_rows[cid] = crow
+        max_lv = max(1, min(3, int(crow.get("max_level") or 1)))
+        ranges.append(list(range(max_lv + 1)))
+    if not ranges:
+        return {}
+
+    from demo.sim.battle_simulator import apply_card_customizations
+
+    raw_parsed = json.loads(card_row.get("parsed_effects_json") or "{}")
+    base_fih = bool(card_row.get("force_initial_hand"))
+    base_lim = int(card_row["limit_count"]) if card_row.get("limit_count") is not None else None
+    base_dsl = str(card_row.get("dsl_actions") or "")
+
+    base_feat = _extract_ast_customization_features(
+        raw_parsed,
+        force_initial_hand=base_fih,
+        limit_count=base_lim,
+        dsl_actions=base_dsl,
+        customization_levels={},
+    )
+    norm_text = _normalize_ocr_effect_text(body_txt)
+    obs_feat = _extract_text_customization_features(norm_text)
+
+    ordered_cids = [cid for cid in avail_ids if cid in cust_rows]
+    candidates: List[Tuple[Dict[int, int], Dict[str, Any]]] = []
+    valid_costs: set[int] = set()
+    for lvs in product(*ranges):
+        if sum(lvs) > 3:
+            continue
+        combo = {ordered_cids[i]: lvs[i] for i in range(len(ordered_cids)) if lvs[i] > 0}
+        if not combo:
+            c_feat = base_feat
+        else:
+            p_cand, c_fih, c_lim, c_dsl = apply_card_customizations(
+                raw_parsed,
+                force_initial_hand=base_fih,
+                limit_count=base_lim,
+                dsl_actions=base_dsl,
+                db=db,
+                customization_levels=combo,
+            )
+            c_feat = _extract_ast_customization_features(
+                p_cand,
+                force_initial_hand=c_fih,
+                limit_count=c_lim,
+                dsl_actions=c_dsl,
+                customization_levels=combo,
+            )
+        if c_feat["cost_var"] == "cost":
+            valid_costs.add(int(c_feat["cost_amt"]))
+        candidates.append((combo, c_feat))
+
+    has_visual_evidence = bool(badge_detected or has_customization_marker)
+    best_combo: Dict[int, int] = {}
+    best_key: Tuple[float, int, int] = (0.0, 0, 0)
+    for combo, c_feat in candidates:
+        if not combo:
+            continue
+        sc = _score_customization_candidate(
+            combo=combo,
+            cand=c_feat,
+            base=base_feat,
+            obs=obs_feat,
+            observed_cost=observed_cost,
+            valid_candidate_costs=valid_costs,
+            badge_detected=badge_detected,
+            badge_count=badge_count,
+            has_customization_marker=has_customization_marker,
+        )
+        if sc is None:
+            continue
+        if sc < (-1.0 if has_visual_evidence else 3.5):
+            continue
+        if not has_visual_evidence and sc <= 0.0:
+            continue
+        # Prefer highest match score; break ties by preferring fewer total levels (parsimony), then deterministic IDs
+        key = (round(sc, 4), -sum(combo.values()), -sum(combo.keys()))
+        if key > best_key or not best_combo:
+            best_key = key
+            best_combo = combo
+
+    if not best_combo:
+        return {}
+    return {"levels": {str(k): int(v) for k, v in sorted(best_combo.items())}}
+
+
 @dataclass
 class LoadoutScanResult:
     """Complete scanned initial loadout extracted from the character/memory detail screen."""
@@ -229,6 +860,7 @@ class LoadoutScanResult:
     card_names: List[str] = field(default_factory=list)
     p_items: List[Dict[str, Any]] = field(default_factory=list)
     card_memory_hooks: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    card_customizations: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     screenshots_scanned: int = 0
 
 
@@ -348,6 +980,102 @@ class HifLoadoutScanner:
         nums_ja = [int(x) for x in re.findall(r"\d{2,4}", txt_ja) if 50 <= int(x) <= 3200]
         return nums_ja[-1] if nums_ja else None
 
+    def _detect_icon_customization_badge(self, icon_patch: np.ndarray) -> Tuple[bool, Optional[int]]:
+        """Detect bright-green circular customization badge (1)/(2)/(3) on a detail-list card icon."""
+        if icon_patch is None or icon_patch.size == 0:
+            return False, 0
+        ih, iw = icon_patch.shape[:2]
+        if ih < 30 or iw < 30:
+            return False, 0
+        roi = icon_patch[int(ih * 0.50) : int(ih * 0.92), int(iw * 0.28) : int(iw * 0.72)]
+        if roi.size == 0:
+            return False, 0
+        r = roi[:, :, 0].astype(np.int16)
+        g = roi[:, :, 1].astype(np.int16)
+        b = roi[:, :, 2].astype(np.int16)
+        gm = (g >= 115) & ((g - r) >= 55) & ((g - b) >= 40) & (r < 105) & (b < 115)
+        roi_area = max(1, roi.shape[0] * roi.shape[1])
+        min_px = max(20, int(roi_area * 0.015))
+        if int(gm.sum()) < min_px:
+            return False, 0
+
+        num_labels, _labels, stats, _centroids = cv2.connectedComponentsWithStats(gm.astype(np.uint8), connectivity=8)
+        best_bbox: Optional[Tuple[int, int, int, int, int]] = None
+        rh, rw = roi.shape[:2]
+        for lbl in range(1, num_labels):
+            bx, by, bw, bh, area = [int(v) for v in stats[lbl]]
+            if area < min_px or bh <= 0 or bw <= 0:
+                continue
+            if bw > int(rw * 0.88) or bh > int(rh * 0.92):
+                continue
+            aspect = bw / float(bh)
+            fill_ratio = area / float(bw * bh)
+            if 0.50 <= aspect <= 1.85 and fill_ratio >= 0.28:
+                if best_bbox is None or area > best_bbox[4]:
+                    best_bbox = (bx, by, bw, bh, area)
+        if best_bbox is None:
+            return False, 0
+
+        bx, by, bw, bh, _ = best_bbox
+        sub = roi[by : by + bh, bx : bx + bw]
+        en_ocr = getattr(self.reco, "en_ocr", None)
+        if sub.size >= 9 and en_ocr is not None:
+            wm = (sub[:, :, 0] > 180) & (sub[:, :, 1] > 180) & (sub[:, :, 2] > 180)
+            ys_w, xs_w = np.where(wm)
+            if len(xs_w) > 0:
+                dsub = wm[ys_w.min() : ys_w.max() + 1, xs_w.min() : xs_w.max() + 1].astype(np.uint8) * 255
+                up = cv2.resize(dsub, (max(1, dsub.shape[1] * 4), max(1, dsub.shape[0] * 4)), interpolation=cv2.INTER_CUBIC)
+                _, up = cv2.threshold(up, 115, 255, cv2.THRESH_BINARY)
+                inv = 255 - up
+                dh, dw = inv.shape[:2]
+                pad_y = 24
+                fscale = max(0.75, dh / 24.0)
+                (tw_p, _), _ = cv2.getTextSize("10+", cv2.FONT_HERSHEY_SIMPLEX, fscale, 4)
+                (sw_p, _), _ = cv2.getTextSize("+10", cv2.FONT_HERSHEY_SIMPLEX, fscale, 4)
+                x0 = 20
+                dx = x0 + tw_p + 10
+                sx = dx + dw + 10
+                canvas = np.full((dh + pad_y * 2, sx + sw_p + 24, 3), 255, dtype=np.uint8)
+                cv2.putText(canvas, "10+", (x0, pad_y + dh - 2), cv2.FONT_HERSHEY_SIMPLEX, fscale, (0, 0, 0), 4, cv2.LINE_AA)
+                canvas[pad_y : pad_y + dh, dx : dx + dw] = cv2.cvtColor(inv, cv2.COLOR_GRAY2RGB)
+                cv2.putText(canvas, "+10", (sx, pad_y + dh - 2), cv2.FONT_HERSHEY_SIMPLEX, fscale, (0, 0, 0), 4, cv2.LINE_AA)
+                txt = str(en_ocr.recognize_array(canvas).get("text", "") or "")
+                m_c = re.search(r"10\+\s*([1-3])\s*\+10", txt)
+                if m_c:
+                    return True, int(m_c.group(1))
+        return True, None
+
+    def _ocr_icon_cost_badge(self, icon_patch: np.ndarray) -> Optional[int]:
+        """OCR the top-left Genki/Stamina cost integer from a detail-list card icon."""
+        if icon_patch is None or icon_patch.size == 0:
+            return None
+        en_ocr = getattr(self.reco, "en_ocr", None)
+        if en_ocr is None:
+            return None
+        ih, iw = icon_patch.shape[:2]
+        if ih < 24 or iw < 24:
+            return None
+        cost_roi = icon_patch[0 : max(12, int(ih * 0.40)), 0 : max(12, int(iw * 0.40))]
+        if cost_roi.size == 0:
+            return None
+        up = cv2.resize(cost_roi, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
+        txt = _clean_ocr_text(str(en_ocr.recognize_array(up).get("text", "") or ""))
+        vals = [int(x) for x in re.findall(r"\b(\d{1,2})\b", txt) if 0 <= int(x) <= 15]
+        if vals:
+            return vals[0]
+        wm = (cost_roi[:, :, 0] > 195) & (cost_roi[:, :, 1] > 195) & (cost_roi[:, :, 2] > 195)
+        ys_w, xs_w = np.where(wm)
+        if len(xs_w) > 0:
+            dsub = wm[ys_w.min() : ys_w.max() + 1, xs_w.min() : xs_w.max() + 1].astype(np.uint8) * 255
+            inv = 255 - cv2.resize(dsub, (max(1, dsub.shape[1] * 4), max(1, dsub.shape[0] * 4)), interpolation=cv2.INTER_CUBIC)
+            canvas = np.full((inv.shape[0] + 40, inv.shape[1] + 40, 3), 255, dtype=np.uint8)
+            canvas[20 : 20 + inv.shape[0], 20 : 20 + inv.shape[1]] = cv2.cvtColor(inv, cv2.COLOR_GRAY2RGB)
+            txt2 = _clean_ocr_text(str(en_ocr.recognize_array(canvas).get("text", "") or ""))
+            vals2 = [int(x) for x in re.findall(r"\b(\d{1,2})\b", txt2) if 0 <= int(x) <= 15]
+            if vals2:
+                return vals2[0]
+        return None
+
     def _parse_header_metadata(self, frame: np.ndarray, default_plan: str) -> Dict[str, Any]:
         h, w = frame.shape[:2]
         hdr_crop = frame[int(h * 0.254) : int(h * 0.415), :]
@@ -439,6 +1167,7 @@ class HifLoadoutScanner:
         deck_card_ids: List[int] = []
         card_names: List[str] = []
         card_hooks: Dict[int, Dict[str, Any]] = {}
+        card_customizations: Dict[int, Dict[str, Any]] = {}
 
         for f_idx, frame in enumerate(frames):
             h, w = frame.shape[:2]
@@ -474,7 +1203,7 @@ class HifLoadoutScanner:
 
             first_sec_y = sec_markers[0][0] if sec_markers else None
             spans = self._find_left_icon_spans(vp, w)
-            for sy1, sy2 in spans:
+            for sp_idx, (sy1, sy2) in enumerate(spans):
                 # On page 0, ignore avatar/star icons above the first 'Pアイテム' section header
                 if f_idx == 0 and first_sec_y is not None and sy1 < first_sec_y:
                     continue
@@ -636,6 +1365,45 @@ class HifLoadoutScanner:
                                 hooks["free_extra_use_first_play"] = True
                         if "カスタマイズ" in body_txt:
                             hooks["has_customization_marker"] = True
+
+                        card_row = matched_card
+                        if card_row.get("available_customization_ids_json") is None:
+                            card_row = self.db.get_card_by_id(cid) or card_row
+                        icon_patch = vp[max(0, sy1 - 4) : min(vp.shape[0], sy2 + 4), int(w * 0.060) : int(w * 0.252)]
+                        badge_detected, badge_count = self._detect_icon_customization_badge(icon_patch)
+                        if badge_detected:
+                            hooks["has_customization_marker"] = True
+                        next_sy1 = spans[sp_idx + 1][0] if sp_idx + 1 < len(spans) else (sy2 + 135)
+                        effect_bot = min(sy2 + 135, next_sy1 - 8)
+                        card_eff_lines = [
+                            ln for ln in lines
+                            if sy1 - 24 <= ln["bbox"][1] <= effect_bot and ln["bbox"][0] >= int(w * 0.16)
+                        ]
+                        card_eff_txt = " | ".join(_clean_ocr_text(ln["text"]) for ln in card_eff_lines) or body_txt
+
+                        raw_avail_cust = card_row.get("available_customization_ids_json")
+                        try:
+                            avail_cust_ids = [int(x) for x in json.loads(raw_avail_cust or "[]") if int(x) > 0]
+                        except Exception:
+                            avail_cust_ids = []
+                        obs_cost: Optional[int] = None
+                        if 29 in avail_cust_ids and (badge_detected or hooks.get("has_customization_marker")):
+                            obs_cost = self._ocr_icon_cost_badge(icon_patch)
+                        inferred_cust = infer_card_customizations_from_scan(
+                            self.db,
+                            card_row,
+                            card_eff_txt,
+                            badge_detected=badge_detected,
+                            badge_count=badge_count,
+                            observed_cost=obs_cost,
+                            has_customization_marker=bool(hooks.get("has_customization_marker")),
+                        )
+                        if inferred_cust:
+                            prev_cust = card_customizations.get(cid)
+                            prev_sum = sum(int(v or 0) for v in ((prev_cust or {}).get("levels") or {}).values())
+                            new_sum = sum(int(v or 0) for v in (inferred_cust.get("levels") or {}).values())
+                            if prev_cust is None or new_sum >= prev_sum:
+                                card_customizations[cid] = inferred_cust
                         if hooks:
                             card_hooks[cid] = hooks
 
@@ -655,6 +1423,7 @@ class HifLoadoutScanner:
             card_names=card_names,
             p_items=parsed_p_items,
             card_memory_hooks=card_hooks,
+            card_customizations=card_customizations,
             screenshots_scanned=len(frames),
         )
 

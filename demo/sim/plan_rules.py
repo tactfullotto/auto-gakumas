@@ -73,6 +73,14 @@ class BasePlanBattleRules:
         """Return True if an unexhausted `#777/#778` burst card exists in the deck (Logic only)."""
         return False
 
+    def is_senobi_delayed_burst_card(self, cfg: Any) -> bool:
+        """Return True for Logic-specific `#771/#772` delayed genki-scaling burst cards."""
+        return False
+
+    def has_unexhausted_senobi_card(self, sim: "HeadlessBattleSimulator") -> bool:
+        """Return True if an unexhausted `#771/#772` burst card exists in the deck (Logic only)."""
+        return False
+
     def drink_draw_count(self, drink: Any) -> int:
         """Count immediate cards added/drawn to hand by a drink (ignoring delayed `at:` triggers)."""
         dsl_l = (drink.dsl_actions or "").lower()
@@ -114,6 +122,7 @@ class BasePlanBattleRules:
         has_813: Optional[bool] = None,
         has_zeroing: Optional[bool] = None,
         has_kimegao: Optional[bool] = None,
+        has_senobi: Optional[bool] = None,
     ) -> bool:
         """Hold plan-specific burst cards/drinks until their optimal window."""
         return False
@@ -150,6 +159,19 @@ class BasePlanBattleRules:
 
     def has_ready_drink25_kimegao_combo(self, sim: "HeadlessBattleSimulator") -> bool:
         """Return True if an armed-ready Logic `#25 -> #777/#778` combo exists in hand."""
+        return False
+
+    def can_drink25_combo_senobi_now(
+        self,
+        sim: "HeadlessBattleSimulator",
+        drink: "DrinkConfig",
+        senobi_inst: Optional["CardInstance"] = None,
+    ) -> bool:
+        """Return True when Logic #25 can immediately combo with an affordable `#771/#772`."""
+        return False
+
+    def has_ready_drink25_senobi_combo(self, sim: "HeadlessBattleSimulator") -> bool:
+        """Return True if an armed-ready Logic `#25 -> #771/#772` combo exists in hand."""
         return False
 
     def narrow_armed_or_combo_action_map(
@@ -274,6 +296,7 @@ class SenseBattleRules(BasePlanBattleRules):
         has_813: Optional[bool] = None,
         has_zeroing: Optional[bool] = None,
         has_kimegao: Optional[bool] = None,
+        has_senobi: Optional[bool] = None,
     ) -> bool:
         # Hold Sense zeroing finisher (#618/#619) until final turn (turns_remaining == 1).
         if card_cfg is not None and self.is_resource_zeroing_finisher(card_cfg) and sim.turns_remaining > 1:
@@ -416,9 +439,14 @@ class LogicBattleRules(BasePlanBattleRules):
 
     plan_name: str = "logic"
     KIMEGAO_PLAY_MAX_TURNS_REMAINING: int = 5
+    SENOBI_PLAY_MIN_TURNS_REMAINING: int = 5
+    SENOBI_PLAY_MAX_TURNS_REMAINING: int = 6
 
     def is_kimegao_burst_card(self, cfg: Any) -> bool:
         return cfg.base_id == 777 or cfg.card_id in (777, 778)
+
+    def is_senobi_delayed_burst_card(self, cfg: Any) -> bool:
+        return cfg.base_id == 771 or cfg.card_id in (771, 772)
 
     def is_active_retrigger_drink(self, drink: Any) -> bool:
         return drink.drink_id == 25 or ("doublecardeffectcards" in (drink.dsl_actions or "").lower())
@@ -436,6 +464,29 @@ class LogicBattleRules(BasePlanBattleRules):
     def has_unexhausted_kimegao_card(self, sim: "HeadlessBattleSimulator") -> bool:
         return sim.has_unexhausted_card_family(777)
 
+    def has_unexhausted_senobi_card(self, sim: "HeadlessBattleSimulator") -> bool:
+        return sim.has_unexhausted_card_family(771)
+
+    @staticmethod
+    def _has_consumed_genki_engine(sim: "HeadlessBattleSimulator") -> bool:
+        if getattr(sim.config, "p_idol_id", None) == 136:
+            return True
+        if any(getattr(it, "trigger_every_n_turns_eot", 0) > 0 for it in (sim.config.p_items or ())):
+            return True
+        for z in (sim.hand, sim.draw_pile, sim.discard_pile):
+            if any(c.cfg.base_id in (799, 782) for c in z):
+                return True
+        all_inst = sim._all_instances
+        for tr in sim.triggers:
+            if tr.limit is not None and tr.triggers_count >= tr.limit:
+                continue
+            if tr.ttl is not None and tr.ttl < 0:
+                continue
+            owner = all_inst.get(tr.owner_uid)
+            if owner is not None and owner.cfg.base_id in (799, 782):
+                return True
+        return False
+
     def should_forbid_double_on_card(
         self,
         sim: "HeadlessBattleSimulator",
@@ -443,7 +494,15 @@ class LogicBattleRules(BasePlanBattleRules):
         *,
         has_other_double_target: bool = True,
     ) -> bool:
-        return _should_forbid_zeroing_double(sim, self, card_cfg, has_other_double_target=has_other_double_target)
+        if _should_forbid_zeroing_double(sim, self, card_cfg, has_other_double_target=has_other_double_target):
+            return True
+        if (
+            self.is_senobi_delayed_burst_card(card_cfg)
+            and sim.turns_remaining < self.SENOBI_PLAY_MIN_TURNS_REMAINING
+            and has_other_double_target
+        ):
+            return True
+        return False
 
     def _can_use_active_retrigger_for_candidates(
         self,
@@ -526,6 +585,56 @@ class LogicBattleRules(BasePlanBattleRules):
     def has_ready_drink25_kimegao_combo(self, sim: "HeadlessBattleSimulator") -> bool:
         return any(self.can_drink25_combo_kimegao_now(sim, d) for d in sim.available_drinks)
 
+    def can_drink25_combo_senobi_now(
+        self,
+        sim: "HeadlessBattleSimulator",
+        drink: "DrinkConfig",
+        senobi_inst: Optional["CardInstance"] = None,
+    ) -> bool:
+        """Return True when #25 can immediately combo with an affordable `#771/#772` inside its delay:3 landing window (rem 5..6)."""
+        if (
+            not self.is_active_retrigger_drink(drink)
+            or sim.turns_remaining < self.SENOBI_PLAY_MIN_TURNS_REMAINING
+            or sim.turns_remaining > self.SENOBI_PLAY_MAX_TURNS_REMAINING
+            or sim.double_card_effect_cards != 0
+        ):
+            return False
+        if senobi_inst is not None:
+            if not self.is_senobi_delayed_burst_card(senobi_inst.cfg):
+                return False
+            cands = [senobi_inst]
+        else:
+            cands = [c for c in sim.hand if self.is_senobi_delayed_burst_card(c.cfg)]
+        return self._can_use_active_retrigger_for_candidates(sim, drink, cands)
+
+    def has_ready_drink25_senobi_combo(self, sim: "HeadlessBattleSimulator") -> bool:
+        return any(self.can_drink25_combo_senobi_now(sim, d) for d in sim.available_drinks)
+
+    def _in_window_active_retrigger_targets(
+        self,
+        sim: "HeadlessBattleSimulator",
+        active_ids: set[int],
+        get_cfg: Any,
+    ) -> set[int]:
+        """Prioritize `#777/#778` (rem<=5) and `#771/#772` (5<=rem<=6), and drop dead `#771/#772` at rem<=4."""
+        if not active_ids:
+            return active_ids
+        rem = int(sim.turns_remaining)
+        if rem < self.SENOBI_PLAY_MIN_TURNS_REMAINING:
+            non_dead = {a for a in active_ids if not self.is_senobi_delayed_burst_card(get_cfg(a))}
+            if non_dead:
+                active_ids = non_dead
+        burst_hits = {
+            a
+            for a in active_ids
+            if (rem <= self.KIMEGAO_PLAY_MAX_TURNS_REMAINING and self.is_kimegao_burst_card(get_cfg(a)))
+            or (
+                self.SENOBI_PLAY_MIN_TURNS_REMAINING <= rem <= self.SENOBI_PLAY_MAX_TURNS_REMAINING
+                and self.is_senobi_delayed_burst_card(get_cfg(a))
+            )
+        }
+        return burst_hits or active_ids
+
     def should_hold_action(
         self,
         sim: "HeadlessBattleSimulator",
@@ -536,9 +645,17 @@ class LogicBattleRules(BasePlanBattleRules):
         has_813: Optional[bool] = None,
         has_zeroing: Optional[bool] = None,
         has_kimegao: Optional[bool] = None,
+        has_senobi: Optional[bool] = None,
     ) -> bool:
-        # Hold Logic zeroing finisher (#152/#153) until final turn (turns_remaining == 1).
-        if card_cfg is not None and self.is_resource_zeroing_finisher(card_cfg) and sim.turns_remaining > 1:
+        # Hold Logic zeroing finisher (#152/#153) until final turn (turns_remaining == 1),
+        # UNLESS the active deck/idol runs a consumedGenki engine (#136 / #799/#800 / #9136 / #782)
+        # where mid-battle genki=0 intentionally feeds 80% genki rebound.
+        if (
+            card_cfg is not None
+            and self.is_resource_zeroing_finisher(card_cfg)
+            and sim.turns_remaining > 1
+            and not self._has_consumed_genki_engine(sim)
+        ):
             return True
         # Hold #777/#778 びしっとキメ顔(+) until the final 5 turns (turns_remaining <= 5).
         if (
@@ -547,17 +664,36 @@ class LogicBattleRules(BasePlanBattleRules):
             and sim.turns_remaining > self.KIMEGAO_PLAY_MAX_TURNS_REMAINING
         ):
             return True
+        # Hold #771/#772 せのびの魔法(+) (delay:3) until rem <= 6 so its big genki burst lands on final 2 turns.
+        if (
+            card_cfg is not None
+            and self.is_senobi_delayed_burst_card(card_cfg)
+            and sim.turns_remaining > self.SENOBI_PLAY_MAX_TURNS_REMAINING
+        ):
+            return True
         has_zfin = has_zeroing if has_zeroing is not None else sim.has_unexhausted_zeroing_finisher()
         if drink_cfg is not None:
             if self.is_active_retrigger_drink(drink_cfg):
                 has_km = has_kimegao if has_kimegao is not None else self.has_unexhausted_kimegao_card(sim)
-                if has_km:
-                    if sim.turns_remaining > self.KIMEGAO_PLAY_MAX_TURNS_REMAINING:
+                has_sn = has_senobi if has_senobi is not None else self.has_unexhausted_senobi_card(sim)
+                if has_sn:
+                    if sim.turns_remaining > self.SENOBI_PLAY_MAX_TURNS_REMAINING:
                         return True
                     if (
+                        sim.turns_remaining == self.SENOBI_PLAY_MAX_TURNS_REMAINING
+                        and sim.count_active_retrigger_drinks() <= 1
+                        and not any(self.is_senobi_delayed_burst_card(c.cfg) for c in sim.hand)
+                    ):
+                        return True
+                if has_km:
+                    if sim.turns_remaining > self.KIMEGAO_PLAY_MAX_TURNS_REMAINING:
+                        if not self.can_drink25_combo_senobi_now(sim, drink_cfg):
+                            return True
+                    elif (
                         sim.turns_remaining >= 3
                         and sim.count_active_retrigger_drinks() <= 1
                         and not any(self.is_kimegao_burst_card(c.cfg) for c in sim.hand)
+                        and not self.can_drink25_combo_senobi_now(sim, drink_cfg)
                     ):
                         return True
             if fin_window > 0 and has_zfin and self.is_score_buff_drink(drink_cfg):
@@ -584,14 +720,11 @@ class LogicBattleRules(BasePlanBattleRules):
                 and not self.is_resource_zeroing_finisher(sim.hand[idx].cfg)
             }
             if active_aids:
-                if sim.turns_remaining <= self.KIMEGAO_PLAY_MAX_TURNS_REMAINING:
-                    kimegao_aids = {
-                        aid
-                        for aid in active_aids
-                        if self.is_kimegao_burst_card(sim.hand[action_map[aid][1]].cfg)
-                    }
-                    if kimegao_aids:
-                        active_aids = kimegao_aids
+                active_aids = self._in_window_active_retrigger_targets(
+                    sim,
+                    active_aids,
+                    lambda a: sim.hand[action_map[a][1]].cfg,
+                )
                 return (
                     {
                         aid: v
@@ -603,24 +736,40 @@ class LogicBattleRules(BasePlanBattleRules):
                 )
 
         if (
-            sim.turns_remaining <= self.KIMEGAO_PLAY_MAX_TURNS_REMAINING
+            sim.turns_remaining <= max(self.KIMEGAO_PLAY_MAX_TURNS_REMAINING, self.SENOBI_PLAY_MAX_TURNS_REMAINING)
             and sim.double_card_effect_cards == 0
             and not sim.has_armed_active_retrigger(same_turn_only=True)
         ):
             d25_combo_aids = {
                 aid
                 for aid, (k, idx) in action_map.items()
-                if k == "drink" and self.can_drink25_combo_kimegao_now(sim, sim.available_drinks[idx])
+                if k == "drink"
+                and (
+                    self.can_drink25_combo_kimegao_now(sim, sim.available_drinks[idx])
+                    or self.can_drink25_combo_senobi_now(sim, sim.available_drinks[idx])
+                )
             }
             if d25_combo_aids:
+                km_ready = any(
+                    self.can_drink25_combo_kimegao_now(sim, sim.available_drinks[action_map[aid][1]])
+                    for aid in d25_combo_aids
+                )
+                sn_ready = any(
+                    self.can_drink25_combo_senobi_now(sim, sim.available_drinks[action_map[aid][1]])
+                    for aid in d25_combo_aids
+                )
                 out_map = dict(action_map)
-                naked_km = {
+                naked_burst = {
                     aid
                     for aid, (k, idx) in out_map.items()
-                    if k == "card" and self.is_kimegao_burst_card(sim.hand[idx].cfg)
+                    if k == "card"
+                    and (
+                        (km_ready and self.is_kimegao_burst_card(sim.hand[idx].cfg))
+                        or (sn_ready and self.is_senobi_delayed_burst_card(sim.hand[idx].cfg))
+                    )
                 }
-                if naked_km and len(naked_km) < len(out_map):
-                    for aid in naked_km:
+                if naked_burst and len(naked_burst) < len(out_map):
+                    for aid in naked_burst:
                         out_map.pop(aid, None)
                 if sim.turns_remaining >= 2:
                     narrowed = {
@@ -654,14 +803,11 @@ class LogicBattleRules(BasePlanBattleRules):
                 and not self.is_resource_zeroing_finisher(sim.hand[root_map[a][1]].cfg)
             }
             if active_root:
-                if sim.turns_remaining <= self.KIMEGAO_PLAY_MAX_TURNS_REMAINING:
-                    kimegao_root = {
-                        a
-                        for a in active_root
-                        if self.is_kimegao_burst_card(sim.hand[root_map[a][1]].cfg)
-                    }
-                    if kimegao_root:
-                        active_root = kimegao_root
+                active_root = self._in_window_active_retrigger_targets(
+                    sim,
+                    active_root,
+                    lambda a: sim.hand[root_map[a][1]].cfg,
+                )
                 pruned = [
                     a
                     for a in root_legal
@@ -675,7 +821,7 @@ class LogicBattleRules(BasePlanBattleRules):
                     return pruned, True
 
         if (
-            sim.turns_remaining <= self.KIMEGAO_PLAY_MAX_TURNS_REMAINING
+            sim.turns_remaining <= max(self.KIMEGAO_PLAY_MAX_TURNS_REMAINING, self.SENOBI_PLAY_MAX_TURNS_REMAINING)
             and sim.double_card_effect_cards == 0
             and not sim.has_armed_active_retrigger(same_turn_only=True)
         ):
@@ -683,18 +829,32 @@ class LogicBattleRules(BasePlanBattleRules):
                 a
                 for a in root_legal
                 if root_map.get(a, ("", -1))[0] == "drink"
-                and self.can_drink25_combo_kimegao_now(sim, sim.available_drinks[root_map[a][1]])
+                and (
+                    self.can_drink25_combo_kimegao_now(sim, sim.available_drinks[root_map[a][1]])
+                    or self.can_drink25_combo_senobi_now(sim, sim.available_drinks[root_map[a][1]])
+                )
             }
             if d25_combo_root:
+                km_ready = any(
+                    self.can_drink25_combo_kimegao_now(sim, sim.available_drinks[root_map[a][1]])
+                    for a in d25_combo_root
+                )
+                sn_ready = any(
+                    self.can_drink25_combo_senobi_now(sim, sim.available_drinks[root_map[a][1]])
+                    for a in d25_combo_root
+                )
                 updated = list(root_legal)
-                naked_km = {
+                naked_burst = {
                     a
                     for a in updated
                     if root_map.get(a, ("", -1))[0] == "card"
-                    and self.is_kimegao_burst_card(sim.hand[root_map[a][1]].cfg)
+                    and (
+                        (km_ready and self.is_kimegao_burst_card(sim.hand[root_map[a][1]].cfg))
+                        or (sn_ready and self.is_senobi_delayed_burst_card(sim.hand[root_map[a][1]].cfg))
+                    )
                 }
-                if naked_km and len(naked_km) < len(updated):
-                    updated = [a for a in updated if a not in naked_km]
+                if naked_burst and len(naked_burst) < len(updated):
+                    updated = [a for a in updated if a not in naked_burst]
                 if sim.turns_remaining >= 2:
                     combo_pool = [
                         a
@@ -723,9 +883,11 @@ class LogicBattleRules(BasePlanBattleRules):
         priors: Any,
         cfg: Any,
     ) -> bool:
-        armed_kimegao_window = (
-            sim.has_armed_active_retrigger(same_turn_only=True)
-            and sim.turns_remaining <= self.KIMEGAO_PLAY_MAX_TURNS_REMAINING
+        armed_same_turn = sim.has_armed_active_retrigger(same_turn_only=True)
+        armed_kimegao_window = armed_same_turn and sim.turns_remaining <= self.KIMEGAO_PLAY_MAX_TURNS_REMAINING
+        armed_senobi_window = (
+            armed_same_turn
+            and self.SENOBI_PLAY_MIN_TURNS_REMAINING <= sim.turns_remaining <= self.SENOBI_PLAY_MAX_TURNS_REMAINING
         )
         km_floor = float(getattr(cfg, "kimegao_combo_prior_floor", 0.45))
         modified = False
@@ -733,18 +895,18 @@ class LogicBattleRules(BasePlanBattleRules):
             kind, idx = action_map.get(a, ("", -1))
             if kind == "card" and 0 <= idx < len(sim.hand):
                 inst = sim.hand[idx]
-                if (
-                    armed_kimegao_window
-                    and self.is_kimegao_burst_card(inst.cfg)
-                    and float(priors[a]) < km_floor
-                ):
+                is_burst_armed = (armed_kimegao_window and self.is_kimegao_burst_card(inst.cfg)) or (
+                    armed_senobi_window and self.is_senobi_delayed_burst_card(inst.cfg)
+                )
+                if is_burst_armed and float(priors[a]) < km_floor:
                     priors[a] = max(float(priors[a]), km_floor)
                     modified = True
             elif kind == "drink" and 0 <= idx < len(sim.available_drinks):
+                dr_i = sim.available_drinks[idx]
                 if (
-                    self.can_drink25_combo_kimegao_now(sim, sim.available_drinks[idx])
-                    and float(priors[a]) < km_floor
-                ):
+                    self.can_drink25_combo_kimegao_now(sim, dr_i)
+                    or self.can_drink25_combo_senobi_now(sim, dr_i)
+                ) and float(priors[a]) < km_floor:
                     priors[a] = max(float(priors[a]), km_floor)
                     modified = True
         return modified

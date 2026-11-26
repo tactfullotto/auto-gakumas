@@ -813,7 +813,9 @@ class LocalHybridDecisionAgent:
                 or ("重複不可" in str(row.get("description") or ""))
             )
         )
-        is_logic_gi_build = (plan.lower() == "logic") or (target_effect == "goodImpressionTurns")
+        is_logic_gi_build = (target_effect == "goodImpressionTurns") or (
+            plan.lower() == "logic" and target_effect != "motivation"
+        )
         is_elite_active = bool(
             ctype == "active"
             and (
@@ -2854,18 +2856,26 @@ class LocalHybridDecisionAgent:
             )
         self._shop_expecting_priority_card_confirm = None
 
-        # Next: if an active non-banned drink exchange ("交換する" with drink_id) is ready and affordable, buy it!
-        drink_exchange = next(
-            (
-                a for a in allowed
-                if str((a.payload or {}).get("name") or "") == "交換する"
-                and (a.payload or {}).get("drink_id") is not None
-                and not self._is_shop_banned_drink_action(a)
-                and int((a.payload or {}).get("drink_id") or 0) not in self._shop_attempted_drink_ids
-                and len(held_drinks) < cap_drinks
-                and int((a.payload or {}).get("price") or 0) <= p_pts
-            ),
-            None,
+        has_buyable_priority_card_slot = any(
+            self._is_shop_buyable_priority_card(a, p_pts) for a in allowed
+        )
+        # Next: if an active non-banned drink exchange ("交換する" with drink_id) is ready and affordable, buy it,
+        # unless an unowned affordable ★ priority skill card is waiting in the shop!
+        drink_exchange = (
+            None
+            if has_buyable_priority_card_slot
+            else next(
+                (
+                    a for a in allowed
+                    if str((a.payload or {}).get("name") or "") == "交換する"
+                    and (a.payload or {}).get("drink_id") is not None
+                    and not self._is_shop_banned_drink_action(a)
+                    and int((a.payload or {}).get("drink_id") or 0) not in self._shop_attempted_drink_ids
+                    and len(held_drinks) < cap_drinks
+                    and int((a.payload or {}).get("price") or 0) <= p_pts
+                ),
+                None,
+            )
         )
         if drink_exchange is not None:
             self._shop_card_popup_guard = False

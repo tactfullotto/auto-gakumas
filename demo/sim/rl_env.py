@@ -35,9 +35,11 @@ class GakumasActionCodec:
         db: Optional[GakumasDB] = None,
         *,
         finisher_play_max_turns_remaining: int = 2,
+        include_basic_padding: Optional[bool] = None,
     ):
         self.config = config
         self.finisher_play_max_turns_remaining = max(0, int(finisher_play_max_turns_remaining))
+        self.include_basic_padding = include_basic_padding
         self.specs: List[ActionSpec] = []
         self.card_slots: List[CardKey] = []
         self.card_key_to_action: Dict[CardKey, int] = {}
@@ -46,7 +48,7 @@ class GakumasActionCodec:
         self.drink_id_to_action: Dict[int, int] = {}
         self.end_turn_action_id: int = -1
 
-        self._build_slots(config, db)
+        self._build_slots(config, db, include_basic_padding=include_basic_padding)
 
     @staticmethod
     def card_key_for_cfg(cfg: CardConfig) -> CardKey:
@@ -62,7 +64,13 @@ class GakumasActionCodec:
         self.card_id_to_fallback_action.setdefault(key[0], aid)
         return aid
 
-    def _build_slots(self, config: BattleConfig, db: Optional[GakumasDB]) -> None:
+    def _build_slots(
+        self,
+        config: BattleConfig,
+        db: Optional[GakumasDB],
+        *,
+        include_basic_padding: Optional[bool] = None,
+    ) -> None:
         for cfg in config.deck:
             key = self.card_key_for_cfg(cfg)
             suffix = ""
@@ -91,11 +99,37 @@ class GakumasActionCodec:
                         extra_name = f"#{cfg.upgraded_id} {row['name']}"
                 extra_keys.append((ekey, extra_name))
 
+        plan_l = str(getattr(config, "plan", "logic") or "logic").lower()
+        has_basic_padding_pitem = any(
+            int(getattr(it, "item_id", 0) or 0) == 429
+            or "addrandombasiccard" in str(getattr(it, "dsl_effects", "") or "").lower()
+            for it in (getattr(config, "p_items", None) or ())
+        )
+        want_basic_padding = (
+            bool(include_basic_padding)
+            if include_basic_padding is not None
+            else (len(config.deck) < 22)
+        )
+        if has_basic_padding_pitem and want_basic_padding:
+            basic_rows: List[Tuple[int, str]] = []
+            if db is not None and hasattr(db, "connection"):
+                try:
+                    q_rows = db.connection.execute(
+                        "SELECT id, name FROM cards WHERE rarity='N' AND upgraded=0 AND plan IN (?, 'free') AND name LIKE '%基本%' ORDER BY id",
+                        (plan_l,),
+                    ).fetchall()
+                    basic_rows = [(int(r["id"]), str(r["name"])) for r in q_rows]
+                except Exception:
+                    basic_rows = []
+            if not basic_rows:
+                basic_rows = [(cid, f"基本カード#{cid}") for cid in (1, 3, 13, 19, 21)]
+            for b_cid, b_name in basic_rows:
+                extra_keys.append(((b_cid, False, False), f"#{b_cid} {b_name}"))
+
         for key, label in extra_keys:
             if key not in self.card_key_to_action:
                 self._register_card_slot(key, label)
 
-        plan_l = str(getattr(config, "plan", "logic") or "logic").lower()
         present_bases = {cfg.base_id or cfg.card_id for cfg in config.deck} | {cfg.card_id for cfg in config.deck}
         if plan_l in ("logic", "all", "") and 170 not in present_bases and 171 not in present_bases:
             star_row = db.get_card_by_id(171) if db is not None else None
@@ -321,7 +355,7 @@ class GakumasActionCodec:
 class GakumasFeatureEncoder:
     """Strictly information-set-safe state encoder (invariant to draw_pile order)."""
 
-    SCALAR_DIMS = 17 + 22 + 29 + 8
+    SCALAR_DIMS = 17 + 22 + 29 + 8 + 7
 
     def __init__(self, codec: GakumasActionCodec):
         self.codec = codec
@@ -580,6 +614,40 @@ class GakumasFeatureEncoder:
         obs[idx + 7] = 1.0 if conc >= 5 else 0.0
         idx += 8
 
+        # 3c. Motivation / ConsumedGenki / Top-Deck (e.g. #136 花海佑芽: #799/#800, #854, #9136 夢を創るステッキ) (7 dims)
+        ume_stick_rem = 0
+        for it in (sim.config.p_items or ()):
+            if it.mode == "stage" and getattr(it, "trigger_every_n_turns_eot", 0) > 0:
+                lim = it.max_triggers if it.max_triggers is not None else 3
+                ume_stick_rem += max(0, lim - int(sim.p_item_trigger_counts.get(it.item_id, 0) or 0))
+        c799_rem = 0
+        c854_ttl = 0
+        for tr in sim.triggers:
+            if tr.limit is not None and tr.triggers_count >= tr.limit:
+                continue
+            if tr.ttl is not None and tr.ttl < 0:
+                continue
+            owner = all_inst.get(tr.owner_uid)
+            if owner is None:
+                continue
+            bid = owner.cfg.base_id
+            if bid == 799 and tr.phase == "startOfTurn":
+                lim = tr.limit if tr.limit is not None else 3
+                c799_rem = max(c799_rem, lim - tr.triggers_count)
+            elif bid == 854 and tr.phase == "motivationIncreased":
+                ttl_rem = (tr.ttl + 1) if tr.ttl is not None else 5
+                c854_ttl = max(c854_ttl, ttl_rem)
+
+        t_mod3 = sim.turn % 3
+        obs[idx] = float(getattr(sim, "consumed_genki", 0) or 0) / 120.0
+        obs[idx + 1] = 1.0 if t_mod3 == 0 else 0.0
+        obs[idx + 2] = ((3 - t_mod3) % 3) / 2.0
+        obs[idx + 3] = min(3.0, float(ume_stick_rem)) / 3.0
+        obs[idx + 4] = min(3.0, float(c799_rem)) / 3.0
+        obs[idx + 5] = min(5.0, float(c854_ttl)) / 5.0
+        obs[idx + 6] = min(3.0, float(getattr(sim, "pinned_top_deck_count", 0) or 0)) / 3.0
+        idx += 7
+
         # 4. Drink counts
         for dr in sim.available_drinks:
             d_pos = self._drink_idx.get(dr.drink_id)
@@ -635,6 +703,7 @@ class GakumasBattleEnv:
         prune_dominated_free_actions: bool = True,
         motivation_cost_weight: float = 0.0,
         finisher_play_max_turns_remaining: int = 2,
+        include_basic_padding: Optional[bool] = None,
     ):
         self.config = config
         self._owns_db = db is None
@@ -651,6 +720,7 @@ class GakumasBattleEnv:
             config,
             db=self.db,
             finisher_play_max_turns_remaining=self.finisher_play_max_turns_remaining,
+            include_basic_padding=include_basic_padding,
         )
         self.encoder = GakumasFeatureEncoder(self.codec)
         self.sim: Optional[HeadlessBattleSimulator] = None

@@ -768,16 +768,24 @@ class GakumasRunner:
                                     deck_ids=scan_res.deck_card_ids,
                                     p_items=scan_res.p_items,
                                     card_memory_hooks=scan_res.card_memory_hooks,
+                                    card_customizations=scan_res.card_customizations,
                                     memory_slots=self.manual_memory_slots or None,
                                     memory_passives=self.manual_memory_passives or None,
                                     db=self.db,
                                 )
+                                if scan_res.card_customizations:
+                                    logger.info(
+                                        "H.I.F loadout scan inferred customizations for %d cards: %s",
+                                        len(scan_res.card_customizations),
+                                        scan_res.card_customizations,
+                                    )
                                 if self.manual_memory_hooks or self.manual_card_customizations:
                                     self.tracker.merge_manual_memory_hooks(
                                         hooks=self.manual_memory_hooks,
                                         memory_slots=self.manual_memory_slots or None,
                                         memory_passives=self.manual_memory_passives or None,
                                         card_customizations=self.manual_card_customizations,
+                                        db=self.db,
                                     )
                                 if scan_res.plan:
                                     self.plan = scan_res.plan

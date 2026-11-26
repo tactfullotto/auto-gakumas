@@ -1374,10 +1374,28 @@ class LiveScreenRecognizer:
                 for ln in lines
             )
         )
+        is_non_shop_modal_action = any(
+            rk in norm_joined
+            for rk in (
+                "受け取る",
+                "受け取らない",
+                "チェンジで獲得",
+                "チェンジする",
+                "手放すスキルカード",
+                "再抽選",
+                "スキルカード獲得",
+                "Pドリンク獲得",
+                "ドリンク獲得",
+                "削除する",
+                "強化する",
+                "カスタマイズする",
+            )
+        )
         is_shop_like = (
             not is_customize_menu_screen
             and not is_shop_submodal_grid
             and not is_schedule_home_hud
+            and not is_non_shop_modal_action
             and (
                 ("Pポイントと交換" in joined)
                 or ("Pポイントで利用するもの" in joined)
@@ -1526,7 +1544,7 @@ class LiveScreenRecognizer:
             self._non_battle_streak = 0
             return self._parse_customize_menu_screen(frame, lines, active_plan, meta)
 
-        if (not is_event_tooltip_hud) and (
+        if (not is_shop_like) and (not is_event_tooltip_hud) and (
             has_orange_reward_confirm
             or is_shop_submodal_grid
             or "スキルカードを選択" in norm_joined
@@ -4711,7 +4729,13 @@ class LiveScreenRecognizer:
             pv_txt = " | ".join(pv_lines)
             pv_name = pv_lines[0] if pv_lines else ""
             ex_extra: Dict[str, Any] = {}
-            matched_card = self.match_card_by_name(pv_name, plan=plan) if (pv_name and (selected_key is None or selected_key[0] == "スキルカード")) else None
+            matched_card = None
+            if selected_key is None or selected_key[0] == "スキルカード":
+                for cand_card_txt in ([pv_name] + pv_lines[:3]):
+                    if cand_card_txt:
+                        matched_card = self.match_card_by_name(cand_card_txt, plan=plan)
+                        if matched_card:
+                            break
             if matched_card:
                 ex_extra["card_id"] = matched_card["id"]
                 pv_name = matched_card["name"]

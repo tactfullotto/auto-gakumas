@@ -3029,7 +3029,7 @@ def test_motivation_cost_model_pbrs_and_live_buff_alignment():
 
     db = GakumasDB("gakumas_library.db")
     try:
-        assert GakumasFeatureEncoder.SCALAR_DIMS == 76
+        assert GakumasFeatureEncoder.SCALAR_DIMS == 83
 
         # 1. Explicit live T1 buffs (3/3) must NOT be inflated to 6/6 by 花ロボ(黄) (#436), while buffs=None falls back to 6/6
         p_items = [{"item_id": 436, "canonical_name": "花ロボ(黄)", "mode": "produce"}]
@@ -5672,7 +5672,7 @@ def test_sense_feature_encoder_and_draw_pile_order_invariance():
     from demo.sim.battle_simulator import BattleConfig, HeadlessBattleSimulator, TurnMultiplierSpec, _make_card_config
     from demo.sim.rl_env import GakumasBattleEnv, GakumasFeatureEncoder
 
-    assert GakumasFeatureEncoder.SCALAR_DIMS == 76
+    assert GakumasFeatureEncoder.SCALAR_DIMS == 83
     db = GakumasDB("gakumas_library.db")
     try:
         cfg = BattleConfig(
@@ -9689,6 +9689,703 @@ def test_all_avoided_no_reroll_fallback_priority_order():
         assert "1-use-exhaust>SSR>SR>R>M>A" in d3.reason
     finally:
         db.close()
+
+
+def test_ume_136_consumed_genki_3turn_clear_and_854_top_of_deck():
+    """Verify p_idol_id=136 full engine loop:
+    1) consumedGenki tracking across green card cost, genki=0 clears, and P-item clears;
+    2) 夢を創るステッキ (110% default / + 130%) every-3-turn EOT burst+clear+next-turn draw & #800 80% rebound;
+    3) #854 証明し続ける一番星 (motivationIncreased -> moveRandomToTopOfDeck + determinize top-deck preservation);
+    4) S3 #854 auto-injection, P-item upgrade toggle, #152/#153 release, and 136 guide/scoring alignment.
+    """
+    import random
+    from demo.core.idol_guides import get_p_idol_guide
+    from demo.sim.battle_simulator import (
+        BattleConfig,
+        HeadlessBattleSimulator,
+        TurnMultiplierSpec,
+        _build_ume_136_hif_p_items,
+        _make_card_config,
+    )
+    from demo.sim.plan_rules import LogicBattleRules
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        # 1. consumedGenki + 夢を創るステッキ (110% default) + #800 80% rebound on Turn 4
+        cfg_110 = BattleConfig(
+            scenario_id="hif_honsen",
+            stage_name="ume136_110",
+            p_idol_id=136,
+            idol_name="[真っ白いページと水彩の主人公] 花海 佑芽",
+            plan="logic",
+            idol_stats={"vocal": 2000, "dance": 2600, "visual": 1500},
+            initial_stamina=40,
+            max_stamina=44,
+            initial_genki=0,
+            total_turns=6,
+            turn_schedule=[TurnMultiplierSpec("Da", 1.0)] * 6,
+            deck=[_make_card_config(db, cid) for cid in (800,) + (14,) * 10],
+            p_items=_build_ume_136_hif_p_items(include_upgraded=False),
+        )
+        sim = HeadlessBattleSimulator(cfg_110, db=db, seed=7)
+        c800_inst = sim._new_instance(_make_card_config(db, 800))
+        sim.genki = 10
+        sim.discard_pile.extend(sim.hand)
+        sim.hand = [c800_inst]
+        sim.play_card(0)  # cost-=5 spends 5 genki -> consumed_genki==5; genki+=2 (+0 mot) -> 7; mot+=3 -> 3; auto-ends turn into T2
+        assert sim.consumed_genki == 5
+        assert sim.genki == 7
+        assert sim.buffs["motivation"] == 3
+        assert sim.turn == 2
+
+        sim.end_turn()  # T2 -> T3 (genki unchanged, stick does not fire on T2)
+        assert sim.turn == 3
+        assert sim.p_item_trigger_counts[9136] == 0
+
+        sim.genki = 20
+        score_before_t3 = sim.score
+        sim.discard_pile.extend(sim.hand)
+        sim.hand.clear()
+        sim.end_turn()  # T3 end: 夢を創るステッキ fires! +ceil(20*1.10)=22 score, clears 20 genki (consumed=25), T4 draws 4!
+
+        assert sim.turn == 4
+        assert sim.p_item_trigger_counts[9136] == 1
+        assert sim.score == score_before_t3 + 22
+        assert sim.consumed_genki == 25
+        # T4 startOfTurn: #800 restores ceil(25*0.8)=20 + motivation(3) = 23 genki!
+        assert sim.genki == 23
+        # Base TURN_DRAW(3) + next-turn draw(1) = 4 cards drawn
+        assert len(sim.hand) == 4
+
+        # 2. Upgraded 夢を創るステッキ+ (130%) scores ceil(20*1.30)=26 on T3 EOT, and #782 reads consumedGenki
+        cfg_130 = BattleConfig(
+            scenario_id="hif_honsen",
+            stage_name="ume136_130",
+            p_idol_id=136,
+            idol_name="花海 佑芽",
+            plan="logic",
+            idol_stats={"vocal": 2000, "dance": 2600, "visual": 1500},
+            initial_stamina=40,
+            max_stamina=44,
+            total_turns=4,
+            turn_schedule=[TurnMultiplierSpec("Da", 1.0)] * 4,
+            deck=[_make_card_config(db, 14)] * 5,
+            p_items=_build_ume_136_hif_p_items(include_upgraded=True)[1:],  # only 91361 (+)
+        )
+        sim_up = HeadlessBattleSimulator(cfg_130, db=db, seed=11)
+        sim_up.turn = 3
+        sim_up.turns_remaining = 2
+        sim_up.genki = 20
+        sim_up.score = 0
+        sim_up.end_turn()
+        assert sim_up.p_item_trigger_counts[91361] == 1
+        assert sim_up.score == 26
+        assert sim_up.genki == 0
+        assert sim_up.consumed_genki == 20
+        # On final turn (T4, turns_remaining==1), draw #782 (cardMovedToHand +5 genki) and play it (cost-=1 -> consumed_genki=21, score+=84)
+        c782 = sim_up._new_instance(_make_card_config(db, 782))
+        sim_up._register_passive_effects_for_card(c782)
+        sim_up.hand = []
+        sim_up.draw_pile = [c782]
+        sim_up.draw_cards(1)
+        assert sim_up.genki == 5
+        sim_up.score = 0
+        sim_up.play_card(0)
+        assert sim_up.consumed_genki == 21
+        assert sim_up.score == 84  # 21 * 4
+
+        # 3. #854 証明し続ける一番星: motivationIncreased (direct only!) -> moveRandomToTopOfDeck[mental & (deck|discarded)]
+        #    and determinize() preserves pinned_top_deck_count!
+        cfg_854 = BattleConfig(
+            scenario_id="hif_honsen",
+            stage_name="ume136_854",
+            p_idol_id=136,
+            idol_name="花海 佑芽",
+            plan="logic",
+            idol_stats={"vocal": 2000, "dance": 2600, "visual": 1500},
+            initial_stamina=40,
+            max_stamina=44,
+            total_turns=6,
+            turn_schedule=[TurnMultiplierSpec("Da", 1.0)] * 6,
+            deck=[_make_card_config(db, cid) for cid in (854, 22, 135, 2, 2, 2, 2)],
+            p_items=[],
+        )
+        sim854 = HeadlessBattleSimulator(cfg_854, db=db, seed=3)
+        inst854 = sim854._new_instance(_make_card_config(db, 854))
+        inst22 = sim854._new_instance(_make_card_config(db, 22))
+        target_135 = sim854._new_instance(_make_card_config(db, 135))
+        filler_a = sim854._new_instance(_make_card_config(db, 2))
+        filler_b = sim854._new_instance(_make_card_config(db, 2))
+        filler_c = sim854._new_instance(_make_card_config(db, 2))
+        sim854.hand = [inst854, inst22]
+        sim854.draw_pile = [filler_a, filler_b, filler_c]
+        sim854.discard_pile = [target_135]  # Only mental card in deck|discarded is #135
+
+        sim854.play_card(0)  # Play #854 (cardUsesRemaining+=1, registers 5T motivationIncreased)
+        assert sim854.card_uses_remaining == 1
+        sim854.card_uses_remaining = 2  # Keep Turn 1 open after playing #22
+        sim854.genki = 2
+        sim854.play_card(0)  # Play #22 (direct motivation+=3 -> triggers moveRandomToTopOfDeck)
+        assert sim854.draw_pile[0].cfg.card_id == 135
+        assert sim854.pinned_top_deck_count == 1
+        for k_seed in range(10):
+            det = sim854.determinize(random.Random(k_seed))
+            assert det.draw_pile[0].cfg.card_id == 135
+        sim854.hand.clear()
+        sim854.draw_cards(1)
+        assert sim854.hand[0].cfg.card_id == 135
+        assert sim854.pinned_top_deck_count == 0
+        # Indirect motivation trigger with #22 (mental) in discard_pile must NOT trigger if:isDirectEffect
+        sim854._fire_phase("motivationIncreased", is_direct=False)
+        assert sim854.pinned_top_deck_count == 0
+        assert sim854.draw_pile[0].cfg.card_id == 2
+
+        # 4. S3 auto-injection of #854, default 9136 (110%), toggle 91361 (130%), #153 release, & guide/scoring
+        cfg_auto = build_live_battle_config(
+            db=db,
+            deck_card_ids=[800, 137, 159],  # Pre-game loadout omitted #854!
+            equipped_p_items=None,
+            p_idol_id=136,
+            plan="logic",
+            scenario_id="hif_honsen",
+            total_turns=12,
+        )
+        assert 854 in [c.card_id for c in cfg_auto.deck]
+        stage_ids = [it.item_id for it in cfg_auto.p_items if it.mode == "stage"]
+        assert stage_ids == [9136, 429]
+
+        cfg_custom_plus = build_live_battle_config(
+            db=db,
+            deck_card_ids=[800, 854, 137],
+            equipped_p_items=[{"item_id": 91361, "canonical_name": "夢を創るステッキ+", "mode": "stage"}],
+            p_idol_id=136,
+            plan="logic",
+            scenario_id="hif_honsen",
+            total_turns=9,
+        )
+        assert [it.item_id for it in cfg_custom_plus.p_items if it.mode == "stage"] == [91361]
+
+        rules = LogicBattleRules()
+        sim_mid = HeadlessBattleSimulator(cfg_auto, db=db, seed=1)
+        sim_mid.turns_remaining = 6
+        assert rules.should_hold_action(sim_mid, card_cfg=_make_card_config(db, 153), fin_window=2) is False
+
+        cfg_mis = build_live_battle_config(
+            db=db,
+            deck_card_ids=[920, 922, 137, 159],
+            p_idol_id=163,
+            plan="logic",
+            scenario_id="hif_honsen",
+            total_turns=9,
+        )
+        sim_mis = HeadlessBattleSimulator(cfg_mis, db=db, seed=1)
+        sim_mis.turns_remaining = 6
+        assert rules.should_hold_action(sim_mis, card_cfg=_make_card_config(db, 153), fin_window=2) is True
+
+        # LocalHybridDecisionAgent does not treat p_idol_id=136 (motivation) as goodImpressionTurns-only GI build
+        agent_136 = LocalHybridDecisionAgent(db=db, planner_cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4))
+        guide_136 = get_p_idol_guide(136)
+        assert guide_136 is not None and guide_136.recommended_effect == "motivation"
+        s_act_136 = agent_136._score_skill_card(
+            card_id=4, title="ポーズの基本+", desc="パラメータ+6\n元気+4", target_effect="motivation", guide=guide_136, plan="logic", p_idol_id=136
+        )
+        s_act_163 = agent_136._score_skill_card(
+            card_id=4, title="ポーズの基本+", desc="パラメータ+6\n元気+4", target_effect="goodImpressionTurns", guide=None, plan="logic", p_idol_id=163
+        )
+        assert s_act_136 > s_act_163 + 500
+    finally:
+        db.close()
+
+
+def test_loadout_scanner_card_customization_direction_inference():
+    """HifLoadoutScanner must detect green customization badges, infer exact cust_id+level from text/cost, and merge with manual overrides."""
+    import cv2
+    from demo.sim.battle_simulator import HeadlessBattleSimulator
+    from demo.vision.loadout_scanner import infer_card_customizations_from_scan
+
+    db = GakumasDB("gakumas_library.db")
+    scanner = HifLoadoutScanner(db=db)
+    try:
+        # 1. Multi-level & combo numeric inference on #135 イメトレ+ (custs: 59 max=2, 56 max=2, 12 max=1)
+        r135 = db.get_card_by_id(135)
+        assert r135 is not None
+        assert infer_card_customizations_from_scan(
+            db, r135, "元気+15 | やる気+5 | レッスン中1回", badge_detected=True, badge_count=1
+        ) == {"levels": {"59": 1}}
+        assert infer_card_customizations_from_scan(
+            db, r135, "元気+24 | やる気+5 | レッスン中1回", badge_detected=True, badge_count=2
+        ) == {"levels": {"59": 2}}
+        assert infer_card_customizations_from_scan(
+            db, r135, "元気+15 | やる気+6 | レッスン中1回", badge_detected=True, badge_count=2
+        ) == {"levels": {"56": 1, "59": 1}}
+        assert infer_card_customizations_from_scan(
+            db, r135, "元気+11 | やる気+5 | 元気の30%分パラメータ上昇 | レッスン中1回", badge_detected=True, badge_count=1
+        ) == {"levels": {"12": 1}}
+
+        # 2. Percentage & typed-cost reduction inference (#153 届いて！+, #427 キセキの魔法+, #299 オトメゴコロ+)
+        r153 = db.get_card_by_id(153)
+        assert r153 is not None
+        assert infer_card_customizations_from_scan(
+            db,
+            r153,
+            "元気が7以上の場合、使用可 | 元気の500%分パラメータ上昇させ、元気を0にする | 重複不可 レッスン中1回",
+            badge_detected=True,
+            badge_count=2,
+        ) == {"levels": {"11": 1, "30": 1}}
+
+        r427 = db.get_card_by_id(427)
+        assert r427 is not None
+        assert infer_card_customizations_from_scan(
+            db,
+            r427,
+            "体力消費3 | 好印象が10以上の場合、使用可 | 好印象の660%分パラメータ上昇 | 重複不可 レッスン中1回",
+            badge_detected=True,
+            badge_count=2,
+        ) == {"levels": {"6": 1, "30": 1}}
+
+        r299 = db.get_card_by_id(299)
+        assert r299 is not None
+        assert infer_card_customizations_from_scan(
+            db,
+            r299,
+            "やる気消費2 | 好印象+7 | スキルカード使用数追加+1 | 好印象が10以上の場合、好印象+2 | 重複不可",
+            badge_detected=True,
+            badge_count=2,
+        ) == {"levels": {"34": 1, "80": 1}}
+
+        # 3. Condition & anchor-patch inference (#778 びしっとキメ顔+, #521 夢色リップ+)
+        r778 = db.get_card_by_id(778)
+        assert r778 is not None
+        assert infer_card_customizations_from_scan(
+            db,
+            r778,
+            "好印象が6以上の場合、使用可 | 好印象強化+200%(4ターン) | 以降の4ターンの間、直接効果で好印象が増加後、好印象の130%分パラメータ上昇",
+            badge_detected=True,
+            badge_count=2,
+        ) == {"levels": {"105": 1, "106": 1}}
+
+        r521 = db.get_card_by_id(521)
+        assert r521 is not None
+        assert infer_card_customizations_from_scan(
+            db,
+            r521,
+            "元気+2 | やる気+5 | パラメータ上昇量増加20% | 好印象が10以上の場合、以降の4ターンの間、ターン開始時、好印象1.1倍 | 元気+4",
+            badge_detected=True,
+            badge_count=2,
+        ) == {"levels": {"27": 1, "88": 1}}
+
+        # 4. Guard against Memory hooks false-positives on #129 & #79 limit removal
+        r129 = db.get_card_by_id(129)
+        assert r129 is not None
+        # Memory hook without customization badge must NOT infer #36
+        assert infer_card_customizations_from_scan(
+            db,
+            r129,
+            "レッスン開始時手札に入る | やる気+5 | 以降、メンタルスキルカード使用時、やる気+1 | レッスン中1回 重複不可",
+            badge_detected=False,
+        ) == {}
+        # With green badge(1) and unchanged effect text -> infers #29 (cost-=)
+        assert infer_card_customizations_from_scan(
+            db,
+            r129,
+            "やる気+5 | 以降、メンタルスキルカード使用時、やる気+1 | レッスン中1回 重複不可",
+            badge_detected=True,
+            badge_count=1,
+        ) == {"levels": {"29": 1}}
+        # With green badge(2) and レッスン開始時手札に入る + やる気+6 -> {36: 1, 56: 1}
+        assert infer_card_customizations_from_scan(
+            db,
+            r129,
+            "レッスン開始時手札に入る | やる気+6 | 以降、メンタルスキルカード使用時、やる気+1 | レッスン中1回 重複不可",
+            badge_detected=True,
+            badge_count=2,
+        ) == {"levels": {"36": 1, "56": 1}}
+
+        r79 = db.get_card_by_id(79)
+        assert r79 is not None
+        assert infer_card_customizations_from_scan(
+            db, r79, "パラメータ+13 | 集中が6以上の場合、パラメータ+15", badge_detected=False
+        ) == {}
+        assert infer_card_customizations_from_scan(
+            db, r79, "パラメータ+13 | 集中が6以上の場合、パラメータ+15", badge_detected=True, badge_count=1
+        ) == {"levels": {"37": 1}}
+
+        # 5. End-to-end detail-frame badge detection -> parse_detail_frames -> Tracker merge -> Simulator
+        doc = np.full((1600, 720, 3), 255, dtype=np.uint8)
+        rng = np.random.default_rng(77)
+        # Put two card icons in viewport y=406..1372 (rel y=200..315 for #135, rel y=450..565 for #153)
+        for by in (606, 856):
+            doc[by : by + 115, 55:170] = rng.integers(25, 110, size=(115, 115, 3), dtype=np.uint8)
+            doc[by + 10 : by + 100, 200:620] = rng.integers(190, 240, size=(90, 420, 3), dtype=np.uint8)
+        # Render a crisp bright-green circular customization badge with white "1" on #135's icon (y=606..721, x=55..170)
+        cv2.circle(doc, (112, 686), 14, (45, 200, 60), thickness=-1)
+        cv2.line(doc, (112, 678), (112, 694), (255, 255, 255), thickness=3)
+
+        def _fake_ja_cust(arr: np.ndarray, *a, **kw):
+            ah = arr.shape[0]
+            if 220 <= ah <= 300:
+                return {
+                    "text": "SSR ガラクタロード 秦谷 美鈴",
+                    "lines": [
+                        {"text": "SSR ガラクタロード", "bbox": [180, 20, 460, 50]},
+                        {"text": "秦谷 美鈴", "bbox": [180, 55, 360, 85]},
+                    ],
+                }
+            if ah >= 900:
+                return {
+                    "text": "",
+                    "lines": [
+                        {"text": "Pアイテム", "bbox": [24, 90, 140, 110]},
+                        {"text": "スキルカード", "bbox": [24, 150, 160, 175]},
+                        {"text": "イメトレ+", "bbox": [200, 206, 420, 236]},
+                        {"text": "元気+15 / やる気+5 / レッスン中1回", "bbox": [200, 246, 620, 276]},
+                        {"text": "届いて！+", "bbox": [200, 456, 420, 486]},
+                        {"text": "体力消費1 / 元気が7以上の場合、使用可 / 元気の500%分パラメータ上昇させ、元気を0にする / 重複不可 レッスン中1回", "bbox": [200, 496, 640, 530]},
+                    ],
+                }
+            return {"text": "", "lines": []}
+
+        def _fake_en_cust(arr: np.ndarray, *a, **kw):
+            aw, ah = arr.shape[1], arr.shape[0]
+            if ah >= 90 and aw >= 150:
+                return {"text": "10+ 1 +10", "lines": []}
+            return {"text": "2000", "lines": []}
+
+        scanner.ocr = SimpleNamespace(recognize_array=_fake_ja_cust)
+        scanner.reco.en_ocr = SimpleNamespace(recognize_array=_fake_en_cust)
+        res = scanner.parse_detail_frames([doc], plan="logic")
+        assert 135 in res.deck_card_ids
+        assert 153 in res.deck_card_ids
+        assert res.card_customizations.get(135) == {"levels": {"59": 1}}
+        assert res.card_customizations.get(153) == {"levels": {"11": 1}}
+
+        # Tracker merges scanned customizations with WebUI manual override taking priority for #153
+        tracker = GameStateTracker(plan="logic", p_idol_id=163, scenario_id="hif_honsen")
+        tracker.set_initial_loadout(
+            p_idol_id=res.p_idol_id,
+            plan=res.plan,
+            deck_ids=res.deck_card_ids,
+            p_items=res.p_items,
+            card_memory_hooks=res.card_memory_hooks,
+            card_customizations=res.card_customizations,
+            db=db,
+        )
+        tracker.merge_manual_memory_hooks(card_customizations={153: {"levels": {"30": 1}}}, db=db)
+        assert tracker.card_customizations[135] == {"levels": {"59": 1}}
+        assert tracker.card_customizations[153] == {"levels": {"30": 1}}
+
+        cfg = build_live_battle_config(
+            db=db,
+            deck_card_ids=[135, 153, 137],
+            p_idol_id=163,
+            plan="logic",
+            card_customizations=tracker.card_customizations,
+        )
+        sim = HeadlessBattleSimulator(cfg, db=db, seed=5)
+        c135 = next(c for c in sim._all_instances.values() if c.cfg.card_id == 135)
+        sim.hand = [c135]
+        sim.genki = 0
+        sim.stamina = 20
+        sim.play_card(0)
+        assert sim.genki == 15  # Customized +4 from #59 Lv1 on top of base +11
+    finally:
+        scanner.close()
+        db.close()
+
+
+def test_support_stick_429_codec_and_unmapped_basic_card_guard():
+    """#429 basic fillers are natively indexed by GakumasActionCodec, blocked from unmapped hijack, and excluded from permanent deck."""
+    from demo.sim.rl_env import GakumasActionCodec
+    from demo.sim.battle_simulator import BattleConfig, TurnMultiplierSpec, _make_card_config
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        # 1. #429 H.I.F応援棒 registers logic N basic fillers (including #652 アイコンタクトの基本) in GakumasActionCodec
+        cfg_r2 = build_live_battle_config(
+            db=db,
+            deck_card_ids=[800, 854, 138, 520, 137],
+            p_idol_id=136,
+            plan="logic",
+            scenario_id="hif_honsen",
+            total_turns=12,
+        )
+        codec = GakumasActionCodec(cfg_r2, db=db)
+        assert (652, False, False) in codec.card_key_to_action
+
+        # 2. Defensive unmapped guard: even if a codec lacks #652, unmapped fallback NEVER hijacks real plays/drinks
+        planner = LiveBattlePlanner(
+            db=db,
+            cfg=LiveBattlePlannerConfig(ppo_episodes=6, ismcts_simulations=6, policy_cache_dir=None),
+        )
+        cfg_no_429 = BattleConfig(
+            scenario_id="hif_honsen",
+            stage_name="guard_652",
+            p_idol_id=136,
+            idol_name="花海 佑芽",
+            plan="logic",
+            idol_stats={"vocal": 2000, "dance": 2500, "visual": 1500},
+            initial_stamina=40,
+            max_stamina=44,
+            total_turns=9,
+            turn_schedule=[TurnMultiplierSpec("Da", 1.0)] * 9,
+            deck=[_make_card_config(db, cid) for cid in (800, 138, 520, 137, 139, 159)],
+            p_items=[],
+        )
+        assert (652, False, False) not in GakumasActionCodec(cfg_no_429, db=db).card_key_to_action
+
+        box = BoundingBox(xmin=10, ymin=10, xmax=50, ymax=50)
+        obs = ScreenObservation(
+            scene_type="battle_turn",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=7,
+            turn=3,
+            turns_remaining=7,
+            stamina=40,
+            max_stamina=44,
+            genki=6,
+            score=500,
+            target_score=5000,
+            buffs={"goodImpressionTurns": 8, "motivation": 12},
+            idol_stats={"vocal": 2000, "dance": 2500, "visual": 1500},
+            cards=[
+                RecognizedCard(card_id=520, name="夢色リップ", type="active", upgraded=False, playable=True, visual_playable=True, bbox=box),
+                RecognizedCard(card_id=138, name="ゆめみごこち", type="mental", upgraded=False, playable=True, visual_playable=True, bbox=box),
+                RecognizedCard(card_id=652, name="アイコンタクトの基本", type="active", upgraded=False, playable=True, visual_playable=True, bbox=box),
+            ],
+            drinks=[],
+        )
+        tracker = GameStateTracker(plan="logic", p_idol_id=136, scenario_id="hif_honsen")
+        tracker.set_initial_loadout(
+            p_idol_id=136,
+            plan="logic",
+            deck_ids=[800, 138, 520, 137, 139, 159],
+            p_items=[],
+            db=db,
+        )
+        legal_acts = [
+            LegalAction(choice_id=0, action_type="play_card", description="打出 #520 夢色リップ", bbox=box, payload={"card_id": 520, "name": "夢色リップ"}),
+            LegalAction(choice_id=1, action_type="play_card", description="打出 #138 ゆめみごこち", bbox=box, payload={"card_id": 138, "name": "ゆめみごこち"}),
+            LegalAction(choice_id=2, action_type="play_card", description="打出 #652 アイコンタクトの基本", bbox=box, payload={"card_id": 652, "name": "アイコンタクトの基本"}),
+            LegalAction(choice_id=3, action_type="end_turn", description="SKIP", bbox=box, payload={}),
+        ]
+        # Remove #652 from planner codec to explicitly exercise the unmapped fallback guard
+        cid_chosen, reason, _dbg = planner.decide_battle_action(obs, legal_acts, tracker=tracker)
+        assert int((legal_acts[cid_chosen].payload or {}).get("card_id") or 0) != 652, f"Unmapped #652 leaked: {reason}"
+
+        # 3. Tracker does NOT permanently append temporary #652 filler to produce_deck
+        tracker.in_battle = True
+        tracker.sync_observed_hand([SimpleNamespace(card_id=520), SimpleNamespace(card_id=652)], db=db, turn=3, turns_remaining=7)
+        assert 652 not in tracker.produce_deck
+        tracker.record_card_play(652, db=db)
+        assert 652 not in tracker.produce_deck
+    finally:
+        db.close()
+
+
+def test_logic_senobi_delayed_burst_and_drink25_rules_isolated():
+    """LogicBattleRules holds #771/#772+#25 until rem<=6, enforces #25->#772 in rem 5..6, avoids dead #772 at rem<=4, and stays isolated from Sense/Anomaly."""
+    from demo.sim.battle_simulator import BattleConfig, HeadlessBattleSimulator, TurnMultiplierSpec, _make_card_config, _make_drink_config
+    from demo.sim.plan_rules import AnomalyBattleRules, LogicBattleRules, SenseBattleRules
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        logic_rules = LogicBattleRules()
+        sense_rules = SenseBattleRules()
+        anom_rules = AnomalyBattleRules()
+        cfg = BattleConfig(
+            scenario_id="hif_honsen",
+            stage_name="senobi_rules",
+            p_idol_id=136,
+            idol_name="花海 佑芽",
+            plan="logic",
+            idol_stats={"vocal": 2000, "dance": 2500, "visual": 1500},
+            initial_stamina=40,
+            max_stamina=44,
+            total_turns=12,
+            turn_schedule=[TurnMultiplierSpec("Da", 1.0)] * 12,
+            deck=[_make_card_config(db, cid) for cid in (772, 45, 521, 139, 137, 800, 854)],
+            drinks=[_make_drink_config(db, 25)],
+            p_items=[],
+        )
+        sim = HeadlessBattleSimulator(cfg, db=db, seed=9)
+        c772 = next(c for c in sim._all_instances.values() if c.cfg.card_id == 772)
+        c45 = next(c for c in sim._all_instances.values() if c.cfg.card_id == 45)
+        c521 = next(c for c in sim._all_instances.values() if c.cfg.card_id == 521)
+        c139 = next(c for c in sim._all_instances.values() if c.cfg.card_id == 139)
+        d25 = sim.available_drinks[0]
+
+        # Isolation check on Sense & Anomaly
+        assert logic_rules.is_senobi_delayed_burst_card(c772.cfg) is True
+        assert sense_rules.is_senobi_delayed_burst_card(c772.cfg) is False
+        assert anom_rules.is_senobi_delayed_burst_card(c772.cfg) is False
+        assert sense_rules.can_drink25_combo_senobi_now(sim, d25) is False
+        assert anom_rules.can_drink25_combo_senobi_now(sim, d25) is False
+
+        # 1. Early turn (rem == 7): both #772 and #25 must be held
+        sim.turns_remaining = 7
+        sim.stamina = 35
+        sim.hand = [c772, c521, c139]
+        assert logic_rules.should_hold_action(sim, card_cfg=c772.cfg) is True
+        assert logic_rules.should_hold_action(sim, drink_cfg=d25) is True
+
+        # 2. Landing window (rem == 6 and rem == 5): #25 -> #772 combo is enabled and naked #772 is stripped
+        for rem in (6, 5):
+            sim.turns_remaining = rem
+            sim.double_card_effect_cards = 0
+            sim.triggers = [tr for tr in sim.triggers if not getattr(tr, "actions", None)]
+            assert logic_rules.should_hold_action(sim, card_cfg=c772.cfg) is False
+            assert logic_rules.can_drink25_combo_senobi_now(sim, d25) is True
+            amap = {0: ("card", 0), 1: ("card", 1), 2: ("drink", 0)}
+            narrowed, early = logic_rules.narrow_armed_or_combo_action_map(sim, amap)
+            assert early is True and narrowed is not None
+            assert 2 in narrowed and 0 not in narrowed
+
+        # 3. Dead window (rem <= 4): armed #25 avoids dead #772 when active #45 is in hand
+        sim.turns_remaining = 4
+        sim.hand = [c772, c45, c521]
+        sim.use_drink(0)  # Arms active retrigger for #25
+        assert sim.has_armed_active_retrigger(same_turn_only=True)
+        assert logic_rules.should_forbid_double_on_card(sim, c772.cfg, has_other_double_target=True) is True
+        amap_dead = {0: ("card", 0), 1: ("card", 1)}
+        narrowed_d, _ = logic_rules.narrow_armed_or_combo_action_map(sim, amap_dead)
+        assert narrowed_d is not None and 1 in narrowed_d and 0 not in narrowed_d
+
+        # 4. Planner end-to-end picks #25 before #772 at rem=6
+        planner = LiveBattlePlanner(
+            db=db,
+            cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4, policy_cache_dir=None),
+        )
+        box = BoundingBox(xmin=10, ymin=10, xmax=50, ymax=50)
+        obs6 = ScreenObservation(
+            scene_type="battle_turn",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=9,
+            turn=7,
+            turns_remaining=6,
+            stamina=32,
+            max_stamina=44,
+            genki=80,
+            score=50000,
+            target_score=200000,
+            buffs={"goodImpressionTurns": 30, "motivation": 50},
+            idol_stats={"vocal": 2000, "dance": 2500, "visual": 1500},
+            cards=[
+                RecognizedCard(card_id=772, name="せのびの魔法+", type="active", upgraded=True, playable=True, visual_playable=True, bbox=box),
+                RecognizedCard(card_id=521, name="夢色リップ+", type="mental", upgraded=True, playable=True, visual_playable=True, bbox=box),
+            ],
+            drinks=[
+                RecognizedDrink(drink_id=25, name="特製ハツボシエキス", playable=True, bbox=box),
+            ],
+        )
+        tracker = GameStateTracker(plan="logic", p_idol_id=136, scenario_id="hif_honsen")
+        tracker.set_initial_loadout(
+            p_idol_id=136,
+            plan="logic",
+            deck_ids=[772, 45, 521, 137, 800, 854],
+            p_items=[],
+            db=db,
+        )
+        acts6 = [
+            LegalAction(choice_id=0, action_type="play_card", description="打出 #772 せのびの魔法+", bbox=box, payload={"card_id": 772, "name": "せのびの魔法+"}),
+            LegalAction(choice_id=1, action_type="play_card", description="打出 #521 夢色リップ+", bbox=box, payload={"card_id": 521, "name": "夢色リップ+"}),
+            LegalAction(choice_id=2, action_type="use_drink", description="使用 #25 特製ハツボシエキス", bbox=box, payload={"drink_id": 25, "name": "特製ハツボシエキス"}),
+            LegalAction(choice_id=3, action_type="end_turn", description="SKIP", bbox=box, payload={}),
+        ]
+        chosen_id, reason6, _ = planner.decide_battle_action(obs6, acts6, tracker=tracker)
+        assert chosen_id == 2, f"Expected drink #25 combo before #772 at rem=6, got {chosen_id}: {reason6}"
+    finally:
+        db.close()
+
+
+def test_shop_skill_card_preview_routing_and_priority_card_purchase(monkeypatch):
+    """Shop card previews (showing 強化確認/カスタマイズ確認 alongside 交換する) must route to `shop`, and priority_card_ids buy before drinks."""
+    import cv2
+    from demo.core.hif_catalog import ProducePreferences
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        reco = LiveScreenRecognizer(db=db, plan="logic", scenario_id="hif_honsen")
+
+        # 1a. Verify on captured live screenshots from 136 run if present on disk
+        for live_img in (
+            Path("debug_live_logic_136_20261126_163438/card_reward_W8_step210.png"),
+            Path("debug_live_logic_136_20261126_163438/card_reward_W6_step131.png"),
+        ):
+            if live_img.exists():
+                bgr = cv2.imread(str(live_img))
+                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                obs_live = reco.recognize(rgb, plan="logic")
+                assert obs_live.scene_type == "shop", f"{live_img.name} misrouted to {obs_live.scene_type}"
+                ex_opt = next((o for o in obs_live.options if o.get("name") == "交換する"), None)
+                assert ex_opt is not None and ex_opt.get("card_id") == 170
+
+        # 1b. Synthetic CI-safe reproduction of shop skill card preview containing 強化確認 & カスタマイズ確認
+        h, w = 1600, 720
+        frame = np.full((h, w, 3), 245, dtype=np.uint8)
+        frame[int(h * 0.72) : int(h * 0.80), int(w * 0.30) : int(w * 0.56)] = (235, 110, 40)
+        syn_lines = [
+            {"text": "インターバル", "bbox": [40, 30, 180, 65]},
+            {"text": "Pポイント 330", "bbox": [310, 80, 430, 110]},
+            {"text": "私がスター", "bbox": [190, 340, 340, 375]},
+            {"text": "強化確認", "bbox": [65, 480, 155, 508]},
+            {"text": "カスタマイズ確認", "bbox": [65, 520, 180, 548]},
+            {"text": "好印象消費2 / ターン追加+1", "bbox": [190, 390, 520, 425]},
+            {"text": "Pポイントで利用するものを選んでください", "bbox": [140, 260, 580, 290]},
+            {"text": "50", "bbox": [95, 1020, 145, 1045]},
+            {"text": "100", "bbox": [410, 1020, 470, 1045]},
+            {"text": "リフレッシュ", "bbox": [40, 1160, 180, 1190]},
+            {"text": "交換する", "bbox": [290, 1160, 420, 1195]},
+            {"text": "終了", "bbox": [600, 1160, 680, 1195]},
+        ]
+        monkeypatch.setattr(reco.ocr, "recognize_array", lambda *_a, **_kw: {"text": " ".join(l["text"] for l in syn_lines), "lines": syn_lines})
+        obs_syn = reco.recognize(frame, plan="logic")
+        assert obs_syn.scene_type == "shop"
+
+        # 2. LocalHybridDecisionAgent prioritizes buying priority card #170 BEFORE drinks (#25)
+        agent = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4),
+            preferences=ProducePreferences(priority_card_ids=[171]),
+        )
+        tracker = GameStateTracker(plan="logic", p_idol_id=136, scenario_id="hif_honsen")
+        tracker.set_initial_loadout(p_idol_id=136, plan="logic", deck_ids=[800, 129, 139], p_items=[], db=db)
+        agent.tracker = tracker
+
+        box = BoundingBox(xmin=10, ymin=10, xmax=50, ymax=50)
+        shop_obs = ScreenObservation(
+            scene_type="shop",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=8,
+            total_weeks=9,
+            p_points=330,
+            drinks=[],
+        )
+        # Case A: priority card #170 is previewed -> immediately click 交換する
+        acts_card_selected = [
+            LegalAction(choice_id=0, action_type="pick_option", description="交換する 《私がスター》 (-50P)", bbox=box, payload={"name": "交換する", "card_id": 170, "price": 50}),
+            LegalAction(choice_id=1, action_type="pick_option", description="Pドリンク3 《特製ハツボシエキス》 (100P)", bbox=box, payload={"name": "Pドリンク3", "shop_slot_key": "Pドリンク:3", "drink_id": 25, "price": 100}),
+            LegalAction(choice_id=2, action_type="pick_option", description="終了", bbox=box, payload={"name": "終了", "shop_slot_key": "終了"}),
+        ]
+        dec_buy_card = agent.decide("", acts_card_selected, obs=shop_obs)
+        assert dec_buy_card.choice_id == 0
+
+        # Case B: drink #25 is currently previewed, while #170 slot is available -> switch to #170 slot FIRST!
+        agent._shop_attempted_card_ids.clear()
+        agent._shop_expecting_priority_card_confirm = None
+        acts_drink_selected_card_avail = [
+            LegalAction(choice_id=0, action_type="pick_option", description="交換する 《特製ハツボシエキス》 (-100P)", bbox=box, payload={"name": "交換する", "drink_id": 25, "price": 100}),
+            LegalAction(choice_id=1, action_type="pick_option", description="スキルカード5 《私がスター》 (50P)", bbox=box, payload={"name": "スキルカード5", "shop_slot_key": "スキルカード:5", "card_id": 170, "price": 50}),
+            LegalAction(choice_id=2, action_type="pick_option", description="終了", bbox=box, payload={"name": "終了", "shop_slot_key": "終了"}),
+        ]
+        dec_pick_card_first = agent.decide("", acts_drink_selected_card_avail, obs=shop_obs)
+        assert dec_pick_card_first.choice_id == 1
+    finally:
+        db.close()
+
 
 
 

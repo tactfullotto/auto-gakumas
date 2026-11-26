@@ -175,6 +175,10 @@ class PItemConfig:
     trigger_turns_remaining_lte: int = 0
     move_random_ssr_to_hand: int = 0
     grant_conc_pct_of_gc: float = 0.0
+    trigger_every_n_turns_eot: int = 0
+    genki_to_score_mult: float = 0.0
+    clear_genki_on_trigger: bool = False
+    grant_next_turn_draw: int = 0
 
 
 def generate_stage_turn_schedule(
@@ -316,6 +320,7 @@ class ConditionSnapshot:
     moved_card_base_id: int
     last_used_card_type: str
     is_direct_effect: bool
+    consumed_genki: int = 0
 
 
 @dataclass
@@ -341,6 +346,7 @@ class BattleResult:
     p_item_activations: Dict[str, int] = field(default_factory=dict)
     memory_triggers: List[str] = field(default_factory=list)
     turn_schedule: List[str] = field(default_factory=list)
+    final_consumed_genki: int = 0
 
 
 _GROWTH_VAR_TO_ACTION_LHS: Dict[str, str] = {
@@ -866,6 +872,42 @@ def _build_sense_hif_p_items() -> List[PItemConfig]:
     ]
 
 
+def _build_ume_136_hif_p_items(*, include_upgraded: bool = True) -> List[PItemConfig]:
+    """Build Logic p_idol_id=136 ([真っ白いページと水彩の主人公] 花海 佑芽) unique P-items."""
+    items = [
+        PItemConfig(
+            item_id=9136,
+            name="夢を創るステッキ",
+            rarity="SSR",
+            mode="stage",
+            source_type="pIdol",
+            description="3ターンごとのターン終了時、元気の110%分パラメータ上昇・元気を0にする・次のターン、スキルカードを引く（レッスン内3回）",
+            trigger_every_n_turns_eot=3,
+            genki_to_score_mult=1.10,
+            clear_genki_on_trigger=True,
+            grant_next_turn_draw=1,
+            max_triggers=3,
+        ),
+    ]
+    if include_upgraded:
+        items.append(
+            PItemConfig(
+                item_id=91361,
+                name="夢を創るステッキ+",
+                rarity="SSR",
+                mode="stage",
+                source_type="pIdol",
+                description="3ターンごとのターン終了時、元気の130%分パラメータ上昇・元気を0にする・次のターン、スキルカードを引く（レッスン内3回）",
+                trigger_every_n_turns_eot=3,
+                genki_to_score_mult=1.30,
+                clear_genki_on_trigger=True,
+                grant_next_turn_draw=1,
+                max_triggers=3,
+            )
+        )
+    return items
+
+
 def build_last_run_hif_preset(
     db: Optional[GakumasDB] = None,
     stage: str = "round2",
@@ -1019,6 +1061,8 @@ class HeadlessBattleSimulator:
     OPENING_DRAW = 3
     TURN_DRAW = 3
     KIMEGAO_PLAY_MAX_TURNS_REMAINING = LogicBattleRules.KIMEGAO_PLAY_MAX_TURNS_REMAINING
+    SENOBI_PLAY_MIN_TURNS_REMAINING = LogicBattleRules.SENOBI_PLAY_MIN_TURNS_REMAINING
+    SENOBI_PLAY_MAX_TURNS_REMAINING = LogicBattleRules.SENOBI_PLAY_MAX_TURNS_REMAINING
 
     @property
     def plan_rules(self) -> BasePlanBattleRules:
@@ -1063,6 +1107,7 @@ class HeadlessBattleSimulator:
         self.stamina = config.initial_stamina
         self.max_stamina = config.max_stamina
         self.genki = config.initial_genki
+        self.consumed_genki: int = 0
         self.score = 0
         self.buffs: Dict[str, int] = {
             "goodImpressionTurns": config.initial_good_impression,
@@ -1095,6 +1140,7 @@ class HeadlessBattleSimulator:
         self.timed_gc_gain_buffs: List[Tuple[float, int, bool]] = []
         self.timed_gc_addition_buffs: List[Tuple[int, int, bool]] = []
         self.timed_conc_gain_buffs: List[Tuple[float, int, bool]] = []
+        self.timed_mot_addition_buffs: List[Tuple[int, int, bool]] = []
         self.fresh_turn_stat_buffs: set[str] = set()
         self.in_unfresh_phase: bool = True
 
@@ -1127,6 +1173,7 @@ class HeadlessBattleSimulator:
         self._all_instances: Dict[int, CardInstance] = {}
         self.hand: List[CardInstance] = []
         self.draw_pile: List[CardInstance] = []
+        self.pinned_top_deck_count: int = 0
         self.discard_pile: List[CardInstance] = []
         self.exhaust_pile: List[CardInstance] = []
         self.in_play_card: Optional[CardInstance] = None
@@ -1332,6 +1379,9 @@ class HeadlessBattleSimulator:
     def total_conc_gain_buff(self) -> float:
         return self.perm_conc_gain_buff + sum(v for v, _, _ in self.timed_conc_gain_buffs)
 
+    def total_mot_addition_buff(self) -> int:
+        return sum(int(v) for v, _, _ in self.timed_mot_addition_buffs)
+
     def _set_buff_value(self, key: str, new_val: int) -> None:
         prev = int(self.buffs.get(key, 0) or 0)
         clamped = max(0, int(new_val))
@@ -1430,6 +1480,7 @@ class HeadlessBattleSimulator:
             moved_card_base_id=self.moved_card.cfg.base_id if self.moved_card is not None else 0,
             last_used_card_type=self.last_used_card.cfg.card_type if self.last_used_card is not None else "",
             is_direct_effect=direct_flag,
+            consumed_genki=self.consumed_genki,
         )
 
     def draw_cards(self, count: int = 1) -> int:
@@ -1442,11 +1493,14 @@ class HeadlessBattleSimulator:
                     break
                 self.draw_pile = list(self.discard_pile)
                 self.discard_pile.clear()
+                self.pinned_top_deck_count = 0
                 self.rng.shuffle(self.draw_pile)
                 self.reshuffle_count += 1
             if not self.draw_pile:
                 break
             inst = self.draw_pile.pop(0)
+            if self.pinned_top_deck_count > 0:
+                self.pinned_top_deck_count -= 1
             self.hand.append(inst)
             drawn += 1
             self.moved_card = inst
@@ -1625,6 +1679,15 @@ class HeadlessBattleSimulator:
         """Return True if any plan-owned #777/#778 card remains unexhausted."""
         return self.plan_rules.has_unexhausted_kimegao_card(self)
 
+    @staticmethod
+    def is_senobi_delayed_burst_card(cfg: CardConfig) -> bool:
+        """Return True for Logic #771/#772 せのびの魔法(+)."""
+        return LOGIC_RULES.is_senobi_delayed_burst_card(cfg)
+
+    def has_unexhausted_senobi_card(self) -> bool:
+        """Return True if any plan-owned #771/#772 card remains unexhausted."""
+        return self.plan_rules.has_unexhausted_senobi_card(self)
+
     def count_active_retrigger_drinks(self) -> int:
         """Count available plan-owned Active-retrigger drinks remaining."""
         rules = self.plan_rules
@@ -1645,6 +1708,18 @@ class HeadlessBattleSimulator:
     def has_ready_drink25_kimegao_combo(self) -> bool:
         """Return True if an available Active-retrigger drink can immediately combo with #777/#778."""
         return self.plan_rules.has_ready_drink25_kimegao_combo(self)
+
+    def can_drink25_combo_senobi_now(
+        self,
+        drink: DrinkConfig,
+        senobi_inst: Optional[CardInstance] = None,
+    ) -> bool:
+        """Return True when Logic #25 can immediately combo with an affordable #771/#772 inside rem 5..6."""
+        return self.plan_rules.can_drink25_combo_senobi_now(self, drink, senobi_inst=senobi_inst)
+
+    def has_ready_drink25_senobi_combo(self) -> bool:
+        """Return True if an available Active-retrigger drink can immediately combo with #771/#772."""
+        return self.plan_rules.has_ready_drink25_senobi_combo(self)
 
     @staticmethod
     def is_late_scaling_finisher(cfg: CardConfig) -> bool:
@@ -1737,6 +1812,11 @@ class HeadlessBattleSimulator:
                 and self.turns_remaining > self.KIMEGAO_PLAY_MAX_TURNS_REMAINING
             ):
                 continue
+            if (
+                rules.is_senobi_delayed_burst_card(inst.cfg)
+                and self.turns_remaining > self.SENOBI_PLAY_MAX_TURNS_REMAINING
+            ):
+                continue
             if rules.is_resource_zeroing_finisher(inst.cfg) and self.turns_remaining > 1:
                 continue
             if fin_window > 0 and self.double_card_effect_cards == 0:
@@ -1799,6 +1879,10 @@ class HeadlessBattleSimulator:
                 and not (
                     rules.is_kimegao_burst_card(inst.cfg)
                     and self.turns_remaining > self.KIMEGAO_PLAY_MAX_TURNS_REMAINING
+                )
+                and not (
+                    rules.is_senobi_delayed_burst_card(inst.cfg)
+                    and self.turns_remaining > self.SENOBI_PLAY_MAX_TURNS_REMAINING
                 )
                 and not rules.is_trouble_card(inst.cfg)
                 for inst in self.hand
@@ -1869,6 +1953,7 @@ class HeadlessBattleSimulator:
         has_813: Optional[bool] = None,
         has_zeroing: Optional[bool] = None,
         has_kimegao: Optional[bool] = None,
+        has_senobi: Optional[bool] = None,
     ) -> bool:
         """Hold plan-specific burst cards/drinks until their optimal windows."""
         return self.plan_rules.should_hold_action(
@@ -1879,6 +1964,7 @@ class HeadlessBattleSimulator:
             has_813=has_813,
             has_zeroing=has_zeroing,
             has_kimegao=has_kimegao,
+            has_senobi=has_senobi,
         )
 
     def has_unexhausted_card_family(self, base_id: int) -> bool:
@@ -2018,6 +2104,8 @@ class HeadlessBattleSimulator:
                     if cost_var == "cost" and eff_amt > 0:
                         shield_used = min(self.genki, eff_amt)
                         self.genki -= shield_used
+                        if shield_used > 0:
+                            self.consumed_genki += shield_used
                         hp_used = eff_amt - shield_used
                         self.stamina = max(0, self.stamina - hp_used)
                     elif cost_var == "stamina" and eff_amt > 0:
@@ -2180,6 +2268,7 @@ class HeadlessBattleSimulator:
         self.timed_gc_gain_buffs = self._step_timed_buffs(self.timed_gc_gain_buffs)
         self.timed_gc_addition_buffs = self._step_timed_buffs(self.timed_gc_addition_buffs)
         self.timed_conc_gain_buffs = self._step_timed_buffs(self.timed_conc_gain_buffs)
+        self.timed_mot_addition_buffs = self._step_timed_buffs(self.timed_mot_addition_buffs)
 
         # 4. Reset one-turn fields & update trigger ttl/delay & prune expired triggers (ttl < 0)
         self.card_uses_remaining = 0
@@ -2469,6 +2558,42 @@ class HeadlessBattleSimulator:
                             if it.grant_draw_cards > 0:
                                 self.draw_cards(it.grant_draw_cards)
 
+            # Stage P-items firing at endOfTurn (e.g. #9136 夢を創るステッキ: every 3rd turn burst & clear genki + next turn draw)
+            if phase == "endOfTurn":
+                for it in self.config.p_items:
+                    if it.mode != "stage" or it.trigger_every_n_turns_eot <= 0:
+                        continue
+                    if (self.turn % it.trigger_every_n_turns_eot) != 0:
+                        continue
+                    if it.max_triggers is not None and self.p_item_trigger_counts[it.item_id] >= it.max_triggers:
+                        continue
+                    self.p_item_trigger_counts[it.item_id] += 1
+                    if it.genki_to_score_mult > 0 and self.genki > 0:
+                        self.score += self._compute_final_score_gain(
+                            float(self.genki) * float(it.genki_to_score_mult),
+                            apply_sense_mods=False,
+                        )
+                    if it.clear_genki_on_trigger and self.genki > 0:
+                        self.consumed_genki += self.genki
+                        self.genki = 0
+                    if it.grant_next_turn_draw > 0:
+                        self.triggers.append(
+                            ActiveTrigger(
+                                owner_name=it.name,
+                                owner_uid=-it.item_id,
+                                phase="turn",
+                                conditions=[],
+                                actions=[
+                                    {
+                                        "type": "call",
+                                        "name": "drawCard",
+                                        "args": [{"type": "number", "value": int(it.grant_next_turn_draw)}],
+                                    }
+                                ],
+                                limit=1,
+                            )
+                        )
+
             for tr in snapshot_triggers:
                 if tr.phase != phase:
                     continue
@@ -2582,19 +2707,28 @@ class HeadlessBattleSimulator:
                 if op == "+=":
                     if self.buffs.get("nullifyGenkiTurns", 0) > 0:
                         return
-                    add_g = int(val)
+                    add_g = _safe_ceil(val)
                     if add_g > 0:
                         raw_g = add_g + max(0, int(self.buffs.get("motivation", 0) or 0))
                         if self.buffs.get("uneaseTurns", 0) > 0:
                             raw_g = _safe_ceil(raw_g * 0.67)
                         self.genki += raw_g
                 elif op == "=":
+                    prev_g = self.genki
                     self.genki = max(0, int(val))
+                    if self.genki < prev_g:
+                        self.consumed_genki += prev_g - self.genki
                 elif op == "-=":
+                    prev_g = self.genki
                     self.genki = max(0, self.genki - max(0, int(val)))
+                    if self.genki < prev_g:
+                        self.consumed_genki += prev_g - self.genki
                 elif op == "/=":
                     if val > 0:
+                        prev_g = self.genki
                         self.genki = max(0, int(self.genki // val))
+                        if self.genki < prev_g:
+                            self.consumed_genki += prev_g - self.genki
                 return
 
             if lhs == "goodImpressionTurns":
@@ -2683,8 +2817,29 @@ class HeadlessBattleSimulator:
                         self._fire_phase("concentrationIncreased", is_direct=True)
                 return
 
+            if lhs == "motivation":
+                cur = int(self.buffs.get("motivation", 0) or 0)
+                is_direct = (self.phase in DIRECT_CHANGE_PHASES) or self._active_reservation_is_card
+                if op == "+=":
+                    if int(val) > 0:
+                        add_b = self.total_mot_addition_buff() if is_direct else 0
+                        gained = int(val) + add_b
+                        self._set_buff_value("motivation", cur + gained)
+                        if is_direct:
+                            self._fire_phase("motivationIncreased", is_direct=True)
+                elif op == "-=":
+                    self._set_buff_value("motivation", cur - int(val))
+                elif op == "=":
+                    self._set_buff_value("motivation", int(val))
+                elif op == "*=":
+                    new_v = _safe_ceil(cur * val)
+                    self._set_buff_value("motivation", new_v)
+                    if val > 1.0 and new_v > cur and is_direct:
+                        self._fire_phase("motivationIncreased", is_direct=True)
+                return
+
             if (
-                lhs in ("motivation", "nullifyDebuff", "costReduction", "costIncrease", "nullifyCostCards", "nullifyCostActiveCards")
+                lhs in ("nullifyDebuff", "costReduction", "costIncrease", "nullifyCostCards", "nullifyCostActiveCards")
                 or lhs in EOT_DECREMENT_FIELDS
                 or lhs in DEBUFF_FIELDS
                 or lhs in CONSUMABLE_BUFF_FIELDS
@@ -2750,6 +2905,10 @@ class HeadlessBattleSimulator:
                 b_val = int(round(float(args[0])))
                 ttl = int(args[1]) if len(args) >= 2 else 999
                 self.timed_gc_addition_buffs.append((b_val, ttl, is_fresh))
+            elif cname == "setMotivationAdditionBuff":
+                b_val = int(round(float(args[0])))
+                ttl = int(args[1]) if len(args) >= 2 else 999
+                self.timed_mot_addition_buffs.append((b_val, ttl, is_fresh))
             elif cname == "drawCard":
                 n_draw = int(args[0]) if args else 1
                 self.draw_cards(n_draw)
@@ -2760,6 +2919,73 @@ class HeadlessBattleSimulator:
                 self._register_passive_effects_for_card(new_inst)
                 pos = self.rng.randint(0, len(self.draw_pile))
                 self.draw_pile.insert(pos, new_inst)
+                if pos < self.pinned_top_deck_count:
+                    self.pinned_top_deck_count = min(len(self.draw_pile), self.pinned_top_deck_count + 1)
+            elif cname == "addCardToTopOfDeck":
+                cid = int(args[0])
+                cfg = self._get_card_config_cached(cid)
+                new_inst = self._new_instance(cfg)
+                self._register_passive_effects_for_card(new_inst)
+                self.draw_pile.insert(0, new_inst)
+                self.pinned_top_deck_count = min(len(self.draw_pile), self.pinned_top_deck_count + 1)
+            elif cname == "moveRandomToTopOfDeck":
+                n_move = int(args[0]) if args else 1
+                tgt = act.get("target")
+                owner_uid = owner.uid if owner else (trig.owner_uid if trig else None)
+                matching_uids = self._eval_target_ast(tgt, owner_uid=owner_uid)
+                candidates_top: List[Tuple[List[CardInstance], CardInstance]] = []
+                for zlist in (self.draw_pile, self.discard_pile, self.exhaust_pile, self.hand):
+                    for inst in zlist:
+                        if inst.uid in matching_uids:
+                            candidates_top.append((zlist, inst))
+                for _ in range(max(0, n_move)):
+                    if not candidates_top:
+                        break
+                    pick_idx = self.rng.randrange(len(candidates_top))
+                    zlist, moved_inst = candidates_top.pop(pick_idx)
+                    if zlist is self.draw_pile:
+                        old_idx = self.draw_pile.index(moved_inst)
+                        if old_idx < self.pinned_top_deck_count:
+                            self.pinned_top_deck_count = max(0, self.pinned_top_deck_count - 1)
+                    zlist.remove(moved_inst)
+                    self.draw_pile.insert(0, moved_inst)
+                    self.pinned_top_deck_count = min(len(self.draw_pile), self.pinned_top_deck_count + 1)
+                    self.moved_card = moved_inst
+            elif cname == "moveSelectedToTopOfDeck":
+                n_move = int(args[0]) if args else 1
+                tgt = act.get("target")
+                owner_uid = owner.uid if owner else (trig.owner_uid if trig else None)
+                matching_uids = self._eval_target_ast(tgt, owner_uid=owner_uid)
+                candidates_sel: List[Tuple[List[CardInstance], CardInstance]] = []
+                for zlist in (self.draw_pile, self.discard_pile):
+                    for inst in zlist:
+                        if inst.uid in matching_uids:
+                            candidates_sel.append((zlist, inst))
+                rarity_rank_sel = {"L": 6, "SSR": 5, "SR": 4, "R": 3, "N": 2, "T": 0}
+                candidates_sel.sort(
+                    key=lambda item: (
+                        0 if item[1].cfg.card_type == "trouble" else 1,
+                        1 if item[1].cfg.is_signature else 0,
+                        rarity_rank_sel.get(item[1].cfg.rarity, 1),
+                        1 if ("cardUsesRemaining+=" in item[1].cfg.dsl_actions) else 0,
+                        1 if item[1].cfg.upgraded else 0,
+                        item[1].cfg.card_id,
+                    ),
+                    reverse=True,
+                )
+                for ins_idx in range(max(0, n_move)):
+                    if not candidates_sel:
+                        break
+                    zlist, moved_inst = candidates_sel.pop(0)
+                    if zlist is self.draw_pile:
+                        old_idx = self.draw_pile.index(moved_inst)
+                        if old_idx < self.pinned_top_deck_count:
+                            self.pinned_top_deck_count = max(0, self.pinned_top_deck_count - 1)
+                    zlist.remove(moved_inst)
+                    target_pos = min(ins_idx, len(self.draw_pile))
+                    self.draw_pile.insert(target_pos, moved_inst)
+                    self.pinned_top_deck_count = min(len(self.draw_pile), self.pinned_top_deck_count + 1)
+                    self.moved_card = moved_inst
             elif cname == "moveRandomToHand":
                 n_move = int(args[0]) if args else 1
                 tgt = act.get("target")
@@ -3036,6 +3262,8 @@ class HeadlessBattleSimulator:
                     return float(snap.buffs.get(name, 0) or 0)
                 if name == "genki":
                     return float(snap.genki)
+                if name == "consumedGenki":
+                    return float(snap.consumed_genki)
                 if name == "stamina":
                     return float(snap.stamina)
                 if name == "score":
@@ -3067,6 +3295,8 @@ class HeadlessBattleSimulator:
                     return float(self.buffs.get(name, 0) or 0)
                 if name == "genki":
                     return float(self.genki)
+                if name == "consumedGenki":
+                    return float(self.consumed_genki)
                 if name == "stamina":
                     return float(self.stamina)
                 if name == "score":
@@ -3249,6 +3479,7 @@ class HeadlessBattleSimulator:
             p_item_activations={it.name: self.p_item_trigger_counts[it.item_id] for it in self.config.p_items},
             memory_triggers=list(self.memory_triggers_log),
             turn_schedule=[f"T{i+1}:{s.attribute} {s.multiplier*100:.0f}%" for i, s in enumerate(self.turn_schedule)],
+            final_consumed_genki=self.consumed_genki,
         )
 
     def clone(self, *, seed: Optional[int] = None, keep_logs: bool = True) -> "HeadlessBattleSimulator":
@@ -3277,6 +3508,7 @@ class HeadlessBattleSimulator:
         cloned.stamina = self.stamina
         cloned.max_stamina = self.max_stamina
         cloned.genki = self.genki
+        cloned.consumed_genki = self.consumed_genki
         cloned.score = self.score
         cloned.buffs = dict(self.buffs)
         cloned.perm_gi_effect_buff = self.perm_gi_effect_buff
@@ -3294,6 +3526,7 @@ class HeadlessBattleSimulator:
         cloned.timed_gc_gain_buffs = list(self.timed_gc_gain_buffs)
         cloned.timed_gc_addition_buffs = list(self.timed_gc_addition_buffs)
         cloned.timed_conc_gain_buffs = list(self.timed_conc_gain_buffs)
+        cloned.timed_mot_addition_buffs = list(self.timed_mot_addition_buffs)
         cloned.fresh_turn_stat_buffs = set(self.fresh_turn_stat_buffs)
         cloned.in_unfresh_phase = self.in_unfresh_phase
 
@@ -3338,6 +3571,7 @@ class HeadlessBattleSimulator:
 
         cloned.hand = [cloned_instances[c.uid] for c in self.hand]
         cloned.draw_pile = [cloned_instances[c.uid] for c in self.draw_pile]
+        cloned.pinned_top_deck_count = self.pinned_top_deck_count
         cloned.discard_pile = [cloned_instances[c.uid] for c in self.discard_pile]
         cloned.exhaust_pile = [cloned_instances[c.uid] for c in self.exhaust_pile]
         cloned.in_play_card = _map_inst(self.in_play_card)
@@ -3376,7 +3610,13 @@ class HeadlessBattleSimulator:
     def determinize(self, rng: random.Random, *, keep_logs: bool = False) -> "HeadlessBattleSimulator":
         """Sample a determinized world compatible with the player's current information set."""
         cloned = self.clone(seed=rng.randrange(1 << 63), keep_logs=keep_logs)
-        cloned.rng.shuffle(cloned.draw_pile)
+        pin = max(0, min(cloned.pinned_top_deck_count, len(cloned.draw_pile)))
+        if pin > 0:
+            rest = cloned.draw_pile[pin:]
+            cloned.rng.shuffle(rest)
+            cloned.draw_pile = cloned.draw_pile[:pin] + rest
+        else:
+            cloned.rng.shuffle(cloned.draw_pile)
         return cloned
 
     def run_random_episode(self, max_steps: int = 300) -> BattleResult:

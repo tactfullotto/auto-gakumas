@@ -491,7 +491,14 @@ async function renderLoadoutTab() {
         hifState.ctx.showToast(`已存在道具：${preset.name}`);
         return;
       }
-      curItems.push({ ...preset });
+      const pairIdx = preset.upgrade_pair_id != null
+        ? curItems.findIndex((it) => Number(it.item_id) === Number(preset.upgrade_pair_id))
+        : -1;
+      if (pairIdx >= 0) {
+        curItems[pairIdx] = { ...preset };
+      } else {
+        curItems.push({ ...preset });
+      }
       await saveLoadout({ p_items: curItems });
     });
     presetBox.appendChild(chip);
@@ -501,6 +508,7 @@ async function renderLoadoutTab() {
   const pItems = st.p_items || [];
   byId("hif-pitem-count").textContent = String(pItems.length);
   pItemList.replaceChildren();
+  const catPItems = cat.p_items || [];
   for (let i = 0; i < pItems.length; i++) {
     const it = pItems[i];
     const row = makeEl("div", "hif-pitem-row");
@@ -509,13 +517,28 @@ async function renderLoadoutTab() {
     if (it.description) {
       left.appendChild(makeEl("span", "muted-note", it.description));
     }
+    const actionsWrap = makeEl("div", "hif-item-actions");
+    const catMatch = catPItems.find((p) => Number(p.item_id) === Number(it.item_id) || p.canonical_name === (it.canonical_name || it.name));
+    const pairId = it.upgrade_pair_id ?? catMatch?.upgrade_pair_id;
+    const pairDef = pairId != null ? catPItems.find((p) => Number(p.item_id) === Number(pairId)) : null;
+    if (pairDef) {
+      const isUp = Boolean(it.upgraded ?? catMatch?.upgraded ?? String(it.canonical_name || it.name || "").endsWith("+"));
+      const toggleBtn = makeEl("button", "btn-secondary btn-compact", isUp ? "切换未强化" : "切换强化+");
+      toggleBtn.type = "button";
+      toggleBtn.addEventListener("click", async () => {
+        const next = pItems.map((item, idx) => (idx === i ? { ...pairDef } : item));
+        await saveLoadout({ p_items: next });
+      });
+      actionsWrap.appendChild(toggleBtn);
+    }
     const rmBtn = makeEl("button", "btn-secondary btn-compact hif-btn-danger", "删除");
     rmBtn.type = "button";
     rmBtn.addEventListener("click", async () => {
       const next = pItems.filter((_, idx) => idx !== i);
       await saveLoadout({ p_items: next });
     });
-    row.append(left, rmBtn);
+    actionsWrap.appendChild(rmBtn);
+    row.append(left, actionsWrap);
     pItemList.appendChild(row);
   }
 

@@ -315,9 +315,71 @@ _GARAKUTA_MISUZU_GUIDE = PIdolGuide(
 )
 
 
+_SUISAI_UME_GUIDE = PIdolGuide(
+    p_idol_id=136,
+    idol_name="花海 佑芽",
+    title="真っ白いページと水彩の主人公",
+    rarity="SSR",
+    plan="logic",
+    recommended_effect="motivation",
+    source_urls=(
+        "https://seesaawiki.jp/gakumasu/",
+    ),
+    unique_p_item={
+        "name": "夢を創るステッキ",
+        "trigger": "每3回合结束时（第3/6/9/12回合末，限3次）",
+        "effect": (
+            "造成当前元气×110%（强化+为130%）的参数得分并清空元气归0，下回合额外抽1张牌；"
+            "清零的元气计入累计消耗元气(consumedGenki)，供固有卡次回合0元气时返还80%！"
+        ),
+    },
+    signature_cards=(
+        "#799/#800 あたしがいるよ / +(Mental·限1): 元气+2, 干劲+1(+3); "
+        "后续3次在回合开始且元气==0时，回复【累计消耗元气(consumedGenki) × 80%】的元气！尽早打出以在T3/T6/T9清零后次回合回满。",
+        "#854 証明し続ける一番星(S3 H.I.F专属LG卡·自动配发·Mental·限1·开局手牌): "
+        "+1使用次数，此后5回合内每次直接增加干劲后，随机将牌堆/弃牌中1张M卡置顶于牌库最上方。",
+    ),
+    core_mechanics=(
+        "【核心引擎：干劲叠元气 + 每3回合『夢を創るステッキ』引爆清零 + consumedGenki 80%返还】"
+        "每第3回合末（T3/T6/T9）将全部元气转化为110%(强化+130%)得分并归0，同时把清零数值累计入 consumedGenki；"
+        "搭配固有卡『あたしがいるよ(+ )』在第4/7/10回合初元气为0时瞬间返还80%累计消耗元气再叠新回合爆发！",
+        "【#854 証明し続ける一番星 控顶加速】S3专属LG卡入场即上手且自带+1使用次数，开局配合高效率干劲M卡连续把弃牌/牌库中的M卡置于牌堆顶加快运转。",
+    ),
+    battle_pacing_rules=(
+        "第1回合起手有 #854《証明し続ける一番星》必优先打出（不耗行动点），再接直接加干劲的M卡触发M卡置顶，尽快铺出 #799/#800《あたしがいるよ(+)》。",
+        "T3/T6/T9 清零回合尽全力拉高元气吃满 110%/130% 转化；若中盘配合《届いて！》主动清零也能反哺 consumedGenki，并在下一回合靠《あたしがいるよ》回气。",
+    ),
+    drink_synergies=(
+        "特製ハツボシエキス(#25)：留给中后期高元气转化大招（如《せのびの魔法+》《届いて！+》）。",
+        "烏龍茶(#2) / ホットコーヒー / センブリソーダ：帮助前3回合快速拉起干劲与元气底数。",
+    ),
+    anti_synergies=(
+        "避免混入依赖『好印象』却不产干劲/元气的纯好印象组件。",
+    ),
+    recommended_cards={
+        799: "★固有核心(M·限1)·元气0时回合初返还80%累计消耗元气(限3次)",
+        800: "★固有核心+(M·限1)·干劲+3并触发80%消耗元气返还",
+        854: "★S3专属LG(M·限1·开局上手)·+1使用数并在5回合直接加干劲时将M卡置顶牌库",
+        782: "★消耗元气爆发(A·LG)·score+=consumedGenki×4,完美契合136",
+        152: "★元气转化兼主动清零(A·限1)·清零计入consumedGenki并触发回气",
+        153: "★元气转化兼主动清零+(A·限1)",
+        771: "★核心元气倍伤(A·限1)",
+        772: "★核心元气倍伤+(A·限1)",
+    },
+    recommended_card_names={
+        "あたしがいるよ": "★136固有核心·consumedGenki 80%返还",
+        "証明し続ける一番星": "★S3专属LG·5T直接加干劲时M卡置顶牌库",
+        "輝きの到達点": "★consumedGenki×4神契合爆发",
+    },
+    caution_cards={},
+    caution_card_names={},
+)
+
+
 P_IDOL_GUIDE_REGISTRY: Dict[int, PIdolGuide] = {
     _SEKIRARA_SENA_GUIDE.p_idol_id: _SEKIRARA_SENA_GUIDE,
     _GARAKUTA_MISUZU_GUIDE.p_idol_id: _GARAKUTA_MISUZU_GUIDE,
+    _SUISAI_UME_GUIDE.p_idol_id: _SUISAI_UME_GUIDE,
 }
 
 # Authoritative per-idol 3D stat specialty order: (primary, secondary, tertiary) from high -> low.

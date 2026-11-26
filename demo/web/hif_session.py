@@ -360,7 +360,17 @@ class HifWorkbenchSession:
                     "source_type": str(d.get("source_type") or "support"),
                     "rarity": str(d.get("rarity") or "SSR"),
                     "description": str(d.get("description") or ""),
-                    "p_idol_id": 163 if int(d["item_id"]) == 509 else None,
+                    "p_idol_id": (
+                        int(d["p_idol_id"])
+                        if d.get("p_idol_id") is not None
+                        else (
+                            163
+                            if int(d["item_id"]) == 509
+                            else (139 if int(d["item_id"]) == 9139 else None)
+                        )
+                    ),
+                    "upgraded": bool(d["upgraded"]) if "upgraded" in d else None,
+                    "upgrade_pair_id": int(d["upgrade_pair_id"]) if d.get("upgrade_pair_id") is not None else None,
                 }
                 for d in KNOWN_P_ITEM_DEFS
             ]
@@ -482,11 +492,14 @@ class HifWorkbenchSession:
             up = guide.unique_p_item or {}
             nm = str(up.get("name") or "").strip()
             known = next(
+                (d for d in KNOWN_P_ITEM_DEFS if nm and d["name"] == nm),
+                None,
+            ) or next(
                 (d for d in KNOWN_P_ITEM_DEFS if nm and (nm in d["name"] or d["name"] in nm)),
                 None,
             )
             if known is not None:
-                self.p_items = [{
+                entry_it: Dict[str, Any] = {
                     "item_id": int(known["item_id"]),
                     "name": str(known["name"]),
                     "canonical_name": str(known["name"]),
@@ -494,7 +507,12 @@ class HifWorkbenchSession:
                     "source_type": str(known.get("source_type") or "pIdol"),
                     "rarity": str(known.get("rarity") or "SSR"),
                     "description": str(known.get("description") or ""),
-                }]
+                }
+                if "upgraded" in known:
+                    entry_it["upgraded"] = bool(known["upgraded"])
+                if known.get("upgrade_pair_id") is not None:
+                    entry_it["upgrade_pair_id"] = int(known["upgrade_pair_id"])
+                self.p_items = [entry_it]
             elif nm:
                 self.p_items = [{
                     "item_id": abs(hash((pid, nm))) % 90000 + 10000,
@@ -654,7 +672,7 @@ class HifWorkbenchSession:
                     if not nm:
                         continue
                     iid = int(raw_it.get("item_id") or (abs(hash(nm)) % 90000 + 10000))
-                    cleaned_items.append({
+                    item_clean: Dict[str, Any] = {
                         "item_id": iid,
                         "name": str(raw_it.get("name") or nm),
                         "canonical_name": nm,
@@ -662,7 +680,12 @@ class HifWorkbenchSession:
                         "source_type": str(raw_it.get("source_type") or "support"),
                         "rarity": str(raw_it.get("rarity") or "SSR"),
                         "description": str(raw_it.get("description") or ""),
-                    })
+                    }
+                    if "upgraded" in raw_it and raw_it["upgraded"] is not None:
+                        item_clean["upgraded"] = bool(raw_it["upgraded"])
+                    if raw_it.get("upgrade_pair_id") is not None:
+                        item_clean["upgrade_pair_id"] = int(raw_it["upgrade_pair_id"])
+                    cleaned_items.append(item_clean)
                 self.p_items = cleaned_items
             if isinstance(payload.get("idol_stats"), dict):
                 st = payload["idol_stats"]

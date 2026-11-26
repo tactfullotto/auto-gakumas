@@ -514,6 +514,28 @@ def test_full_library_card_pool_and_card_customizations_roundtrip(web_server):
     m_stats = mis_res["state"]["idol_stats"]
     assert m_stats["vocal"] > m_stats["visual"] > m_stats["dance"]
 
+    # 5. Selecting #136 花海佑芽 seeds unupgraded 夢を創るステッキ (9136, 110%) by default,
+    #    with 91361 (夢を創るステッキ+, 130%) paired in catalog for manual UI toggle
+    cat_st, _, cat_raw = _get_bytes(f"{base_url}/api/hif/catalog")
+    assert cat_st == 200
+    p_items_cat = {int(it["item_id"]): it for it in json.loads(cat_raw.decode("utf-8"))["p_items"]}
+    assert 9136 in p_items_cat and 91361 in p_items_cat
+    assert p_items_cat[9136]["upgrade_pair_id"] == 91361 and p_items_cat[9136]["upgraded"] is False
+    assert p_items_cat[91361]["upgrade_pair_id"] == 9136 and p_items_cat[91361]["upgraded"] is True
+
+    ume_st, ume_res = _post_json(f"{base_url}/api/hif/select-idol", {"p_idol_id": 136, "auto_seed_signature": True})
+    assert ume_st == 200
+    u_items = ume_res["state"]["p_items"]
+    assert len(u_items) >= 1 and int(u_items[0]["item_id"]) == 9136
+    assert u_items[0]["canonical_name"] == "夢を創るステッキ"
+    assert u_items[0].get("upgrade_pair_id") == 91361
+    # Verify loadout save accepts manual switch to 91361 (夢を創るステッキ+) and preserves pair fields
+    sw_st, sw_res = _post_json(f"{base_url}/api/hif/loadout", {"p_items": [p_items_cat[91361]]})
+    assert sw_st == 200
+    assert int(sw_res["state"]["p_items"][0]["item_id"]) == 91361
+    assert sw_res["state"]["p_items"][0]["canonical_name"] == "夢を創るステッキ+"
+    assert sw_res["state"]["p_items"][0].get("upgraded") is True
+
 
 def test_unlimited_preferences_and_pref_search_filters(web_server):
     """Preferences must support >15 cards (e.g. 40+ avoid cards) without cap, and index.html exposes multi-filters."""
