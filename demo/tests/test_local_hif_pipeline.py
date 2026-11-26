@@ -8990,6 +8990,709 @@ def test_exam_turn_ring_ocr_and_two_frame_deadlock_recovery():
     rec.db.close()
 
 
+def test_drink25_and_kimegao778_last_5_turns_hold_and_combo_priority(tmp_path: Path):
+    """#777/#778 and #25 hold until turns_remaining<=5, reserve #25 for #778 in rem>=3, and execute #25->#778 cleanly."""
+    import random
+    from demo.sim.battle_simulator import CardInstance, HeadlessBattleSimulator, _make_card_config
+    from demo.sim.ismcts import ISMCTSAgent, ISMCTSConfig
+    from demo.sim.maskable_ppo import PolicyValueNet
+    from demo.sim.rl_env import GakumasActionCodec, GakumasFeatureEncoder
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        box = BoundingBox(xmin=10, ymin=10, xmax=80, ymax=120)
+        deck_ids = [920, 922, 299, 179, 175, 137, 778, 127, 129, 159]
+        cfg = build_live_battle_config(
+            db=db,
+            deck_card_ids=deck_ids,
+            equipped_p_items=[],
+            drinks=[RecognizedDrink(drink_id=25, name="特製ハツボシエキス", playable=True, bbox=box)],
+            idol_stats={"vocal": 2663, "dance": 1314, "visual": 1886},
+            stamina=34,
+            max_stamina=44,
+            total_turns=9,
+            week=7,
+            plan="logic",
+            card_memory_hooks={},
+        )
+        codec = GakumasActionCodec(cfg, db=db)
+        enc = GakumasFeatureEncoder(codec)
+        net = PolicyValueNet(enc.obs_dim, codec.num_actions, hidden_dim=32, seed=13)
+        mcts = ISMCTSAgent(codec, enc, net, ISMCTSConfig(num_simulations=8))
+        d25_aid = codec.drink_id_to_action[25]
+        c778_cfg = _make_card_config(db, 778)
+        c778_aid = codec.card_slot_index(c778_cfg)
+
+        def _setup_sim(rem: int, hand_ids: list[int], draw_ids: list[int], *, stamina: int = 34, genki: int = 20, gi: int = 20):
+            s = HeadlessBattleSimulator(cfg, db=db, seed=100 + rem, record_logs=False)
+            s.turn = max(1, cfg.total_turns - rem + 1)
+            s.turns_remaining = rem
+            s.stamina = stamina
+            s.genki = genki
+            s.buffs["goodImpressionTurns"] = gi
+            s.buffs["motivation"] = 15
+            s.buffs["nullifyDebuff"] = 0
+            s.card_uses_remaining = 1
+
+            def _mk_zone(ids: list[int]) -> list[CardInstance]:
+                zone = []
+                for cid_z in ids:
+                    uid_z = s.next_uid
+                    s.next_uid += 1
+                    inst_z = CardInstance(uid=uid_z, cfg=_make_card_config(db, cid_z))
+                    s._all_instances[uid_z] = inst_z
+                    zone.append(inst_z)
+                return zone
+
+            s.hand = _mk_zone(hand_ids)
+            s.draw_pile = _mk_zone(draw_ids)
+            s.discard_pile = []
+            s.exhaust_pile = []
+            return s
+
+        # 1. Battle 1 Step 151 reproduction (rem=8, hand=[#778], drinks=[#25]): hold both and choose SKIP/end_turn
+        sim_step151 = _setup_sim(8, [778], [922, 179], stamina=34, genki=4, gi=17)
+        dr25_s1 = sim_step151.available_drinks[0]
+        assert sim_step151.should_hold_for_finisher(card_cfg=c778_cfg, fin_window=0)
+        assert sim_step151.should_hold_for_finisher(drink_cfg=dr25_s1, fin_window=0)
+        mask_151, _ = codec.legal_mask_and_map(sim_step151, prune_dominated=True)
+        assert not mask_151[c778_aid]
+        assert not mask_151[d25_aid]
+        assert mask_151[codec.end_turn_action_id]
+        aid_151, _ = mcts.select_action(sim_step151, random.Random(7))
+        assert aid_151 == codec.end_turn_action_id
+
+        planner = LiveBattlePlanner(
+            db=db,
+            cfg=LiveBattlePlannerConfig(
+                ppo_episodes=2,
+                ppo_episodes_per_update=2,
+                ismcts_simulations=8,
+                seed=7,
+                policy_cache_dir=str(tmp_path),
+            ),
+        )
+        tr = GameStateTracker(plan="logic", p_idol_id=163, scenario_id="hif_honsen")
+        tr.produce_deck = deck_ids
+        tr.idol_stats = {"vocal": 2663, "dance": 1314, "visual": 1886}
+
+        def _rc(cid: int, name: str) -> RecognizedCard:
+            return RecognizedCard(card_id=cid, name=name, upgraded=("+" in name), playable=True, visual_playable=True, bbox=box)
+
+        drinks_obs = [RecognizedDrink(drink_id=25, name="特製ハツボシエキス", playable=True, bbox=box)]
+        act_d25 = LegalAction(choice_id=0, action_type="use_drink", description="使用饮料: 特製ハツボシエキス", bbox=box, payload={"drink_id": 25, "name": "特製ハツボシエキス"})
+        act_778 = LegalAction(choice_id=1, action_type="play_card", description="打出卡牌: びしっとキメ顔+", bbox=box, payload={"card_id": 778, "base_id": 777, "limit_count": 1, "name": "びしっとキメ顔+"})
+        act_922 = LegalAction(choice_id=2, action_type="play_card", description="打出卡牌: 認めてくれるひと+", bbox=box, payload={"card_id": 922, "base_id": 921, "name": "認めてくれるひと+"})
+        act_179 = LegalAction(choice_id=3, action_type="play_card", description="打出卡牌: トキメキ+", bbox=box, payload={"card_id": 179, "base_id": 179, "name": "トキメキ+"})
+        act_299 = LegalAction(choice_id=5, action_type="play_card", description="打出卡牌: オトメゴコロ+ [⚡免费+1使用次数(不耗行动点)]", bbox=box, payload={"card_id": 299, "base_id": 298, "name": "オトメゴコロ+"})
+        act_end = LegalAction(choice_id=9, action_type="end_turn", description="SKIP", bbox=box, payload={"name": "SKIP"})
+
+        obs_151 = ScreenObservation(
+            scene_type="battle_turn",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=7,
+            turn=2,
+            turns_remaining=8,
+            stamina=34,
+            max_stamina=44,
+            genki=4,
+            score=1807,
+            buffs={"goodImpressionTurns": 17, "motivation": 15},
+            cards=[_rc(778, "びしっとキメ顔+")],
+            drinks=drinks_obs,
+        )
+        cid_151, _, _ = planner.decide_battle_action(obs_151, [act_d25, act_778, act_end], tracker=tr)
+        assert cid_151 == 9  # Must SKIP/end_turn instead of burning #778 or #25 at rem=8
+
+        # 2. rem=6, hand=[#778, #179], drinks=[#25] -> picks #179 and holds #778 / #25
+        planner.reset_battle()
+        obs_rem6 = obs_151.model_copy(
+            update={
+                "turn": 4,
+                "turns_remaining": 6,
+                "buffs": {"goodImpressionTurns": 35, "motivation": 15},
+                "cards": [_rc(778, "びしっとキメ顔+"), _rc(179, "トキメキ+")],
+            }
+        )
+        cid_rem6, _, _ = planner.decide_battle_action(obs_rem6, [act_d25, act_778, act_179, act_end], tracker=tr)
+        assert cid_rem6 == 3  # #179
+
+        # 3. rem=4, hand=[#922, #175], #778 in draw_pile, 1 bottle of #25 -> reserve #25; at rem=2 -> #25 unlocks for #922
+        sim_rem4 = _setup_sim(4, [922, 175], [778], stamina=30, genki=30, gi=120)
+        assert sim_rem4.should_hold_for_finisher(drink_cfg=sim_rem4.available_drinks[0], fin_window=2)
+        mask_rem4, _ = codec.legal_mask_and_map(sim_rem4, prune_dominated=True)
+        assert not mask_rem4[d25_aid]
+        sim_rem2 = _setup_sim(2, [922, 175], [778], stamina=30, genki=30, gi=220)
+        assert not sim_rem2.should_hold_for_finisher(drink_cfg=sim_rem2.available_drinks[0], fin_window=2)
+        mask_rem2, _ = codec.legal_mask_and_map(sim_rem2, prune_dominated=True)
+        assert mask_rem2[d25_aid]
+
+        # 4. rem=5, hand=[#778, #922, #179], drinks=[#25] -> step 1 prioritizes #25; step 2 (armed) locks onto #778 over #922
+        planner.reset_battle()
+        obs_rem5 = obs_151.model_copy(
+            update={
+                "turn": 5,
+                "turns_remaining": 5,
+                "genki": 30,
+                "score": 80000,
+                "buffs": {"goodImpressionTurns": 150, "motivation": 25},
+                "cards": [_rc(778, "びしっとキメ顔+"), _rc(922, "認めてくれるひと+"), _rc(179, "トキメキ+")],
+            }
+        )
+        cid_rem5_step1, _, _ = planner.decide_battle_action(
+            obs_rem5, [act_d25, act_778, act_922, act_179, act_end], tracker=tr
+        )
+        assert cid_rem5_step1 == 0  # #25 first
+
+        planner.notify_action_executed(act_d25)
+        assert planner._sim is not None and planner._sim.has_armed_active_retrigger(same_turn_only=True)
+        obs_rem5_armed = obs_rem5.model_copy(update={"stamina": 32, "drinks": []})
+        cid_rem5_step2, _, _ = planner.decide_battle_action(
+            obs_rem5_armed, [act_778, act_922, act_179, act_end], tracker=tr
+        )
+        assert cid_rem5_step2 == 1  # Locked onto #778 over #922
+
+        # 5. rem=5, hand=[#299 (free Mental), #778], drinks=[#25] -> #299 plays BEFORE #25 -> #778
+        planner.reset_battle()
+        obs_rem5_free = obs_rem5.model_copy(
+            update={"cards": [_rc(299, "オトメゴコロ+"), _rc(778, "びしっとキメ顔+")]}
+        )
+        cid_rem5_free, _, _ = planner.decide_battle_action(
+            obs_rem5_free, [act_d25, act_299, act_778, act_end], tracker=tr
+        )
+        assert cid_rem5_free == 5  # Free Mental #299 plays first!
+
+        # 6. Unaffordable post-drink cost (rem=5, stamina=7, genki=0, nullifyDebuff=0): can_drink25_combo_kimegao_now=False -> #778 playable without forcing #25
+        sim_unaff = _setup_sim(5, [778], [922], stamina=7, genki=0, gi=150)
+        assert not sim_unaff.can_drink25_combo_kimegao_now(sim_unaff.available_drinks[0])
+        mask_unaff, _ = codec.legal_mask_and_map(sim_unaff, prune_dominated=True)
+        assert mask_unaff[c778_aid]
+        assert not mask_unaff[d25_aid]
+    finally:
+        db.close()
+
+
+def test_plan_rules_strictly_isolated_between_sense_logic_and_anomaly(tmp_path: Path):
+    """Verify Sense, Logic, and Anomaly rule classes are independent and never bleed across plans."""
+    from demo.sim.battle_simulator import CardInstance, HeadlessBattleSimulator, _make_card_config, _make_drink_config
+    from demo.sim.plan_rules import AnomalyBattleRules, LogicBattleRules, SenseBattleRules, get_plan_rules
+    from demo.sim.rl_env import GakumasActionCodec
+
+    sense_rules = get_plan_rules("sense")
+    logic_rules = get_plan_rules("logic")
+    anomaly_rules = get_plan_rules("anomaly")
+    assert isinstance(sense_rules, SenseBattleRules)
+    assert isinstance(logic_rules, LogicBattleRules)
+    assert isinstance(anomaly_rules, AnomalyBattleRules)
+    assert type(sense_rules) is not type(logic_rules)
+    assert type(logic_rules) is not type(anomaly_rules)
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        box = BoundingBox(xmin=10, ymin=10, xmax=80, ymax=120)
+        c778 = _make_card_config(db, 778)
+        c153 = _make_card_config(db, 153)
+        c814 = _make_card_config(db, 814)
+        c163 = _make_card_config(db, 163)
+        c619 = _make_card_config(db, 619)
+        c776 = _make_card_config(db, 776)
+        d25 = _make_drink_config(db, 25)
+        d22 = _make_drink_config(db, 22)
+
+        # 1. Sense simulator ignores Logic rules (#778, #153, #25 combo)
+        cfg_sense = build_live_battle_config(
+            db=db,
+            deck_card_ids=[812, 814, 163, 778, 153],
+            equipped_p_items=[],
+            drinks=[RecognizedDrink(drink_id=25, name="特製ハツボシエキス", playable=True, bbox=box)],
+            idol_stats={"vocal": 2000, "dance": 2500, "visual": 2100},
+            stamina=40,
+            max_stamina=44,
+            total_turns=9,
+            week=7,
+            plan="sense",
+            p_idol_id=139,
+        )
+        sim_sense = HeadlessBattleSimulator(cfg_sense, db=db, seed=1, record_logs=False)
+        sim_sense.turns_remaining = 8
+        sim_sense.stamina = 35
+        sim_sense.genki = 20
+        sim_sense.buffs["goodImpressionTurns"] = 20
+        assert sim_sense.should_hold_for_finisher(card_cfg=c778, fin_window=2) is False
+        assert sim_sense.should_hold_for_finisher(card_cfg=c153, fin_window=2) is False
+        assert sim_sense.can_drink25_combo_kimegao_now(d25) is False
+
+        # LiveBattlePlanner(plan="sense") does NOT apply Logic hold rule on #778 at rem=8
+        planner_sense = LiveBattlePlanner(
+            db=db,
+            cfg=LiveBattlePlannerConfig(
+                ppo_episodes=2, ppo_episodes_per_update=2, ismcts_simulations=4, seed=5, policy_cache_dir=str(tmp_path)
+            ),
+        )
+        tr_sense = GameStateTracker(plan="sense", p_idol_id=139, scenario_id="hif_honsen")
+        tr_sense.produce_deck = [812, 814, 163, 778]
+        obs_sense = ScreenObservation(
+            scene_type="battle_turn",
+            plan="sense",
+            scenario_id="hif_honsen",
+            week=7,
+            turn=2,
+            turns_remaining=8,
+            stamina=35,
+            max_stamina=44,
+            genki=20,
+            score=2000,
+            buffs={"goodConditionTurns": 20, "concentration": 15, "goodImpressionTurns": 20},
+            cards=[RecognizedCard(card_id=778, name="びしっとキメ顔+", upgraded=True, playable=True, visual_playable=True, bbox=box)],
+            drinks=[],
+        )
+        acts_sense = [
+            LegalAction(choice_id=0, action_type="play_card", description="びしっとキメ顔+", bbox=box, payload={"card_id": 778, "base_id": 777, "name": "びしっとキメ顔+"}),
+            LegalAction(choice_id=9, action_type="end_turn", description="SKIP", bbox=box, payload={"name": "SKIP"}),
+        ]
+        _, reason_sense, _ = planner_sense.decide_battle_action(obs_sense, acts_sense, tracker=tr_sense)
+        assert "[Hold #777/#778 for last 5 turns]" not in reason_sense
+
+        # 2. Logic simulator ignores Sense rules (#814, #163, #619, #776, #22)
+        cfg_logic = build_live_battle_config(
+            db=db,
+            deck_card_ids=[920, 922, 814, 163, 619, 776],
+            equipped_p_items=[],
+            drinks=[RecognizedDrink(drink_id=22, name="初星黒酢", playable=True, bbox=box)],
+            idol_stats={"vocal": 2500, "dance": 1300, "visual": 1900},
+            stamina=40,
+            max_stamina=44,
+            total_turns=9,
+            week=7,
+            plan="logic",
+            p_idol_id=163,
+        )
+        sim_logic = HeadlessBattleSimulator(cfg_logic, db=db, seed=2, record_logs=False)
+        sim_logic.turns_remaining = 8
+        assert sim_logic.should_hold_for_finisher(card_cfg=c814, fin_window=2) is False
+        assert sim_logic.should_hold_for_finisher(card_cfg=c163, fin_window=2) is False
+        assert sim_logic.should_hold_for_finisher(card_cfg=c619, fin_window=2) is False
+        assert sim_logic.should_hold_for_finisher(card_cfg=c776, fin_window=2) is False
+        assert sim_logic.should_hold_for_finisher(drink_cfg=d22, fin_window=2) is False
+
+        # LiveBattlePlanner(plan="logic") does NOT run Sense #163->#814 combo/hold overrides
+        planner_logic = LiveBattlePlanner(
+            db=db,
+            cfg=LiveBattlePlannerConfig(
+                ppo_episodes=2, ppo_episodes_per_update=2, ismcts_simulations=4, seed=5, policy_cache_dir=str(tmp_path)
+            ),
+        )
+        tr_logic = GameStateTracker(plan="logic", p_idol_id=163, scenario_id="hif_honsen")
+        tr_logic.produce_deck = [920, 922, 814, 163]
+        obs_logic = ScreenObservation(
+            scene_type="battle_turn",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=7,
+            turn=8,
+            turns_remaining=2,
+            stamina=35,
+            max_stamina=44,
+            genki=25,
+            score=50000,
+            buffs={"goodImpressionTurns": 30, "motivation": 15, "goodConditionTurns": 20},
+            cards=[
+                RecognizedCard(card_id=814, name="自然体の魅力+", upgraded=True, playable=True, visual_playable=True, bbox=box),
+                RecognizedCard(card_id=163, name="国民的アイドル+", upgraded=True, playable=True, visual_playable=True, bbox=box),
+            ],
+            drinks=[],
+        )
+        acts_logic = [
+            LegalAction(choice_id=0, action_type="play_card", description="自然体の魅力+", bbox=box, payload={"card_id": 814, "base_id": 813, "name": "自然体の魅力+"}),
+            LegalAction(choice_id=1, action_type="play_card", description="国民的アイドル+", bbox=box, payload={"card_id": 163, "base_id": 162, "name": "国民的アイドル+"}),
+            LegalAction(choice_id=9, action_type="end_turn", description="SKIP", bbox=box, payload={"name": "SKIP"}),
+        ]
+        _, reason_logic, _ = planner_logic.decide_battle_action(obs_logic, acts_logic, tracker=tr_logic)
+        assert "[Combo #162/#163->#814 2x]" not in reason_logic
+
+        # 3. Anomaly simulator ignores both Sense and Logic rules
+        cfg_anom = cfg_sense.__class__(**{**cfg_sense.__dict__, "plan": "anomaly", "p_idol_id": 1})
+        sim_anom = HeadlessBattleSimulator(cfg_anom, db=db, seed=3, record_logs=False)
+        sim_anom.turns_remaining = 8
+        codec_anom = GakumasActionCodec(cfg_anom, db=db)
+        assert codec_anom is not None
+        for chk_card in (c778, c153, c814, c163, c619, c776):
+            assert sim_anom.should_hold_for_finisher(card_cfg=chk_card, fin_window=2) is False
+        for chk_drink in (d25, d22):
+            assert sim_anom.should_hold_for_finisher(drink_cfg=chk_drink, fin_window=2) is False
+    finally:
+        db.close()
+
+
+def test_card_preferences_unify_base_and_upgraded_and_reroll_all_avoided():
+    """Upgraded IDs in avoid/priority/keep/overrides must unify with base IDs, and all-avoided 3-choice rewards must click 再抽選."""
+    from demo.core.hif_catalog import ProducePreferences
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        prefs = ProducePreferences(
+            avoid_card_ids=[71, 69, 95],     # #71 前途洋々+ -> base #70, #69 励まし+ -> #68, #95 キラメキ+ -> #94
+            priority_card_ids=[171],          # #171 私がスター+ -> base #170
+            keep_card_ids=[127],              # #127 ファンシーチャーム+ -> base #126
+            card_score_overrides={71: -500, 129: 777},  # #129 -> base #128
+            reroll_early_non_exhaust_mental=False,
+        )
+        agent = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4),
+            preferences=prefs,
+        )
+        base_agent = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4),
+        )
+
+        # 1. Family unification across base <-> upgraded for avoid / priority / keep / numeric overrides
+        assert agent._is_avoid_card(70) is True
+        assert agent._is_avoid_card(71) is True
+        assert 70 in agent._avoid_card_ids and 71 in agent._avoid_card_ids
+        assert agent._is_priority_card(170) is True
+        assert agent._is_priority_card(171) is True
+        assert agent._is_keep_card(126) is True
+        assert agent._is_keep_card(127) is True
+        assert agent._get_card_score_override(128) == 777
+        assert agent._get_card_score_override(129) == 777
+        assert (
+            agent._score_skill_card(
+                card_id=70,
+                title="前途洋々",
+                desc="パラメータ+8 / 元気+7",
+                target_effect="goodImpressionTurns",
+                guide=None,
+                plan="logic",
+            )
+            == -20_000
+        )
+        s_with_ovr = agent._score_skill_card(
+            card_id=128,
+            title="ワクワクが止まらない",
+            desc="",
+            target_effect="goodImpressionTurns",
+            guide=None,
+            plan="logic",
+        )
+        s_no_ovr = base_agent._score_skill_card(
+            card_id=128,
+            title="ワクワクが止まらない",
+            desc="",
+            target_effect="goodImpressionTurns",
+            guide=None,
+            plan="logic",
+        )
+        assert s_with_ovr - s_no_ovr == 777
+
+        # 2. W3 3-choice card_reward with ALL 3 slots avoided (no 受け取らない, 再抽選 present)
+        #    -> must scan all 3 slots and then click 再抽選 instead of claiming #70 前途洋々!
+        box = BoundingBox(xmin=10, ymin=10, xmax=50, ymax=50)
+
+        def _make_3choice_step(cur_slot: int, cur_cid: int, cur_title: str):
+            obs = ScreenObservation(
+                scene_type="card_reward",
+                plan="logic",
+                scenario_id="hif_honsen",
+                week=3,
+                stamina=33,
+                max_stamina=44,
+                p_points=250,
+                raw_text="スキルカードを選択 再抽選",
+            )
+            acts = [
+                LegalAction(
+                    choice_id=0,
+                    action_type="pick_option",
+                    description=f"确认领取当前选中卡: {cur_title}",
+                    bbox=box,
+                    payload={"name": "受け取る", "card_id": cur_cid, "title": cur_title, "slot_idx": cur_slot},
+                )
+            ]
+            for idx_s in (0, 1, 2):
+                if idx_s == cur_slot:
+                    continue
+                acts.append(
+                    LegalAction(
+                        choice_id=len(acts),
+                        action_type="pick_option",
+                        description=f"预览第{idx_s + 1}张候选卡",
+                        bbox=box,
+                        payload={"name": f"预览第{idx_s + 1}张候选卡", "slot_idx": idx_s},
+                    )
+                )
+            reroll_id = len(acts)
+            acts.append(
+                LegalAction(
+                    choice_id=reroll_id,
+                    action_type="pick_option",
+                    description="再抽選 (免费重抽候选卡)",
+                    bbox=box,
+                    payload={"name": "再抽選", "title": "再抽選"},
+                )
+            )
+            return obs, acts, reroll_id
+
+        # Scan slot 0 (#68) -> requests slot 1; scan slot 1 (#94) -> requests slot 2; scan slot 2 (#70) -> clicks 再抽選
+        obs0, acts0, _ = _make_3choice_step(0, 68, "励まし")
+        d0 = agent.decide("", acts0, obs=obs0)
+        assert acts0[d0.choice_id].payload.get("slot_idx") == 1
+
+        obs1, acts1, _ = _make_3choice_step(1, 94, "キラメキ")
+        d1 = agent.decide("", acts1, obs=obs1)
+        assert acts1[d1.choice_id].payload.get("slot_idx") == 2
+
+        obs2, acts2, reroll_id2 = _make_3choice_step(2, 70, "前途洋々")
+        d2 = agent.decide("", acts2, obs=obs2)
+        assert d2.choice_id == reroll_id2, f"Expected 再抽選 for all-avoided cards, got {d2}"
+        assert "再抽選" in d2.reason
+
+        # 3. After 3 reroll attempts (or when no 再抽選 exists), falls back to 受け取らない if available
+        agent._reward_reroll_attempts = 3
+        obs_skip, acts_skip, _ = _make_3choice_step(2, 70, "前途洋々")
+        skip_id = len(acts_skip)
+        acts_skip.append(
+            LegalAction(
+                choice_id=skip_id,
+                action_type="pick_option",
+                description="受け取らない",
+                bbox=box,
+                payload={"name": "受け取らない", "title": "受け取らない"},
+            )
+        )
+        # Populate seen slots as scanned
+        agent._reward_seen_slots = {0: (-20_000, 68, "励まし"), 1: (-20_000, 94, "キラメキ"), 2: (-20_000, 70, "前途洋々")}
+        d_skip = agent.decide("", acts_skip, obs=obs_skip)
+        assert d_skip.choice_id == skip_id
+    finally:
+        db.close()
+
+
+def test_header_meta_hif_stamina_rejects_leading_digit_truncation(monkeypatch):
+    """H.I.F _extract_header_meta prioritizes dark_on_light/raw over white and rejects single-frame 40/44->1/44 truncation."""
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        rec = LiveScreenRecognizer(db=db, plan="logic", scenario_id="hif_honsen")
+        rec._last_stamina = (40, 44)
+        frame = np.full((1600, 720, 3), 240, dtype=np.uint8)
+        lines = [{"text": "H.I.F本戦まで 5日", "bbox": [30, 30, 200, 70]}]
+        monkeypatch.setattr(rec, "_ocr_bw_banner_number", lambda *_a, **_kw: 5)
+
+        # Case A: white crop truncates 40/44 -> 1/44, dark_on_light/raw reads 40/44 -> must return 40/44
+        def _fake_crop_a(_frame, _box, mode="raw", **_kw):
+            if mode == "white":
+                return "1/44"
+            return "40/44"
+
+        monkeypatch.setattr(rec, "_ocr_crop_upscaled", _fake_crop_a)
+        meta_a = rec._parse_week_and_stats(lines, frame)
+        assert (meta_a["stamina"], meta_a["max_stamina"]) == (40, 44)
+
+        # Case B: transient 1-frame 1/44 across ALL crops when _last_stamina=(40, 44) must preserve 40/44
+        monkeypatch.setattr(rec, "_ocr_crop_upscaled", lambda *_a, **_kw: "1/44")
+        meta_b = rec._parse_week_and_stats(lines, frame)
+        assert (meta_b["stamina"], meta_b["max_stamina"]) == (40, 44)
+        assert rec._last_stamina == (40, 44)
+
+        # Case C: Reset clean state with 40/44, then 2 consecutive real 5/44 frames DO commit 5/44 on frame 2
+        monkeypatch.setattr(rec, "_ocr_crop_upscaled", _fake_crop_a)
+        rec._parse_week_and_stats(lines, frame)
+        monkeypatch.setattr(rec, "_ocr_crop_upscaled", lambda *_a, **_kw: "5/44")
+        meta_c1 = rec._parse_week_and_stats(lines, frame)
+        assert (meta_c1["stamina"], meta_c1["max_stamina"]) == (40, 44)
+        meta_c2 = rec._parse_week_and_stats(lines, frame)
+        assert (meta_c2["stamina"], meta_c2["max_stamina"]) == (5, 44)
+    finally:
+        db.close()
+
+
+def test_runner_popup_fallback_antistall_taps_blank_area(monkeypatch):
+    """4 consecutive identical popup generic-fallback clicks ('点击屏幕继续') must trigger blank-area tap instead of looping."""
+    db = GakumasDB("gakumas_library.db")
+    try:
+        frame = np.full((1600, 720, 3), 240, dtype=np.uint8)
+        clicks = []
+
+        class _StubPopupCtrl:
+            is_connected = True
+
+            def connect(self):
+                return True
+
+            def screencap(self):
+                return frame
+
+            def click(self, x, y):
+                clicks.append((x, y))
+                return True
+
+        obs_popup = ScreenObservation(
+            scene_type="popup",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=2,
+            stamina=40,
+            max_stamina=44,
+            options=[
+                {
+                    "choice_id": 0,
+                    "name": "点击屏幕继续",
+                    "title": "点击屏幕继续",
+                    "description": "过场/对话继续点击",
+                    "bbox": BoundingBox(xmin=260, ymin=1248, xmax=460, ymax=1408).model_dump(),
+                }
+            ],
+        )
+        agent = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4),
+        )
+        runner = GakumasRunner(
+            mode="adb",
+            controller=_StubPopupCtrl(),
+            agent=agent,
+            db=db,
+            plan="logic",
+            scenario_id="hif_honsen",
+            session_mode=False,
+        )
+        runner.scene_routing_reco = SimpleNamespace(recognize=lambda _fr: obs_popup, recognizer=None)
+        monkeypatch.setattr("time.sleep", lambda *_a: None)
+
+        for _ in range(4):
+            runner.run_once()
+
+        expected_blank = (int(round(720 * 0.93)), int(round(1600 * 0.26)))
+        assert clicks[:3] == [(360, 1328), (360, 1328), (360, 1328)]
+        assert clicks[3] == expected_blank
+    finally:
+        db.close()
+
+
+def test_all_avoided_no_reroll_fallback_priority_order():
+    """When all candidates are excluded/avoided and no 再抽選/skip remains, fallback prefers:
+    1-use exhaustible (limit_count==1 / レッスン中1回) > rarity (SSR > SR > R) > type (M > A).
+    """
+    from demo.core.hif_catalog import ProducePreferences
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        # Exclude every card family used across all test cases below
+        prefs = ProducePreferences(
+            avoid_card_ids=[71, 123, 91, 51, 41, 153, 101, 177, 427, 715],
+            reroll_early_non_exhaust_mental=False,
+        )
+        agent = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4),
+            preferences=prefs,
+        )
+        box = BoundingBox(xmin=10, ymin=10, xmax=50, ymax=50)
+        obs = ScreenObservation(
+            scene_type="card_reward",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=4,
+            stamina=33,
+            max_stamina=44,
+            p_points=250,
+            raw_text="スキルカードを選択",
+        )
+
+        def _pick_direct(cards: list[tuple[int, str]]) -> int:
+            acts = [
+                LegalAction(
+                    choice_id=idx,
+                    action_type="pick_option",
+                    description=title,
+                    bbox=box,
+                    payload={"card_id": cid, "name": title, "title": title},
+                )
+                for idx, (cid, title) in enumerate(cards)
+            ]
+            dec = agent.decide("", acts, obs=obs)
+            return int(acts[dec.choice_id].payload["card_id"])
+
+        # 1. 1-use exhaustible > non-exhaustible (even when exhaustible card has lower rarity!)
+        assert _pick_direct([(70, "前途洋々"), (122, "ふれあい"), (90, "ありがとうの言葉")]) == 90
+        assert _pick_direct([(70, "前途洋々"), (122, "ふれあい"), (50, "ファーストステップ")]) == 50  # R limit=1 > SR non-exhaust
+        assert _pick_direct([(70, "前途洋々"), (40, "ゆるふわおしゃべり")]) == 40                    # R limit=1 A > SR non-exhaust A
+
+        # 2. Rarity: SSR > SR > R when exhaustibility ties
+        assert _pick_direct([(100, "ハイテンション"), (50, "ファーストステップ"), (152, "届いて！")]) == 152  # SSR A > SR M > R M
+        assert _pick_direct([(50, "ファーストステップ"), (90, "ありがとうの言葉")]) == 90                   # SR A > R M
+
+        # 3. Card Type: Mental (M) > Active (A) when exhaustibility & rarity tie
+        assert _pick_direct([(152, "届いて！"), (426, "キセキの魔法"), (176, "手書きのメッセージ")]) == 176  # SSR M > SSR A
+        assert _pick_direct([(90, "ありがとうの言葉"), (100, "ハイテンション")]) == 100                      # SR M > SR A
+        assert _pick_direct([(70, "前途洋々"), (122, "ふれあい")]) == 122                                  # non-exhaust SR M > SR A
+
+        # 4. End-to-end 3-choice preview flow with 再抽選 exhausted (attempts=3) & no 受け取らない:
+        #    scans [slot0=#70(SR A non-ex), slot1=#100(SR M limit=1), slot2=#90(SR A limit=1)],
+        #    switches from slot 2 -> slot 1, and claims #100 ハイテンション!
+        agent.reset_session()
+        agent._reward_reroll_attempts = 3
+
+        def _make_3choice(cur_slot: int, cur_cid: int, cur_title: str):
+            acts = [
+                LegalAction(
+                    choice_id=0,
+                    action_type="pick_option",
+                    description=f"确认领取当前选中卡: {cur_title}",
+                    bbox=box,
+                    payload={"name": "受け取る", "card_id": cur_cid, "title": cur_title, "slot_idx": cur_slot},
+                )
+            ]
+            for s in (0, 1, 2):
+                if s == cur_slot:
+                    continue
+                acts.append(
+                    LegalAction(
+                        choice_id=len(acts),
+                        action_type="pick_option",
+                        description=f"预览第{s + 1}张候选卡",
+                        bbox=box,
+                        payload={"name": f"预览第{s + 1}张候选卡", "slot_idx": s},
+                    )
+                )
+            acts.append(
+                LegalAction(
+                    choice_id=len(acts),
+                    action_type="pick_option",
+                    description="再抽選",
+                    bbox=box,
+                    payload={"name": "再抽選", "title": "再抽選"},
+                )
+            )
+            return acts
+
+        acts0 = _make_3choice(0, 70, "前途洋々")
+        d0 = agent.decide("", acts0, obs=obs)
+        assert acts0[d0.choice_id].payload.get("slot_idx") == 1
+
+        acts1 = _make_3choice(1, 100, "ハイテンション")
+        d1 = agent.decide("", acts1, obs=obs)
+        assert acts1[d1.choice_id].payload.get("slot_idx") == 2
+
+        acts2 = _make_3choice(2, 90, "ありがとうの言葉")
+        d2 = agent.decide("", acts2, obs=obs)
+        assert acts2[d2.choice_id].payload.get("slot_idx") == 1  # switches back to #100 ハイテンション!
+
+        acts3 = _make_3choice(1, 100, "ハイテンション")
+        d3 = agent.decide("", acts3, obs=obs)
+        assert d3.choice_id == 0
+        assert acts3[d3.choice_id].payload.get("card_id") == 100
+        assert "1-use-exhaust>SSR>SR>R>M>A" in d3.reason
+    finally:
+        db.close()
+
+
+
+
 
 
 

@@ -212,8 +212,10 @@ class GakumasActionCodec:
             action_map[self.end_turn_action_id] = ("end_turn", -1)
 
         if prune_dominated:
-            has_813 = sim.has_unexhausted_card_family(813)
+            rules = sim.plan_rules
+            has_813 = sim.has_unexhausted_card_family(813) if rules.plan_name == "sense" else False
             has_zeroing = sim.has_unexhausted_zeroing_finisher()
+            has_kimegao = sim.has_unexhausted_kimegao_card()
             held_aids = {
                 aid
                 for aid, (kind, idx) in action_map.items()
@@ -223,6 +225,7 @@ class GakumasActionCodec:
                     fin_window=self.finisher_play_max_turns_remaining,
                     has_813=has_813,
                     has_zeroing=has_zeroing,
+                    has_kimegao=has_kimegao,
                 )
             }
             if held_aids and len(held_aids) < len(action_map):
@@ -233,8 +236,8 @@ class GakumasActionCodec:
             if sim.double_card_effect_cards > 0 or sim.has_armed_active_retrigger(same_turn_only=True):
                 other_2x_targets = any(
                     kind == "card"
-                    and not sim.is_trouble_card(sim.hand[idx].cfg)
-                    and not sim.is_resource_zeroing_finisher(sim.hand[idx].cfg)
+                    and not rules.is_trouble_card(sim.hand[idx].cfg)
+                    and not rules.is_resource_zeroing_finisher(sim.hand[idx].cfg)
                     and sim.hand[idx].cfg.rarity != "L"
                     and (sim.double_card_effect_cards > 0 or sim.hand[idx].cfg.card_type == "active")
                     for kind, idx in action_map.values()
@@ -253,83 +256,18 @@ class GakumasActionCodec:
                     for aid in forbid_2x_aids:
                         mask[aid] = False
 
-            if sim.double_card_effect_cards > 0:
-                fin_aids = {
-                    aid
-                    for aid, (kind, idx) in action_map.items()
-                    if kind == "card" and sim.is_late_scaling_finisher(sim.hand[idx].cfg)
-                }
-                if fin_aids:
-                    action_map = {
-                        aid: v
-                        for aid, v in action_map.items()
-                        if aid in fin_aids
-                        or (v[0] == "drink" and not sim.is_active_retrigger_drink(sim.available_drinks[v[1]]))
-                    }
-                    mask.fill(False)
-                    for aid in action_map:
-                        mask[aid] = True
-                    return mask, action_map
-                tutor_aids = {
-                    aid
-                    for aid, (kind, idx) in action_map.items()
-                    if kind == "drink" and sim.is_tutor_drink(sim.available_drinks[idx])
-                }
-                if (
-                    tutor_aids
-                    and len(sim.hand) < sim.MAX_HAND_SIZE
-                    and any(c.cfg.base_id == 813 for z in (sim.draw_pile, sim.discard_pile) for c in z)
-                ):
-                    action_map = {
-                        aid: v
-                        for aid, v in action_map.items()
-                        if aid in tutor_aids
-                        or (
-                            v[0] == "drink"
-                            and sim.is_score_buff_drink(sim.available_drinks[v[1]])
-                        )
-                    }
-                    mask.fill(False)
-                    for aid in action_map:
-                        mask[aid] = True
-                    return mask, action_map
-                if (
-                    sim.turns_remaining > 1
-                    and sim.turns_remaining <= max(2, self.finisher_play_max_turns_remaining)
-                    and len(sim.draw_pile) <= 3
-                    and any(c.cfg.base_id == 813 for c in sim.draw_pile)
-                    and self.end_turn_action_id in action_map
-                ):
-                    action_map = {
-                        aid: v
-                        for aid, v in action_map.items()
-                        if aid == self.end_turn_action_id
-                        or (v[0] == "drink" and not sim.is_active_retrigger_drink(sim.available_drinks[v[1]]))
-                    }
-                    mask.fill(False)
-                    for aid in action_map:
-                        mask[aid] = True
-                    return mask, action_map
-
-            if sim.has_armed_active_retrigger(same_turn_only=True):
-                active_aids = {
-                    aid
-                    for aid, (kind, idx) in action_map.items()
-                    if kind == "card"
-                    and sim.hand[idx].cfg.card_type == "active"
-                    and sim.hand[idx].cfg.rarity != "L"
-                    and not sim.is_resource_zeroing_finisher(sim.hand[idx].cfg)
-                }
-                if active_aids:
-                    action_map = {
-                        aid: v
-                        for aid, v in action_map.items()
-                        if aid in active_aids
-                        or (v[0] == "drink" and not sim.is_active_retrigger_drink(sim.available_drinks[v[1]]))
-                    }
-                    mask.fill(False)
-                    for aid in action_map:
-                        mask[aid] = True
+            narrowed_map, early_ret = rules.narrow_armed_or_combo_action_map(
+                sim,
+                action_map,
+                fin_window=self.finisher_play_max_turns_remaining,
+                end_turn_action_id=self.end_turn_action_id,
+            )
+            if narrowed_map is not None:
+                action_map = narrowed_map
+                mask.fill(False)
+                for aid in action_map:
+                    mask[aid] = True
+                if early_ret:
                     return mask, action_map
 
             if sim.card_uses_remaining == 1:

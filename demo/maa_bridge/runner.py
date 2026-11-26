@@ -247,6 +247,8 @@ class GakumasRunner:
         self._reward_grid_flipped_scroll: bool = False
         self._reward_grid_started_at_top: bool = False
         self._mid_battle_skip_streak: int = 0
+        self._popup_fallback_streak: int = 0
+        self._popup_fallback_key: Optional[Tuple[int, str, Tuple[int, int]]] = None
         self._in_battle_decision: bool = False
         self._pending_change_pickup_cid: Optional[int] = None
         self._battle_toast_settle_sleep: float = 0.9
@@ -467,6 +469,8 @@ class GakumasRunner:
         self._reward_forced_cancel_count = 0
         self._reward_grid_scrolled_bottom = False
         self._mid_battle_skip_streak = 0
+        self._popup_fallback_streak = 0
+        self._popup_fallback_key = None
         if clear_checkpoint and self.checkpoint_path and self.checkpoint_path.exists():
             try:
                 self.checkpoint_path.unlink()
@@ -1279,9 +1283,23 @@ class GakumasRunner:
                 if is_active_removal_screen and self._reward_step_count < 24:
                     safe_reward_act = None
                 elif change_confirm_act is not None:
-                    # H.I.F チェンジ is mandatory (Page 1 has no skip, so キャンセル loops forever!):
-                    # confirm swap on any non-customized card, or switch to a non-customized slot first.
-                    if not (change_confirm_act.payload or {}).get("is_customized"):
+                    chg_cid = int((change_confirm_act.payload or {}).get("card_id") or 0)
+                    chg_row = self.db.get_card_by_id(chg_cid) if (self.db and chg_cid > 0) else None
+                    is_sig_change = bool(chg_row and chg_row.get("is_signature"))
+                    is_custom_change = bool((change_confirm_act.payload or {}).get("is_customized"))
+                    came_from_pickup = bool(getattr(self.agent, "_came_from_change_pickup", False))
+                    cancel_cand_chg = next(
+                        (
+                            a for a in legal_actions
+                            if str((a.payload or {}).get("name") or "") in ("キャンセル", "戻る", "もどる")
+                        ),
+                        None,
+                    )
+                    if is_sig_change and (not came_from_pickup) and self._reward_forced_cancel_count < 1 and cancel_cand_chg is not None:
+                        safe_reward_act = cancel_cand_chg
+                        self._reward_forced_cancel_count += 1
+                    elif not is_custom_change:
+                        # H.I.F Page-2 mandatory チェンジ has no skip on Page 1; confirm non-customized slot or rotate away from customized.
                         safe_reward_act = change_confirm_act
                         self._reward_step_count = 0
                     else:
@@ -1381,6 +1399,44 @@ class GakumasRunner:
                 click_coords = chosen_action.bbox.center()
             elif obs.scene_type != "loading" and chosen_action is None:
                 click_coords = (540, 960)
+
+            is_popup_generic_fallback = False
+            if (
+                obs.scene_type == "popup"
+                and chosen_action is not None
+                and click_coords is not None
+            ):
+                _p_act_name = str((chosen_action.payload or {}).get("name") or "")
+                _p_act_desc = str(chosen_action.description or "")
+                is_popup_generic_fallback = (
+                    _p_act_name == "点击屏幕继续"
+                    or (_p_act_name == "閉じる" and "关闭弹窗或教程提示" in _p_act_desc)
+                )
+            if is_popup_generic_fallback and click_coords is not None:
+                _p_fb_name = str((chosen_action.payload or {}).get("name") or "")
+                _p_fb_key = (int(obs.week or 0), _p_fb_name, click_coords)
+                if self._popup_fallback_key == _p_fb_key:
+                    self._popup_fallback_streak += 1
+                else:
+                    self._popup_fallback_key = _p_fb_key
+                    self._popup_fallback_streak = 1
+                if self._popup_fallback_streak >= 4:
+                    fw, fh = self._last_frame_size
+                    blank_xy = (int(round(fw * 0.93)), int(round(fh * 0.26)))
+                    logger.warning(
+                        "Popup fallback tap stalled (%d steps at %s -> %s); tapping blank area (%d, %d).",
+                        self._popup_fallback_streak,
+                        _p_fb_name,
+                        click_coords,
+                        blank_xy[0],
+                        blank_xy[1],
+                    )
+                    click_coords = blank_xy
+                    self._popup_fallback_streak = 0
+                    self._popup_fallback_key = None
+            else:
+                self._popup_fallback_streak = 0
+                self._popup_fallback_key = None
 
             click_ok = True
             card_play_confirmed = True

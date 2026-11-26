@@ -97,6 +97,8 @@ class LiveScreenRecognizer:
         self._last_week_label: str = ""
         self._last_stats: Dict[str, int] = {"vocal": 130, "dance": 100, "visual": 105}
         self._last_stamina: Tuple[int, int] = (44, 44) if self.scenario_id in ("hif_honsen", "hif") else (23, 31)
+        self._pending_stamina_reading: Optional[Tuple[int, int]] = None
+        self._pending_stamina_streak: int = 0
         self._last_p_points: int = 0
         self._last_turns_remaining: int = 8
         self._turn_drop_candidate: Optional[Tuple[int, int]] = None
@@ -177,6 +179,8 @@ class LiveScreenRecognizer:
                     self._last_stats[k] = int(data["last_stats"][k])
         if isinstance(data.get("last_stamina"), (list, tuple)) and len(data["last_stamina"]) >= 2:
             self._last_stamina = (int(data["last_stamina"][0]), int(data["last_stamina"][1]))
+            self._pending_stamina_reading = None
+            self._pending_stamina_streak = 0
         if "last_p_points" in data and data["last_p_points"] is not None:
             self._last_p_points = int(data["last_p_points"])
         if "last_turns_remaining" in data and data["last_turns_remaining"] is not None:
@@ -506,45 +510,52 @@ class LiveScreenRecognizer:
         # Stamina via en-US OCR on top-center bar ("23/31" white on dark, or "44/44" dark on light in H.I.F)
         stamina, max_stamina = self._last_stamina
         hp_found = False
-        hp_white_txt = self._ocr_crop_upscaled(
-            frame,
-            (int(w * 0.42), int(h * 0.028), int(w * 0.62), int(h * 0.068)),
-            scale=3,
-            use_en=True,
-            mode="white",
-            pad=15,
-        )
-        m_hp_w = re.search(r"(\d{1,3})/(\d{2,3})", hp_white_txt)
-        if m_hp_w:
-            s_val, m_val = int(m_hp_w.group(1)), int(m_hp_w.group(2))
-            if 0 <= s_val <= m_val <= 150:
-                stamina, max_stamina = s_val, m_val
-                self._last_stamina = (stamina, max_stamina)
-                hp_found = True
 
-        if not hp_found:
-            for hp_box, hp_mode, hp_en in (
-                ((int(round(w * 0.4514)), int(round(h * 0.0406)), int(round(w * 0.5972)), int(round(h * 0.0638))), "raw", True),
-                ((int(round(w * 0.4514)), int(round(h * 0.0406)), int(round(w * 0.5972)), int(round(h * 0.0638))), "dark_on_light", False),
-                ((int(round(w * 0.4514)), int(round(h * 0.0425)), int(round(w * 0.6042)), int(round(h * 0.0625))), "dark_on_light", False),
-                ((int(round(w * 0.458)), int(round(h * 0.0406)), int(round(w * 0.5972)), int(round(h * 0.0638))), "dark_on_light", True),
-            ):
-                hp_crop_text = self._ocr_crop_upscaled(
-                    frame,
-                    hp_box,
-                    scale=3,
-                    use_en=hp_en,
-                    mode=hp_mode,
-                    pad=15,
-                )
-                m_hp = re.search(r"(\d{1,3})/(\d{2,3})", hp_crop_text)
-                if m_hp:
-                    s_val, m_val = int(m_hp.group(1)), int(m_hp.group(2))
-                    if 0 <= s_val <= m_val <= 150:
+        def _is_suspicious_stamina_drop(s_val: int, m_val: int) -> bool:
+            prev_s, prev_m = self._last_stamina
+            if self._in_battle_scene or prev_m <= 0 or abs(m_val - prev_m) > 6:
+                return False
+            if prev_s >= 15 and s_val < 10 and (prev_s - s_val) >= 15:
+                return True
+            if prev_s >= 25 and (prev_s - s_val) >= 24:
+                return True
+            return False
+
+        white_probe = (
+            (int(w * 0.42), int(h * 0.028), int(w * 0.62), int(h * 0.068)),
+            "white",
+            True,
+        )
+        dol_probes = (
+            ((int(round(w * 0.4514)), int(round(h * 0.0406)), int(round(w * 0.5972)), int(round(h * 0.0638))), "raw", True),
+            ((int(round(w * 0.4514)), int(round(h * 0.0406)), int(round(w * 0.5972)), int(round(h * 0.0638))), "dark_on_light", False),
+            ((int(round(w * 0.4514)), int(round(h * 0.0425)), int(round(w * 0.6042)), int(round(h * 0.0625))), "dark_on_light", False),
+            ((int(round(w * 0.458)), int(round(h * 0.0406)), int(round(w * 0.5972)), int(round(h * 0.0638))), "dark_on_light", True),
+        )
+        hp_probes = (dol_probes + (white_probe,)) if is_hif else ((white_probe,) + dol_probes)
+        suspicious_candidates: List[Tuple[int, int]] = []
+
+        for hp_box, hp_mode, hp_en in hp_probes:
+            hp_crop_text = self._ocr_crop_upscaled(
+                frame,
+                hp_box,
+                scale=3,
+                use_en=hp_en,
+                mode=hp_mode,
+                pad=15,
+            )
+            m_hp = re.search(r"(\d{1,3})/(\d{2,3})", hp_crop_text)
+            if m_hp:
+                s_val, m_val = int(m_hp.group(1)), int(m_hp.group(2))
+                if 0 <= s_val <= m_val <= 150:
+                    if not _is_suspicious_stamina_drop(s_val, m_val):
                         stamina, max_stamina = s_val, m_val
                         self._last_stamina = (stamina, max_stamina)
+                        self._pending_stamina_reading = None
+                        self._pending_stamina_streak = 0
                         hp_found = True
                         break
+                    suspicious_candidates.append((s_val, m_val))
 
         if not hp_found:
             for ln in lines:
@@ -553,10 +564,32 @@ class LiveScreenRecognizer:
                     if m_hp_ln:
                         s_val, m_val = int(m_hp_ln.group(1)), int(m_hp_ln.group(2))
                         if 0 <= s_val <= m_val <= 150:
-                            stamina, max_stamina = s_val, m_val
-                            self._last_stamina = (stamina, max_stamina)
-                            hp_found = True
-                            break
+                            if not _is_suspicious_stamina_drop(s_val, m_val):
+                                stamina, max_stamina = s_val, m_val
+                                self._last_stamina = (stamina, max_stamina)
+                                self._pending_stamina_reading = None
+                                self._pending_stamina_streak = 0
+                                hp_found = True
+                                break
+                            suspicious_candidates.append((s_val, m_val))
+
+        if (not hp_found) and suspicious_candidates:
+            cand_s, cand_m = max(suspicious_candidates, key=lambda pair: pair[0])
+            if (
+                self._pending_stamina_reading is not None
+                and self._pending_stamina_reading[1] == cand_m
+                and abs(self._pending_stamina_reading[0] - cand_s) <= 2
+            ):
+                self._pending_stamina_streak += 1
+                if self._pending_stamina_streak >= 2:
+                    stamina, max_stamina = cand_s, cand_m
+                    self._last_stamina = (stamina, max_stamina)
+                    self._pending_stamina_reading = None
+                    self._pending_stamina_streak = 0
+                    hp_found = True
+            else:
+                self._pending_stamina_reading = (cand_s, cand_m)
+                self._pending_stamina_streak = 1
 
         # P-points below stamina (only parse on out-of-battle schedule/shop HUD to avoid reading battle scoreboard digits)
         p_points = self._last_p_points
@@ -2080,7 +2113,7 @@ class LiveScreenRecognizer:
         if not options:
             # Never double-tap a fallback screen as produce_schedule
             scene = "popup"
-            options = self._extract_bottom_and_list_options(lines, w, h)
+            options = self._extract_bottom_and_list_options(lines, w, h, frame=frame)
 
         held_drinks = self._recognize_bottom_drinks(frame, plan)
         if scene == "produce_schedule" and held_drinks:
@@ -5450,7 +5483,7 @@ class LiveScreenRecognizer:
 
     def _parse_option_screen(self, scene_type: str, frame: np.ndarray, lines: List[Dict[str, Any]], plan: str, meta: Dict[str, Any]) -> ScreenObservation:
         h, w = frame.shape[:2]
-        options = self._extract_bottom_and_list_options(lines, w, h)
+        options = self._extract_bottom_and_list_options(lines, w, h, frame=frame)
         ctx = compute_week_stats_and_stage_bonus(scenario_id=self.scenario_id, week=meta["week"], plan=plan, override_stats=meta["stats"])
         return ScreenObservation(
             scene_type=scene_type,
@@ -6876,6 +6909,8 @@ class LiveScreenRecognizer:
                             genki = banner_reg_gk
         if is_exam_hud and hp_found or (not is_exam_hud and best_hp_y >= 0):
             self._last_stamina = (stamina, meta["max_stamina"])
+            self._pending_stamina_reading = None
+            self._pending_stamina_streak = 0
 
         # Top-left Logic (👍好印象/✊やる気) & Sense (好調/集中/絶好調) buff diamonds + red feather halfCostTurns
         buffs: Dict[str, int] = {}

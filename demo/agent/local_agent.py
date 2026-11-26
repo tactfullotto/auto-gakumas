@@ -122,6 +122,8 @@ class LocalHybridDecisionAgent:
         self._avoid_card_base_ids: Set[int] = set()
         self._keep_card_ids: Set[int] = set()
         self._keep_card_base_ids: Set[int] = set()
+        self._card_score_overrides_exact: Dict[int, int] = {}
+        self._card_score_overrides_by_base: Dict[int, int] = {}
         self._preferred_drink_ids: Set[int] = set()
         self._banned_drink_ids: Set[int] = {19}
         self._banned_drink_names: Tuple[str, ...] = ("初星スペシャル青汁", "青汁")
@@ -166,6 +168,15 @@ class LocalHybridDecisionAgent:
         self._banned_drink_discard_ctx: Optional[Tuple[str, int]] = None
         self.set_preferences(preferences)
 
+    def _resolve_card_base_id(self, card_id: Optional[int], base_id: int = 0) -> int:
+        if base_id and int(base_id) > 0:
+            return int(base_id)
+        cid_i = int(card_id or 0)
+        if cid_i <= 0:
+            return 0
+        row = self.db.get_card_by_id(cid_i)
+        return int(row.get("base_id") or cid_i) if row else cid_i
+
     def _expand_card_ids_and_bases(self, card_ids: Sequence[int]) -> Tuple[Set[int], Set[int]]:
         cids: Set[int] = set()
         bases: Set[int] = set()
@@ -181,8 +192,13 @@ class LocalHybridDecisionAgent:
             if row:
                 base_id = int(row.get("base_id") or cid)
                 bases.add(base_id)
+                cids.add(base_id)
                 if row.get("upgraded_id"):
                     cids.add(int(row["upgraded_id"]))
+                if base_id != cid:
+                    base_row = self.db.get_card_by_id(base_id)
+                    if base_row and base_row.get("upgraded_id"):
+                        cids.add(int(base_row["upgraded_id"]))
             else:
                 bases.add(cid)
         return cids, bases
@@ -207,6 +223,18 @@ class LocalHybridDecisionAgent:
         self._keep_card_ids, self._keep_card_base_ids = self._expand_card_ids_and_bases(
             prefs.keep_card_ids
         )
+        self._card_score_overrides_exact = {
+            int(k): int(v) for k, v in (prefs.card_score_overrides or {}).items() if int(k) > 0
+        }
+        self._card_score_overrides_by_base = {}
+        for raw_k, raw_v in self._card_score_overrides_exact.items():
+            b_id = self._resolve_card_base_id(raw_k)
+            if b_id > 0:
+                self._card_score_overrides_by_base[b_id] = int(raw_v)
+        for raw_k, raw_v in self._card_score_overrides_exact.items():
+            b_id = self._resolve_card_base_id(raw_k)
+            if b_id > 0 and raw_k == b_id:
+                self._card_score_overrides_by_base[b_id] = int(raw_v)
         self._preferred_drink_ids = {int(d) for d in prefs.preferred_drink_ids}
         self._banned_drink_ids = {int(d) for d in prefs.banned_drink_ids}
         bnames: List[str] = []
@@ -227,20 +255,33 @@ class LocalHybridDecisionAgent:
 
     def _is_priority_card(self, card_id: Optional[int], base_id: int = 0) -> bool:
         cid_i = int(card_id or 0)
-        b_i = int(base_id or cid_i or 0)
-        if not b_i and cid_i:
-            row = self.db.get_card_by_id(cid_i)
-            b_i = int(row.get("base_id") or cid_i) if row else cid_i
+        b_i = self._resolve_card_base_id(cid_i, base_id=base_id)
         return (cid_i > 0 and cid_i in self._priority_card_ids) or (
             b_i > 0 and b_i in self._priority_card_base_ids
         )
 
+    def _is_avoid_card(self, card_id: Optional[int], base_id: int = 0) -> bool:
+        cid_i = int(card_id or 0)
+        b_i = self._resolve_card_base_id(cid_i, base_id=base_id)
+        return (cid_i > 0 and cid_i in self._avoid_card_ids) or (
+            b_i > 0 and b_i in self._avoid_card_base_ids
+        )
+
     def _is_keep_card(self, card_id: Optional[int], base_id: int = 0) -> bool:
         cid_i = int(card_id or 0)
-        b_i = int(base_id or cid_i or 0)
+        b_i = self._resolve_card_base_id(cid_i, base_id=base_id)
         return (cid_i > 0 and cid_i in self._keep_card_ids) or (
             b_i > 0 and b_i in self._keep_card_base_ids
         )
+
+    def _get_card_score_override(self, card_id: Optional[int], base_id: int = 0) -> int:
+        cid_i = int(card_id or 0)
+        if cid_i > 0 and cid_i in self._card_score_overrides_exact:
+            return int(self._card_score_overrides_exact[cid_i])
+        b_i = self._resolve_card_base_id(cid_i, base_id=base_id)
+        if b_i > 0 and b_i in self._card_score_overrides_by_base:
+            return int(self._card_score_overrides_by_base[b_i])
+        return 0
 
     def close(self) -> None:
         self.battle_planner.close()
@@ -363,11 +404,8 @@ class LocalHybridDecisionAgent:
         guide: Optional[PIdolGuide] = None,
     ) -> bool:
         cid_i = int(card_id) if card_id else 0
-        b_i = int(base_id or cid_i or 0)
-        if not b_i and cid_i:
-            row = self.db.get_card_by_id(cid_i)
-            b_i = int(row.get("base_id") or cid_i) if row else cid_i
-        if (cid_i > 0 and cid_i in self._avoid_card_ids) or (b_i > 0 and b_i in self._avoid_card_base_ids):
+        b_i = self._resolve_card_base_id(cid_i, base_id=base_id)
+        if self._is_avoid_card(cid_i, base_id=b_i):
             return True
         pid = self._effective_p_idol_id(p_idol_id=p_idol_id, guide=guide)
         if pid is None:
@@ -614,9 +652,7 @@ class LocalHybridDecisionAgent:
                 return -8_000
 
         # User-configured avoided cards: hard penalize pickup and prioritize removal/swap
-        if (card_id and int(card_id) in self._avoid_card_ids) or (
-            base_id and int(base_id) in self._avoid_card_base_ids
-        ):
+        if self._is_avoid_card(card_id, base_id=base_id):
             return 5_000 if for_removal else -20_000
 
         # Idol-specific forbidden cards (e.g., #152/#153 届いて！ and #426/#427 キセキの魔法 for p_idol_id=163)
@@ -836,12 +872,7 @@ class LocalHybridDecisionAgent:
         # Apply user-configured card priorities, locks, and manual numeric score overrides
         user_priority = self._is_priority_card(card_id, base_id=base_id)
         user_keep = self._is_keep_card(card_id, base_id=base_id)
-        card_overrides = self.preferences.card_score_overrides or {}
-        override_delta = 0
-        if card_id and int(card_id) in card_overrides:
-            override_delta = int(card_overrides[int(card_id)])
-        elif base_id and int(base_id) in card_overrides:
-            override_delta = int(card_overrides[int(base_id)])
+        override_delta = self._get_card_score_override(card_id, base_id=base_id)
 
         if user_priority:
             score += 20_000
@@ -1344,46 +1375,69 @@ class LocalHybridDecisionAgent:
                     hb = int(getattr(cfg_h, "base_id", 0) or getattr(cfg_h, "card_id", 0) or 0)
                     if hb > 0:
                         hand_bases.add(hb)
-        has_813_in_hand = 813 in hand_bases
-        has_162_in_hand = 162 in hand_bases
-        has_813_in_deck = has_813_in_hand or bool(same_battle_sim and sim.has_unexhausted_card_family(813))
-        has_zeroing_in_hand = any(b in (618, 152) for b in hand_bases) or bool(
-            same_battle_sim
-            and any(sim.is_resource_zeroing_finisher(hc.cfg) for hc in (getattr(sim, "hand", None) or ()))
+        plan_l = str(plan or getattr(self.tracker, "plan", "") or (row or {}).get("plan") or "").strip().lower()
+        is_sense_plan = plan_l in ("", "sense")
+        is_logic_plan = plan_l == "logic"
+        has_813_in_hand = is_sense_plan and (813 in hand_bases)
+        has_162_in_hand = is_sense_plan and (162 in hand_bases)
+        has_813_in_deck = is_sense_plan and (
+            has_813_in_hand or bool(same_battle_sim and sim.has_unexhausted_card_family(813))
         )
-        row_dsl = str(row.get("dsl_actions") or "") if row else ""
-        is_zeroing_fin = (
-            base_id in (618, 152)
-            or "世界一の勇気" in text_all
-            or "届いて" in text_all
-            or (
-                "score+=" in row_dsl
-                and bool(re.search(r"\b(goodConditionTurns|genki|goodImpressionTurns|concentration)\s*=\s*0\b", row_dsl))
+        has_zeroing_in_hand = (
+            any((b == 618 if is_sense_plan else (b == 152 if is_logic_plan else False)) for b in hand_bases)
+            or bool(
+                same_battle_sim
+                and any(sim.plan_rules.is_resource_zeroing_finisher(hc.cfg) for hc in (getattr(sim, "hand", None) or ()))
             )
         )
+        row_dsl = str(row.get("dsl_actions") or "") if row else ""
+        if is_sense_plan:
+            is_zeroing_fin = (
+                base_id == 618
+                or "世界一の勇気" in text_all
+                or (
+                    "score+=" in row_dsl
+                    and bool(re.search(r"\b(goodConditionTurns|concentration)\s*=\s*0\b", row_dsl))
+                )
+            )
+        elif is_logic_plan:
+            is_zeroing_fin = (
+                base_id == 152
+                or "届いて" in text_all
+                or (
+                    "score+=" in row_dsl
+                    and bool(re.search(r"\b(genki|goodImpressionTurns)\s*=\s*0\b", row_dsl))
+                )
+            )
+        else:
+            is_zeroing_fin = False
         if is_zeroing_fin:
-            # Resource-zeroing solo finisher (#618/#619 gc=0, #152/#153 genki=0):
+            # Resource-zeroing solo finisher (Sense #618/#619, Logic #152/#153):
             # top priority ONLY on final turn when missing from hand; never tutor early!
             if rem_turns <= 1 and not has_zeroing_in_hand:
                 return 22_000
             return -2_500
-        if base_id == 813 or "自然体の魅力" in text_all:
-            if has_813_in_hand and not double_armed and not has_162_in_hand:
-                return 15_500 if late_window else 8_000
-            if double_armed or has_162_in_hand:
-                return 22_000 if (late_window or double_armed) else 12_000
-            return 20_000 if late_window else 9_000
-        if base_id == 162 or "国民的アイドル" in text_all:
-            if has_813_in_hand and not double_armed and not has_162_in_hand:
-                return 22_000 if late_window else 12_500
-            if has_813_in_deck and not double_armed and not has_162_in_hand:
-                return 18_500 if late_window else 8_500
-            if rem_turns <= 1 and has_zeroing_in_hand:
-                return -1_000
-        if base_id == 775 or "話題沸騰" in text_all:
-            return 14_000
-        if base_id == 811 or "お姉さんの感覚" in text_all:
-            return 11_500
+        if is_sense_plan:
+            if base_id == 813 or "自然体の魅力" in text_all:
+                if has_813_in_hand and not double_armed and not has_162_in_hand:
+                    return 15_500 if late_window else 8_000
+                if double_armed or has_162_in_hand:
+                    return 22_000 if (late_window or double_armed) else 12_000
+                return 20_000 if late_window else 9_000
+            if base_id == 162 or "国民的アイドル" in text_all:
+                if has_813_in_hand and not double_armed and not has_162_in_hand:
+                    return 22_000 if late_window else 12_500
+                if has_813_in_deck and not double_armed and not has_162_in_hand:
+                    return 18_500 if late_window else 8_500
+                if rem_turns <= 1 and has_zeroing_in_hand:
+                    return -1_000
+            if base_id == 775 or "話題沸騰" in text_all:
+                return 14_000
+            if base_id == 811 or "お姉さんの感覚" in text_all:
+                return 11_500
+        elif is_logic_plan:
+            if (base_id == 777 or "びしっとキメ顔" in text_all) and rem_turns <= 5:
+                return 18_000
         base_s = self._score_skill_card(
             card_id=cid_i if cid_i > 0 else None,
             title=title,
@@ -1434,6 +1488,33 @@ class LocalHybridDecisionAgent:
         ):
             return False
         return True
+
+    def _avoided_card_fallback_key(
+        self,
+        card_id: Optional[int],
+        title: str = "",
+        desc: str = "",
+    ) -> Tuple[int, int, int, int]:
+        """Fallback priority when all reward candidates are excluded and no reroll/skip remains:
+        1-use exhaustible (`limit_count == 1` / `レッスン中1回`) > Rarity (SSR > SR > R) > Type (M > A) > upgraded.
+        """
+        row = self.db.get_card_by_id(int(card_id)) if card_id else None
+        text_all = f"{(row or {}).get('description') or ''} {title or ''} {desc or ''}"
+        is_single_use_exhaust = (
+            1
+            if ((row is not None and row.get("limit_count") == 1) or ("レッスン中1回" in text_all))
+            else 0
+        )
+        rarity = str((row or {}).get("rarity") or "").strip().upper()
+        rarity_rank = {"LEGEND": 5, "L": 5, "SSR": 4, "SR": 3, "R": 2, "N": 1}.get(rarity, 0)
+        ctype = str((row or {}).get("type") or "").strip().lower()
+        type_rank = 2 if ctype == "mental" else (1 if ctype == "active" else 0)
+        upgraded_rank = (
+            1
+            if ((row is not None and bool(row.get("upgraded"))) or ("+" in (title or "")))
+            else 0
+        )
+        return (is_single_use_exhaust, rarity_rank, type_rank, upgraded_rank)
 
     def _clear_reward_scan_state(self) -> None:
         self._reward_preview_count = 0
@@ -1647,6 +1728,12 @@ class LocalHybridDecisionAgent:
             ),
             None,
         )
+        avoid_reroll_ok = bool(
+            reroll_act is not None
+            and self._reward_reroll_attempts < 3
+            and (not is_removal)
+            and (not is_drink_flow)
+        )
         early_reroll_ok = bool(
             self.preferences.reroll_early_non_exhaust_mental
             and reroll_act is not None
@@ -1663,25 +1750,73 @@ class LocalHybridDecisionAgent:
             and str((a.payload or {}).get("name") or "") not in ("受け取る", "強化する", "削除する", "チェンジする", "カスタマイズする", "移動する", "次へ")
         ]
         if direct_card_opts:
-            best_direct = max(
-                direct_card_opts,
-                key=lambda a: self._score_skill_card(
-                    card_id=(a.payload or {}).get("card_id"),
-                    title=str((a.payload or {}).get("title") or (a.payload or {}).get("name") or ""),
-                    desc=str(a.description or ""),
-                    target_effect=target_eff,
-                    guide=guide,
-                    plan=plan,
-                    for_removal=is_removal,
-                    p_idol_id=resolved_pid,
-                    in_change_pickup=is_change_pickup,
-                    has_removable_unwanted=has_removable_unwanted,
-                    check_same_card=(not is_delete_removal),
-                    ignore_upgrade=ignore_change_upgrade,
-                ),
-            )
+            scored_direct = [
+                (
+                    self._score_skill_card(
+                        card_id=(a.payload or {}).get("card_id"),
+                        title=str((a.payload or {}).get("title") or (a.payload or {}).get("name") or ""),
+                        desc=str(a.description or ""),
+                        target_effect=target_eff,
+                        guide=guide,
+                        plan=plan,
+                        for_removal=is_removal,
+                        p_idol_id=resolved_pid,
+                        in_change_pickup=is_change_pickup,
+                        has_removable_unwanted=has_removable_unwanted,
+                        check_same_card=(not is_delete_removal),
+                        ignore_upgrade=ignore_change_upgrade,
+                    ),
+                    a,
+                )
+                for a in direct_card_opts
+            ]
+            best_direct_score, best_direct = max(scored_direct, key=lambda pair: pair[0])
             best_cid = (best_direct.payload or {}).get("card_id")
-            if early_reroll_ok and self._is_non_exhaust_mental_card(
+            used_direct_avoid_fallback = False
+            if (
+                (not is_removal)
+                and (not is_drink_flow)
+                and claim_name_peek not in ("強化する", "移動する")
+                and best_direct_score <= -3_000
+            ):
+                if avoid_reroll_ok:
+                    self._reward_reroll_attempts += 1
+                    self._clear_reward_scan_state()
+                    return DecisionResult(
+                        choice_id=reroll_act.choice_id,
+                        reason=(
+                            f"LocalAgent(reward): All direct reward candidates avoided/forbidden "
+                            f"(best=#{best_cid}, score={best_direct_score}); rerolling via 再抽選"
+                        ),
+                        source="local_hybrid",
+                    )
+                if not is_change_pickup:
+                    skip_or_reject = next(
+                        (
+                            a for a in legal_actions
+                            if str((a.payload or {}).get("name") or "") in ("スキップ", "受け取らない", "もらわない", "見送る", "キャンセル")
+                        ),
+                        None,
+                    )
+                    if skip_or_reject is not None:
+                        self._clear_reward_scan_state()
+                        self._reward_reroll_attempts = 0
+                        return DecisionResult(
+                            choice_id=skip_or_reject.choice_id,
+                            reason=f"LocalAgent(reward): All direct reward candidates avoided/forbidden (best score={best_direct_score}); skipping",
+                            source="local_hybrid",
+                        )
+                best_direct = max(
+                    direct_card_opts,
+                    key=lambda a: self._avoided_card_fallback_key(
+                        (a.payload or {}).get("card_id"),
+                        str((a.payload or {}).get("title") or (a.payload or {}).get("name") or ""),
+                        str(a.description or ""),
+                    ),
+                )
+                best_cid = (best_direct.payload or {}).get("card_id")
+                used_direct_avoid_fallback = True
+            if (not used_direct_avoid_fallback) and early_reroll_ok and self._is_non_exhaust_mental_card(
                 best_cid,
                 str((best_direct.payload or {}).get("title") or (best_direct.payload or {}).get("name") or ""),
                 str(best_direct.description or ""),
@@ -1708,9 +1843,14 @@ class LocalHybridDecisionAgent:
                 self._pending_change_gain_card_id = None
                 self._pending_change_gain_base_id = None
             self._reward_reroll_attempts = 0
+            direct_reason = (
+                f"LocalAgent(reward): All avoided & no reroll -> fallback 1-use-exhaust>SSR>SR>R>M>A -> {best_direct.description}"
+                if used_direct_avoid_fallback
+                else f"LocalAgent(reward): Direct card pick ({target_eff}) -> {best_direct.description}"
+            )
             return DecisionResult(
                 choice_id=best_direct.choice_id,
-                reason=f"LocalAgent(reward): Direct card pick ({target_eff}) -> {best_direct.description}",
+                reason=direct_reason,
                 source="local_hybrid",
             )
 
@@ -1924,8 +2064,7 @@ class LocalHybridDecisionAgent:
                         _drow = self.db.get_card_by_id(int(_dcid))
                         _dbase = int(_drow.get("base_id") or _dcid) if _drow else int(_dcid)
                         if (
-                            int(_dcid) in self._avoid_card_ids
-                            or _dbase in self._avoid_card_base_ids
+                            self._is_avoid_card(int(_dcid), base_id=_dbase)
                             or self._is_forbidden_card(
                                 card_id=int(_dcid),
                                 base_id=_dbase,
@@ -2027,10 +2166,20 @@ class LocalHybridDecisionAgent:
                         )
                 if (
                     cancel_act is not None
-                    and claim_name == "削除する"
                     and (
-                        (cur_score < -250 and (not self._came_from_change_pickup) and self._reward_cancel_attempts == 0)
-                        or (claim_is_custom and self._reward_cancel_attempts < 2)
+                        (
+                            claim_name == "チェンジする"
+                            and (not self._came_from_change_pickup)
+                            and self._reward_cancel_attempts == 0
+                            and cur_score < -250
+                        )
+                        or (
+                            claim_name == "削除する"
+                            and (
+                                (cur_score < -250 and (not self._came_from_change_pickup) and self._reward_cancel_attempts == 0)
+                                or (claim_is_custom and self._reward_cancel_attempts < 2)
+                            )
+                        )
                     )
                 ):
                     self._reward_cancel_attempts += 1
@@ -2143,28 +2292,51 @@ class LocalHybridDecisionAgent:
                         source="local_hybrid",
                     )
 
+                used_avoid_fallback = False
                 if self._reward_seen_slots:
                     best_slot = max(self._reward_seen_slots, key=lambda k: self._reward_seen_slots[k][0])
                     best_seen_score, best_seen_cid, best_seen_title = self._reward_seen_slots[best_slot]
-                    if (not in_chg_pick) and claim_name not in ("強化する", "移動する") and best_seen_score <= -3_000:
-                        skip_or_reject = next(
-                            (
-                                a for a in legal_actions
-                                if a is not claim_act
-                                and str((a.payload or {}).get("name") or "") in ("スキップ", "受け取らない", "もらわない", "見送る", "キャンセル")
-                            ),
-                            None,
-                        )
-                        if skip_or_reject is not None:
+                    if claim_name not in ("強化する", "移動する") and best_seen_score <= -3_000:
+                        if avoid_reroll_ok and claim_name in ("受け取る", "次へ"):
+                            self._reward_reroll_attempts += 1
                             self._clear_reward_scan_state()
-                            self._reward_reroll_attempts = 0
                             return DecisionResult(
-                                choice_id=skip_or_reject.choice_id,
-                                reason=f"LocalAgent(reward): All scanned cards harmful/forbidden (best score={best_seen_score}); skipping",
+                                choice_id=reroll_act.choice_id,
+                                reason=(
+                                    f"LocalAgent(reward): All scanned cards avoided/forbidden "
+                                    f"(best score={best_seen_score}); rerolling via 再抽選"
+                                ),
                                 source="local_hybrid",
                             )
+                        if not in_chg_pick:
+                            skip_or_reject = next(
+                                (
+                                    a for a in legal_actions
+                                    if a is not claim_act
+                                    and str((a.payload or {}).get("name") or "") in ("スキップ", "受け取らない", "もらわない", "見送る", "キャンセル")
+                                ),
+                                None,
+                            )
+                            if skip_or_reject is not None:
+                                self._clear_reward_scan_state()
+                                self._reward_reroll_attempts = 0
+                                return DecisionResult(
+                                    choice_id=skip_or_reject.choice_id,
+                                    reason=f"LocalAgent(reward): All scanned cards harmful/forbidden (best score={best_seen_score}); skipping",
+                                    source="local_hybrid",
+                                )
+                        best_slot = max(
+                            self._reward_seen_slots,
+                            key=lambda k: self._avoided_card_fallback_key(
+                                self._reward_seen_slots[k][1],
+                                self._reward_seen_slots[k][2],
+                            ),
+                        )
+                        best_seen_score, best_seen_cid, best_seen_title = self._reward_seen_slots[best_slot]
+                        used_avoid_fallback = True
                     if (
-                        early_reroll_ok
+                        (not used_avoid_fallback)
+                        and early_reroll_ok
                         and claim_name in ("受け取る", "次へ")
                         and self._is_non_exhaust_mental_card(best_seen_cid, best_seen_title, "")
                     ):
@@ -2186,15 +2358,34 @@ class LocalHybridDecisionAgent:
                         if best_prev is not None:
                             self._reward_slot_attempts[best_slot] = self._reward_slot_attempts.get(best_slot, 0) + 1
                             self._last_clicked_grid_slot = best_slot
-                            return DecisionResult(
-                                choice_id=best_prev.choice_id,
-                                reason=(
+                            sw_reason = (
+                                (
+                                    f"LocalAgent(reward): All avoided & no reroll -> switching to fallback slot #{best_slot + 1} "
+                                    f"(#{best_seen_cid} {best_seen_title}, 1-use-exhaust>SSR>SR>R>M>A)"
+                                )
+                                if used_avoid_fallback
+                                else (
                                     f"LocalAgent(reward): Switching to best card slot #{best_slot + 1} "
                                     f"(score={self._reward_seen_slots[best_slot][0]} >= {cur_score})"
-                                ),
+                                )
+                            )
+                            return DecisionResult(
+                                choice_id=best_prev.choice_id,
+                                reason=sw_reason,
                                 source="local_hybrid",
                             )
-                if (not in_chg_pick) and claim_name not in ("強化する", "移動する") and cur_score <= -3_000:
+                if (not used_avoid_fallback) and (not in_chg_pick) and claim_name not in ("強化する", "移動する") and cur_score <= -3_000:
+                    if avoid_reroll_ok and claim_name in ("受け取る", "次へ"):
+                        self._reward_reroll_attempts += 1
+                        self._clear_reward_scan_state()
+                        return DecisionResult(
+                            choice_id=reroll_act.choice_id,
+                            reason=(
+                                f"LocalAgent(reward): All scanned cards avoided/forbidden "
+                                f"(best score={cur_score}); rerolling via 再抽選"
+                            ),
+                            source="local_hybrid",
+                        )
                     skip_or_reject = next(
                         (
                             a for a in legal_actions
@@ -2223,9 +2414,14 @@ class LocalHybridDecisionAgent:
                         self._pending_change_gain_base_id = None
                 self._clear_reward_scan_state()
                 self._reward_reroll_attempts = 0
+                claim_reason = (
+                    f"LocalAgent(reward): All avoided & no reroll -> fallback 1-use-exhaust>SSR>SR>R>M>A (score={cur_score}) -> {claim_act.description}"
+                    if used_avoid_fallback
+                    else f"LocalAgent(reward): Claiming best evaluated card (score={cur_score}) -> {claim_act.description}"
+                )
                 return DecisionResult(
                     choice_id=claim_act.choice_id,
-                    reason=f"LocalAgent(reward): Claiming best evaluated card (score={cur_score}) -> {claim_act.description}",
+                    reason=claim_reason,
                     source="local_hybrid",
                 )
 
@@ -2264,6 +2460,17 @@ class LocalHybridDecisionAgent:
                     p_idol_id=resolved_pid,
                 )
                 if single_score <= -3_000:
+                    if avoid_reroll_ok and claim_name in ("受け取る", "次へ"):
+                        self._reward_reroll_attempts += 1
+                        self._clear_reward_scan_state()
+                        return DecisionResult(
+                            choice_id=reroll_act.choice_id,
+                            reason=(
+                                f"LocalAgent(reward): Single card avoided/forbidden "
+                                f"(score={single_score}); rerolling via 再抽選"
+                            ),
+                            source="local_hybrid",
+                        )
                     skip_or_reject = next(
                         (
                             a for a in legal_actions
@@ -2574,8 +2781,7 @@ class LocalHybridDecisionAgent:
                 ):
                     has_forbidden_in_deck = True
                 if (
-                    cid_di in self._avoid_card_ids
-                    or dbase in self._avoid_card_base_ids
+                    self._is_avoid_card(cid_di, base_id=dbase)
                     or (drow is not None and str(drow.get("rarity") or "").upper() == "N")
                 ):
                     has_basic_n_or_avoided = True

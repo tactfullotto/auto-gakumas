@@ -60,6 +60,7 @@ class ISMCTSConfig:
     prune_dominated_free_actions: bool = True
     free_action_prior_floor: float = 0.25
     memory_exile_prior_floor: float = 0.22
+    kimegao_combo_prior_floor: float = 0.45
 
 
 class ISMCTSAgent:
@@ -110,6 +111,8 @@ class ISMCTSAgent:
                     if has_troubles and sim.has_unused_memory_exile(inst) and float(priors[a]) < cfg.memory_exile_prior_floor:
                         priors[a] = max(float(priors[a]), cfg.memory_exile_prior_floor)
                         modified = True
+            if sim.plan_rules.apply_ismcts_priors(sim, legal_actions, action_map, priors, cfg):
+                modified = True
             if modified:
                 total = sum(max(0.0, float(priors[a])) for a in legal_actions)
                 if total > 0.0:
@@ -208,8 +211,13 @@ class ISMCTSAgent:
                 for a in root_legal:
                     root_mask[a] = True
         if cfg.prune_dominated_free_actions and len(root_legal) > 1:
+            rules = sim.plan_rules
             fin_win_d = getattr(self.codec, "finisher_play_max_turns_remaining", 2)
-            has_813_d = sim.has_unexhausted_card_family(813) if (fin_win_d > 0 and sim.double_card_effect_cards == 0) else False
+            has_813_d = (
+                sim.has_unexhausted_card_family(813)
+                if (rules.plan_name == "sense" and fin_win_d > 0 and sim.double_card_effect_cards == 0)
+                else False
+            )
             drink_filtered = [
                 a
                 for a in root_legal
@@ -232,8 +240,9 @@ class ISMCTSAgent:
                     root_mask[a] = True
 
             fin_window = getattr(self.codec, "finisher_play_max_turns_remaining", 2)
-            has_813 = sim.has_unexhausted_card_family(813)
+            has_813 = sim.has_unexhausted_card_family(813) if rules.plan_name == "sense" else False
             has_zeroing = sim.has_unexhausted_zeroing_finisher()
+            has_kimegao = sim.has_unexhausted_kimegao_card()
             hold_filtered = [
                 a
                 for a in root_legal
@@ -243,6 +252,7 @@ class ISMCTSAgent:
                     fin_window=fin_window,
                     has_813=has_813,
                     has_zeroing=has_zeroing,
+                    has_kimegao=has_kimegao,
                 )
             ]
             if hold_filtered and len(hold_filtered) != len(root_legal):
@@ -254,8 +264,8 @@ class ISMCTSAgent:
             if sim.double_card_effect_cards > 0 or sim.has_armed_active_retrigger(same_turn_only=True):
                 other_2x_targets = any(
                     root_map.get(a, ("", -1))[0] == "card"
-                    and not sim.is_trouble_card(sim.hand[root_map[a][1]].cfg)
-                    and not sim.is_resource_zeroing_finisher(sim.hand[root_map[a][1]].cfg)
+                    and not rules.is_trouble_card(sim.hand[root_map[a][1]].cfg)
+                    and not rules.is_resource_zeroing_finisher(sim.hand[root_map[a][1]].cfg)
                     and sim.hand[root_map[a][1]].cfg.rarity != "L"
                     and (sim.double_card_effect_cards > 0 or sim.hand[root_map[a][1]].cfg.card_type == "active")
                     for a in root_legal
@@ -277,104 +287,18 @@ class ISMCTSAgent:
                     for a in root_legal:
                         root_mask[a] = True
 
-            handled_armed_active = False
-            if sim.double_card_effect_cards > 0:
-                fin_root = {
-                    a
-                    for a in root_legal
-                    if root_map.get(a, ("", -1))[0] == "card"
-                    and sim.is_late_scaling_finisher(sim.hand[root_map[a][1]].cfg)
-                }
-                if fin_root:
-                    pruned_fin = [
-                        a
-                        for a in root_legal
-                        if a in fin_root
-                        or (
-                            root_map.get(a, ("", -1))[0] == "drink"
-                            and not sim.is_active_retrigger_drink(sim.available_drinks[root_map[a][1]])
-                        )
-                    ]
-                    if pruned_fin:
-                        root_legal = pruned_fin
-                        root_mask = np.zeros_like(root_mask)
-                        for a in root_legal:
-                            root_mask[a] = True
-                        handled_armed_active = True
-                elif (
-                    len(sim.hand) < sim.MAX_HAND_SIZE
-                    and any(c.cfg.base_id == 813 for z in (sim.draw_pile, sim.discard_pile) for c in z)
-                ):
-                    tutor_root = {
-                        a
-                        for a in root_legal
-                        if root_map.get(a, ("", -1))[0] == "drink"
-                        and sim.is_tutor_drink(sim.available_drinks[root_map[a][1]])
-                    }
-                    if tutor_root:
-                        pruned_tutor = [
-                            a
-                            for a in root_legal
-                            if a in tutor_root
-                            or (
-                                root_map.get(a, ("", -1))[0] == "drink"
-                                and sim.is_score_buff_drink(sim.available_drinks[root_map[a][1]])
-                            )
-                        ]
-                        root_legal = pruned_tutor
-                        root_mask = np.zeros_like(root_mask)
-                        for a in root_legal:
-                            root_mask[a] = True
-                        handled_armed_active = True
-                if (
-                    (not handled_armed_active)
-                    and sim.turns_remaining > 1
-                    and sim.turns_remaining <= max(2, fin_window)
-                    and len(sim.draw_pile) <= 3
-                    and any(c.cfg.base_id == 813 for c in sim.draw_pile)
-                    and self.codec.end_turn_action_id in root_legal
-                ):
-                    pruned_carry = [
-                        a
-                        for a in root_legal
-                        if a == self.codec.end_turn_action_id
-                        or (
-                            root_map.get(a, ("", -1))[0] == "drink"
-                            and not sim.is_active_retrigger_drink(sim.available_drinks[root_map[a][1]])
-                        )
-                    ]
-                    if pruned_carry:
-                        root_legal = pruned_carry
-                        root_mask = np.zeros_like(root_mask)
-                        for a in root_legal:
-                            root_mask[a] = True
-                        handled_armed_active = True
-
-            if (not handled_armed_active) and sim.has_armed_active_retrigger(same_turn_only=True):
-                active_root = {
-                    a
-                    for a in root_legal
-                    if root_map.get(a, ("", -1))[0] == "card"
-                    and sim.hand[root_map[a][1]].cfg.card_type == "active"
-                    and sim.hand[root_map[a][1]].cfg.rarity != "L"
-                    and not sim.is_resource_zeroing_finisher(sim.hand[root_map[a][1]].cfg)
-                }
-                if active_root:
-                    pruned_legal = [
-                        a
-                        for a in root_legal
-                        if a in active_root
-                        or (
-                            root_map.get(a, ("", -1))[0] == "drink"
-                            and not sim.is_active_retrigger_drink(sim.available_drinks[root_map[a][1]])
-                        )
-                    ]
-                    if pruned_legal:
-                        root_legal = pruned_legal
-                        root_mask = np.zeros_like(root_mask)
-                        for a in root_legal:
-                            root_mask[a] = True
-                        handled_armed_active = True
+            narrowed_root, handled_armed_active = rules.narrow_armed_or_combo_root_legal(
+                sim,
+                root_legal,
+                root_map,
+                fin_window=fin_window,
+                end_turn_action_id=self.codec.end_turn_action_id,
+            )
+            if narrowed_root is not None:
+                root_legal = narrowed_root
+                root_mask = np.zeros_like(root_mask)
+                for a in root_legal:
+                    root_mask[a] = True
 
             if not handled_armed_active and len(root_legal) > 1:
                 if sim.card_uses_remaining == 1:

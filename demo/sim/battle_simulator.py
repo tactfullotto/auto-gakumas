@@ -12,6 +12,14 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from demo.core.db import GakumasDB
+from demo.sim.plan_rules import (
+    COMMON_RULES,
+    LOGIC_RULES,
+    SENSE_RULES,
+    BasePlanBattleRules,
+    LogicBattleRules,
+    get_plan_rules,
+)
 
 
 def _safe_ceil(value: float) -> int:
@@ -1010,6 +1018,12 @@ class HeadlessBattleSimulator:
     MAX_HAND_SIZE = 5
     OPENING_DRAW = 3
     TURN_DRAW = 3
+    KIMEGAO_PLAY_MAX_TURNS_REMAINING = LogicBattleRules.KIMEGAO_PLAY_MAX_TURNS_REMAINING
+
+    @property
+    def plan_rules(self) -> BasePlanBattleRules:
+        """Return independent battle rules for this battle's produce plan."""
+        return get_plan_rules(getattr(self, "plan", None) or self.config.plan)
 
     def __init__(
         self,
@@ -1599,81 +1613,54 @@ class HeadlessBattleSimulator:
 
     @staticmethod
     def is_active_retrigger_drink(drink: DrinkConfig) -> bool:
-        """Return True if `drink` grants an Active-only card effect retrigger (e.g. #25 特製ハツボシエキス)."""
-        return drink.drink_id == 25 or ("doublecardeffectcards" in (drink.dsl_actions or "").lower())
+        """Return True if `drink` grants an Active-only card effect retrigger (Logic #25)."""
+        return LOGIC_RULES.is_active_retrigger_drink(drink)
+
+    @staticmethod
+    def is_kimegao_burst_card(cfg: CardConfig) -> bool:
+        """Return True for Logic #777/#778 びしっとキメ顔(+)."""
+        return LOGIC_RULES.is_kimegao_burst_card(cfg)
+
+    def has_unexhausted_kimegao_card(self) -> bool:
+        """Return True if any plan-owned #777/#778 card remains unexhausted."""
+        return self.plan_rules.has_unexhausted_kimegao_card(self)
+
+    def count_active_retrigger_drinks(self) -> int:
+        """Count available plan-owned Active-retrigger drinks remaining."""
+        rules = self.plan_rules
+        return sum(1 for d in self.available_drinks if rules.is_active_retrigger_drink(d))
 
     def can_use_active_retrigger_drink_now(self, drink: DrinkConfig) -> bool:
-        """Permit #25 only after dominating free non-Active cards are played and an Active card remains playable post-drink."""
-        if not self.is_active_retrigger_drink(drink):
-            return True
-        if self.has_armed_active_retrigger():
-            return False
-        if any(self.is_safe_dominating_free_card(c) and c.cfg.card_type != "active" for c in self.hand):
-            return False
-        if (
-            self.card_uses_remaining <= 0
-            or self.buffs.get("noCardUseTurns", 0) > 0
-            or self.buffs.get("noActiveTurns", 0) > 0
-        ):
-            return False
+        """Permit #25 only on Logic after dominating free non-Active cards and with an affordable Active card."""
+        return self.plan_rules.can_use_active_retrigger_drink_now(self, drink)
 
-        dsl_l = (drink.dsl_actions or "").lower()
-        m_stam = re.search(r"fixedstamina-=(\d+)", dsl_l)
-        stam_drop = int(m_stam.group(1)) if m_stam else (2 if drink.drink_id == 25 else 0)
-        adds_double_cost = ("doublecostturns+=" in dsl_l) or (drink.drink_id == 25)
-        post_stam = max(0, self.stamina - stam_drop)
+    def can_drink25_combo_kimegao_now(
+        self,
+        drink: DrinkConfig,
+        kimegao_inst: Optional[CardInstance] = None,
+    ) -> bool:
+        """Return True when Logic #25 can immediately combo with an affordable #777/#778 inside the last 5 turns."""
+        return self.plan_rules.can_drink25_combo_kimegao_now(self, drink, kimegao_inst=kimegao_inst)
 
-        orig_double_cost = int(self.buffs.get("doubleCostTurns", 0) or 0)
-        will_add_double = adds_double_cost and int(self.buffs.get("nullifyDebuff", 0) or 0) <= 0
-        try:
-            if will_add_double:
-                self.buffs["doubleCostTurns"] = orig_double_cost + 1
-            for inst in self.hand:
-                if inst.cfg.card_type != "active" or inst.cfg.rarity == "L":
-                    continue
-                if self.is_resource_zeroing_finisher(inst.cfg):
-                    continue
-                if not self.can_play_card(inst):
-                    continue
-                cost_var, eff_amt = self._effective_cost(inst.cfg)
-                if cost_var == "cost":
-                    if (self.genki + post_stam) >= eff_amt:
-                        return True
-                elif cost_var == "stamina":
-                    if post_stam >= eff_amt:
-                        return True
-                elif int(self.buffs.get(cost_var, 0) or 0) >= eff_amt:
-                    return True
-        finally:
-            if will_add_double:
-                self.buffs["doubleCostTurns"] = orig_double_cost
-        return False
+    def has_ready_drink25_kimegao_combo(self) -> bool:
+        """Return True if an available Active-retrigger drink can immediately combo with #777/#778."""
+        return self.plan_rules.has_ready_drink25_kimegao_combo(self)
 
     @staticmethod
     def is_late_scaling_finisher(cfg: CardConfig) -> bool:
-        """Return True for limit=1 finishers whose score scales with total cardsUsed (e.g. #813/#814)."""
-        return cfg.limit_count == 1 and (
-            cfg.base_id == 813 or "cardsUsed" in (cfg.dsl_actions or "")
-        )
+        """Return True for Sense limit=1 finishers whose score scales with total cardsUsed (#813/#814)."""
+        return SENSE_RULES.is_late_scaling_finisher(cfg)
 
     @staticmethod
     def is_resource_zeroing_finisher(cfg: CardConfig) -> bool:
-        """Return True for limit=1 finishers that scale on a stat and immediately zero it (e.g. #618/#619, #152/#153)."""
-        if cfg.base_id in (618, 152):
-            return True
-        if cfg.limit_count != 1:
-            return False
-        dsl = cfg.dsl_actions or ""
-        if "score+=" not in dsl:
-            return False
-        return bool(
-            re.search(r"\b(goodConditionTurns|genki|goodImpressionTurns|concentration)\s*=\s*0\b", dsl)
-        )
+        """Return True for limit=1 finishers that scale on a stat and immediately zero it (#618/#619, #152/#153)."""
+        return SENSE_RULES.is_resource_zeroing_finisher(cfg) or LOGIC_RULES.is_resource_zeroing_finisher(cfg)
 
     def has_unexhausted_zeroing_finisher(self) -> bool:
-        """Return True if any resource-zeroing solo finisher (#618/#619, #152/#153) remains unexhausted."""
+        """Return True if any plan-specific resource-zeroing solo finisher remains unexhausted."""
+        rules = self.plan_rules
         for zone in (self.hand, self.draw_pile, self.discard_pile):
-            if any(self.is_resource_zeroing_finisher(c.cfg) for c in zone):
+            if any(rules.is_resource_zeroing_finisher(c.cfg) for c in zone):
                 return True
         return False
 
@@ -1683,137 +1670,96 @@ class HeadlessBattleSimulator:
         *,
         has_other_double_target: bool = True,
     ) -> bool:
-        """Core engine rule: never waste armed 2x (#162/#163 or #25) on a resource-zeroing finisher."""
-        if not self.is_resource_zeroing_finisher(card_cfg) or card_cfg.rarity == "L":
-            return False
-        is_2x_target = self.double_card_effect_cards > 0 or (
-            self.has_armed_active_retrigger(same_turn_only=True) and card_cfg.card_type == "active"
-        )
-        if not is_2x_target:
-            return False
-        if self.turns_remaining > 1:
-            return True
-        if not has_other_double_target:
-            return False
-        if self.card_uses_remaining >= 2:
-            return True
-        return any(
-            self.can_play_card(inst)
-            and self.is_free_action_card(inst)
-            and not self.is_trouble_card(inst.cfg)
-            and not self.is_resource_zeroing_finisher(inst.cfg)
-            and inst.cfg.rarity != "L"
-            and (self.double_card_effect_cards > 0 or inst.cfg.card_type == "active")
-            for inst in self.hand
+        """Plan-scoped guard: never waste armed 2x on this plan's resource-zeroing finisher."""
+        return self.plan_rules.should_forbid_double_on_card(
+            self,
+            card_cfg,
+            has_other_double_target=has_other_double_target,
         )
 
     @staticmethod
     def is_double_effect_enabler(cfg: CardConfig) -> bool:
-        """Return True for cards that grant doubleCardEffectCards+= (e.g. #162/#163)."""
-        return cfg.base_id == 162 or "doubleCardEffectCards+=" in (cfg.dsl_actions or "")
+        """Return True for Sense cards that grant doubleCardEffectCards+= (#162/#163)."""
+        return SENSE_RULES.is_double_effect_enabler(cfg)
 
     @staticmethod
     def is_score_buff_drink(drink: DrinkConfig) -> bool:
-        """Return True for drinks granting independent score-gain multiplier (`setScoreBuff`, e.g. #12, #14)."""
-        return drink.drink_id in (12, 14) or "setscorebuff(" in (drink.dsl_actions or "").lower()
+        """Return True for drinks granting timed score-gain multiplier (`setScoreBuff`, e.g. #12, #14)."""
+        return COMMON_RULES.is_score_buff_drink(drink)
 
     @staticmethod
     def score_buff_drink_duration(drink: DrinkConfig) -> int:
         """Return timed turn duration for `setScoreBuff(amount, turns)` drinks (#12=3t, #14=5t)."""
-        dsl_l = (drink.dsl_actions or "").lower()
-        m_dur = re.search(r"setscorebuff\([^,]+,\s*(\d+)\)", dsl_l)
-        if m_dur:
-            return max(1, int(m_dur.group(1)))
-        if drink.drink_id == 12:
-            return 3
-        if drink.drink_id == 14:
-            return 5
-        return 0
+        return COMMON_RULES.score_buff_drink_duration(drink)
 
     @staticmethod
     def is_timed_score_buff_card(cfg: CardConfig) -> bool:
-        """Return True for single-use burst cards granting timed `setScoreBuff` (e.g. #775/#776 話題沸騰)."""
-        if cfg.base_id == 775:
-            return True
-        if cfg.limit_count == 1:
-            return bool(re.search(r"setscorebuff\([^,]+,\s*(\d+)\)", (cfg.dsl_actions or "").lower()))
-        return False
+        """Return True for Sense single-use burst cards granting timed `setScoreBuff` (#775/#776)."""
+        return SENSE_RULES.is_timed_score_buff_card(cfg)
 
     @staticmethod
     def is_tutor_drink(drink: DrinkConfig) -> bool:
-        """Return True for drinks that move a chosen card from draw/discard to hand (e.g. #22 初星黒酢)."""
-        return drink.drink_id == 22 or "moveselectedtohand" in (drink.dsl_actions or "").lower()
+        """Return True for Sense drinks that move a chosen card from draw/discard to hand (#22)."""
+        return SENSE_RULES.is_tutor_drink(drink)
 
     @staticmethod
     def is_trouble_card(card_cfg: CardConfig) -> bool:
         """Return True for trouble/interference cards (e.g. #23 眠気)."""
-        return card_cfg.card_type == "trouble" or card_cfg.base_id == 23 or card_cfg.card_id == 23
+        return COMMON_RULES.is_trouble_card(card_cfg)
 
     @staticmethod
     def drink_draw_count(drink: DrinkConfig) -> int:
         """Count immediate cards added/drawn to hand by a drink (ignoring delayed `at:` triggers)."""
-        dsl_l = (drink.dsl_actions or "").lower()
-        if HeadlessBattleSimulator.is_tutor_drink(drink) or "moveselectedtohand" in dsl_l:
-            return 1
-        top_part = re.split(r"\bat\s*:", re.sub(r"\{[^}]*\}", "", dsl_l), maxsplit=1)[0]
-        total = sum(int(m) for m in re.findall(r"drawcard\s*\(\s*(\d+)\s*\)", top_part))
-        rem_top = re.sub(r"drawcard\s*\([^)]*\)", "", top_part)
-        total += len(re.findall(r"\bdrawcard\b", rem_top))
-        return total
+        return SENSE_RULES.drink_draw_count(drink)
 
     @staticmethod
     def is_pure_extra_use_drink(drink: DrinkConfig) -> bool:
-        """Return True for pure +card-use drinks with no draw/score/buff side effects (e.g. #18 初星ホエイプロテイン)."""
-        if drink.drink_id == 18:
-            return True
-        dsl_l = (drink.dsl_actions or "").lower()
-        if "cardusesremaining+=" not in dsl_l:
-            return False
-        if (
-            HeadlessBattleSimulator.is_tutor_drink(drink)
-            or HeadlessBattleSimulator.is_score_buff_drink(drink)
-            or HeadlessBattleSimulator.is_active_retrigger_drink(drink)
-            or HeadlessBattleSimulator.drink_draw_count(drink) > 0
-        ):
-            return False
-        rem = re.sub(r"cardusesremaining\s*\+=\s*\d+", "", dsl_l)
-        rem = re.sub(r"[\s;]+", "", rem)
-        return rem == ""
+        """Return True for pure +card-use drinks with no draw/score/buff side effects (e.g. #18)."""
+        return COMMON_RULES.is_pure_extra_use_drink(drink)
 
     @staticmethod
     def is_hand_upgrade_drink(drink: DrinkConfig) -> bool:
-        """Return True for drinks that upgrade the current hand (e.g. #21 初星ブーストエナジー)."""
-        return drink.drink_id == 21 or "upgradehand" in (drink.dsl_actions or "").lower()
+        """Return True for Sense drinks that upgrade the current hand (#21)."""
+        return SENSE_RULES.is_hand_upgrade_drink(drink)
 
     def count_playable_non_free_cards(self, *, fin_window: int = 0, has_813: Optional[bool] = None) -> int:
         """Count playable non-trouble cards in hand that actually consume a card use."""
+        rules = self.plan_rules
         cnt = 0
         resolved_813: Optional[bool] = has_813
         for inst in self.hand:
-            if self.is_trouble_card(inst.cfg) or self.is_free_action_card(inst):
+            if rules.is_trouble_card(inst.cfg) or self.is_free_action_card(inst):
                 continue
             if not self.can_play_card(inst):
                 continue
+            if (
+                rules.is_kimegao_burst_card(inst.cfg)
+                and self.turns_remaining > self.KIMEGAO_PLAY_MAX_TURNS_REMAINING
+            ):
+                continue
+            if rules.is_resource_zeroing_finisher(inst.cfg) and self.turns_remaining > 1:
+                continue
             if fin_window > 0 and self.double_card_effect_cards == 0:
                 if resolved_813 is None:
-                    resolved_813 = self.has_unexhausted_card_family(813)
+                    resolved_813 = rules.plan_name == "sense" and self.has_unexhausted_card_family(813)
                 if self.should_hold_for_finisher(card_cfg=inst.cfg, fin_window=fin_window, has_813=resolved_813):
                     continue
             cnt += 1
         return cnt
 
     def can_use_drink(self, drink_cfg: DrinkConfig, *, hand_size: Optional[int] = None) -> bool:
-        """Core engine legality rule: forbid wasting tutor (#22)/draw drinks at 5-card cap or #18/#21 on empty hand."""
+        """Core engine legality rule: forbid wasting tutor/draw drinks at 5-card cap or #18/#21 on empty hand."""
+        rules = self.plan_rules
         h_sz = len(self.hand) if hand_size is None else int(hand_size)
         if h_sz <= 0 and (
-            self.is_pure_extra_use_drink(drink_cfg)
-            or self.is_hand_upgrade_drink(drink_cfg)
+            rules.is_pure_extra_use_drink(drink_cfg)
+            or rules.is_hand_upgrade_drink(drink_cfg)
         ):
             return False
         if h_sz >= self.MAX_HAND_SIZE:
-            if self.is_tutor_drink(drink_cfg):
+            if rules.is_tutor_drink(drink_cfg):
                 return False
-            if self.drink_draw_count(drink_cfg) > 0 and not self.is_score_buff_drink(drink_cfg):
+            if rules.drink_draw_count(drink_cfg) > 0 and not rules.is_score_buff_drink(drink_cfg):
                 return False
         return True
 
@@ -1832,13 +1778,14 @@ class HeadlessBattleSimulator:
         has_playable_non_finisher: Optional[bool] = None,
     ) -> bool:
         """Defer draw/tutor drinks that would overflow the 5-card hand cap when cards can be played first."""
+        rules = self.plan_rules
         h_sz = len(self.hand) if hand_size is None else int(hand_size)
         if not self.can_use_drink(drink_cfg, hand_size=h_sz):
             return True
-        need = self.drink_draw_count(drink_cfg)
+        need = rules.drink_draw_count(drink_cfg)
         if need <= 0:
             return False
-        if self.is_tutor_drink(drink_cfg):
+        if rules.is_tutor_drink(drink_cfg):
             return h_sz >= self.MAX_HAND_SIZE
         if h_sz + need <= self.MAX_HAND_SIZE:
             return False
@@ -1847,13 +1794,17 @@ class HeadlessBattleSimulator:
             if has_playable_non_finisher is not None
             else any(
                 self.can_play_card(inst)
-                and not self.is_late_scaling_finisher(inst.cfg)
-                and not (self.is_resource_zeroing_finisher(inst.cfg) and self.turns_remaining > 1)
-                and not self.is_trouble_card(inst.cfg)
+                and not rules.is_late_scaling_finisher(inst.cfg)
+                and not (rules.is_resource_zeroing_finisher(inst.cfg) and self.turns_remaining > 1)
+                and not (
+                    rules.is_kimegao_burst_card(inst.cfg)
+                    and self.turns_remaining > self.KIMEGAO_PLAY_MAX_TURNS_REMAINING
+                )
+                and not rules.is_trouble_card(inst.cfg)
                 for inst in self.hand
             )
         )
-        if self.is_score_buff_drink(drink_cfg) and self.turns_remaining <= 1:
+        if rules.is_score_buff_drink(drink_cfg) and self.turns_remaining <= 1:
             return bool(can_play_first)
         return bool(h_sz >= self.MAX_HAND_SIZE or can_play_first)
 
@@ -1869,6 +1820,7 @@ class HeadlessBattleSimulator:
         has_813: Optional[bool] = None,
     ) -> bool:
         """Defer drinks that overflow hand cap, waste upgradeHand on empty hand, or waste pure +1 use."""
+        rules = self.plan_rules
         if self.should_defer_drink_for_hand_cap(
             drink_cfg,
             hand_size=hand_size,
@@ -1876,9 +1828,9 @@ class HeadlessBattleSimulator:
         ):
             return True
         h_sz = len(self.hand) if hand_size is None else int(hand_size)
-        if self.is_hand_upgrade_drink(drink_cfg) and h_sz <= 0:
+        if rules.is_hand_upgrade_drink(drink_cfg) and h_sz <= 0:
             return True
-        if self.is_pure_extra_use_drink(drink_cfg):
+        if rules.is_pure_extra_use_drink(drink_cfg):
             cur_uses = max(1, int(self.card_uses_remaining if card_uses_remaining is None else card_uses_remaining))
             non_free = (
                 int(playable_non_free_cards)
@@ -1916,39 +1868,18 @@ class HeadlessBattleSimulator:
         fin_window: int,
         has_813: Optional[bool] = None,
         has_zeroing: Optional[bool] = None,
+        has_kimegao: Optional[bool] = None,
     ) -> bool:
-        """Hold finishers, 2x enablers, tutor drinks, and timed score-buff multipliers until the late burst window."""
-        # Core engine rule: resource-zeroing solo finishers (#618/#619 gc=0, #152/#153 genki=0)
-        # MUST be held until the final turn (turns_remaining == 1), even if 2x is armed!
-        if card_cfg is not None and self.is_resource_zeroing_finisher(card_cfg) and self.turns_remaining > 1:
-            return True
-        if fin_window <= 0:
-            return False
-        has_fin = has_813 if has_813 is not None else self.has_unexhausted_card_family(813)
-        has_zfin = has_zeroing if has_zeroing is not None else self.has_unexhausted_zeroing_finisher()
-        has_any_fin = has_fin or has_zfin
-        # In a #813/#814 deck, armed 2x unlocks immediate burst (finisher / #22 tutor / #12/#14).
-        # In a pure resource-zeroing finisher deck (#618/#619, #152/#153 without #813), early #162/#163
-        # carries across turns and must NOT prematurely burn #22 tutor or #12/#14/#775 outside the burst window!
-        if self.double_card_effect_cards > 0 and (has_fin or not has_zfin):
-            return False
-        if card_cfg is not None:
-            if self.double_card_effect_cards == 0 and self.turns_remaining > fin_window:
-                if self.is_late_scaling_finisher(card_cfg):
-                    return True
-                # Only hold #162/#163 for 2x-compatible finishers (#813/#814), NEVER for resource-zeroing finishers
-                if has_fin and self.is_double_effect_enabler(card_cfg):
-                    return True
-            if has_any_fin and self.is_timed_score_buff_card(card_cfg) and self.turns_remaining > max(3, fin_window + 1):
-                return True
-        if drink_cfg is not None and has_any_fin:
-            if self.is_tutor_drink(drink_cfg) and self.turns_remaining > fin_window:
-                return True
-            if self.is_score_buff_drink(drink_cfg):
-                dur = self.score_buff_drink_duration(drink_cfg)
-                if dur > 0 and self.turns_remaining > dur:
-                    return True
-        return False
+        """Hold plan-specific burst cards/drinks until their optimal windows."""
+        return self.plan_rules.should_hold_action(
+            self,
+            card_cfg=card_cfg,
+            drink_cfg=drink_cfg,
+            fin_window=fin_window,
+            has_813=has_813,
+            has_zeroing=has_zeroing,
+            has_kimegao=has_kimegao,
+        )
 
     def has_unexhausted_card_family(self, base_id: int) -> bool:
         """Return True if any card with `base_id` remains in hand, draw pile, or discard pile."""
@@ -1976,8 +1907,9 @@ class HeadlessBattleSimulator:
         # Do not force a lower-value Active card to consume #25 Active-only retrigger
         if self.has_armed_active_retrigger() and cfg_c.card_type == "active" and cfg_c.rarity != "L":
             return False
-        # Never auto-force #162/#163 double-effect enablers or resource-zeroing finishers prematurely
-        if self.is_double_effect_enabler(cfg_c) or self.is_resource_zeroing_finisher(cfg_c):
+        # Never auto-force plan double-effect enablers or resource-zeroing finishers prematurely
+        rules_free = self.plan_rules
+        if rules_free.is_double_effect_enabler(cfg_c) or rules_free.is_resource_zeroing_finisher(cfg_c):
             return False
         # Do not force a limit_count==1 card early when one of its conditional bonus blocks is currently False
         if cfg_c.limit_count == 1 and self.turns_remaining > 2:

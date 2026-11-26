@@ -447,7 +447,7 @@ def build_live_battle_config(
     )
 
 
-_POLICY_DISK_CACHE_VERSION = "v1"
+_POLICY_DISK_CACHE_VERSION = "v3"
 _MAX_POLICY_DISK_CACHE_FILES = 64
 
 
@@ -1286,20 +1286,43 @@ class LiveBattlePlanner:
             base_id == 813 or "cardsUsed" in str(crow.get("dsl_actions") or "")
         )
 
-    def _is_resource_zeroing_finisher_card(self, card_id: int) -> bool:
-        """Return True for limit=1 finishers that scale on a stat and zero it out (e.g. #618/#619, #152/#153)."""
+    def _is_resource_zeroing_finisher_card(self, card_id: int, *, plan: Optional[str] = None) -> bool:
+        """Return True for limit=1 finishers that scale on a stat and zero it out (Sense #618/#619, Logic #152/#153)."""
         if int(card_id or 0) <= 0:
             return False
+        eff_plan = str(
+            plan if plan is not None else (self._battle_cfg.plan if self._battle_cfg is not None else "")
+        ).strip().lower()
         crow = self.db.get_card_by_id(int(card_id))
         if not crow:
+            if eff_plan == "sense":
+                return int(card_id) in (618, 619)
+            if eff_plan == "logic":
+                return int(card_id) in (152, 153)
+            if eff_plan == "anomaly":
+                return False
             return int(card_id) in (618, 619, 152, 153)
         base_id = int(crow.get("base_id") or card_id)
+        dsl = str(crow.get("dsl_actions") or "")
+        if eff_plan == "sense":
+            if base_id == 618:
+                return True
+            if crow.get("limit_count") != 1 or "score+=" not in dsl:
+                return False
+            return bool(re.search(r"\b(goodConditionTurns|concentration)\s*=\s*0\b", dsl))
+        if eff_plan == "logic":
+            if base_id == 152:
+                return True
+            if crow.get("limit_count") != 1 or "score+=" not in dsl:
+                return False
+            return bool(re.search(r"\b(genki|goodImpressionTurns)\s*=\s*0\b", dsl))
+        if eff_plan == "anomaly":
+            return False
         if base_id in (618, 152):
             return True
-        if crow.get("limit_count") != 1:
+        if crow.get("limit_count") != 1 or "score+=" not in dsl:
             return False
-        dsl = str(crow.get("dsl_actions") or "")
-        return "score+=" in dsl and bool(
+        return bool(
             re.search(r"\b(goodConditionTurns|genki|goodImpressionTurns|concentration)\s*=\s*0\b", dsl)
         )
 
@@ -1312,6 +1335,11 @@ class LiveBattlePlanner:
             return False
         base_id = int(crow.get("base_id") or card_id)
         return base_id == 162 or "doubleCardEffectCards+=" in str(crow.get("dsl_actions") or "")
+
+    @staticmethod
+    def _is_kimegao_burst_card_id(card_id: int) -> bool:
+        """Return True for #777/#778 びしっとキメ顔(+)."""
+        return int(card_id or 0) in (777, 778)
 
     def _is_active_retrigger_drink(self, drink_id: int) -> bool:
         """Return True if drink grants a same-turn Active-only card effect retrigger (e.g. #25 特製ハツボシエキス)."""
@@ -1435,25 +1463,51 @@ class LiveBattlePlanner:
                 )
                 return u_act.choice_id, reason_u, {"best_q_score": float(self._sim.score), "unmapped_override": True}
 
+        active_plan = str(
+            (self._battle_cfg.plan if self._battle_cfg is not None else None) or obs.plan or ""
+        ).strip().lower()
+        is_sense_plan = active_plan == "sense"
+        is_logic_plan = active_plan == "logic"
         live_rem_turns = max(1, int(self._sim.turns_remaining or obs.turns_remaining or 1))
-        has_unexhausted_813 = self._sim.has_unexhausted_card_family(813) or any(
-            self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0))
-            for a in legal_actions
-            if a.action_type == "play_card"
+        has_unexhausted_813 = is_sense_plan and (
+            self._sim.has_unexhausted_card_family(813)
+            or any(
+                self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0))
+                for a in legal_actions
+                if a.action_type == "play_card"
+            )
         )
         has_unexhausted_zeroing = self._sim.has_unexhausted_zeroing_finisher() or any(
-            self._is_resource_zeroing_finisher_card(int((a.payload or {}).get("card_id") or 0))
+            self._is_resource_zeroing_finisher_card(int((a.payload or {}).get("card_id") or 0), plan=active_plan)
             for a in legal_actions
             if a.action_type == "play_card"
         )
         has_any_late_fin = has_unexhausted_813 or has_unexhausted_zeroing
+        has_unexhausted_kimegao = is_logic_plan and (
+            self._sim.has_unexhausted_kimegao_card()
+            or any(
+                self._is_kimegao_burst_card_id(int((a.payload or {}).get("card_id") or 0))
+                for a in legal_actions
+                if a.action_type == "play_card"
+            )
+        )
+        kimegao_hold_now = is_logic_plan and (live_rem_turns > self._sim.KIMEGAO_PLAY_MAX_TURNS_REMAINING)
+        kimegao_in_live_hand = is_logic_plan and (
+            any(
+                a.action_type == "play_card"
+                and self._is_kimegao_burst_card_id(int((a.payload or {}).get("card_id") or 0))
+                for a in legal_actions
+            )
+            or any(self._sim.plan_rules.is_kimegao_burst_card(c.cfg) for c in self._sim.hand)
+        )
         fin_window = (
             max(1, int(self.cfg.finisher_hold_min_turns_remaining) - 1)
-            if self.cfg.prefer_double_effect_before_finisher
+            if (is_sense_plan and self.cfg.prefer_double_effect_before_finisher)
             else 0
         )
         hold_for_final_turns = (
-            self.cfg.prefer_double_effect_before_finisher
+            is_sense_plan
+            and self.cfg.prefer_double_effect_before_finisher
             and live_rem_turns >= self.cfg.finisher_hold_min_turns_remaining
             and self._sim.double_card_effect_cards == 0
         )
@@ -1461,7 +1515,7 @@ class LiveBattlePlanner:
         has_playable_non_l_active = any(
             act.action_type == "play_card"
             and self._is_non_l_active_card_id(int((act.payload or {}).get("card_id") or 0))
-            and not self._is_resource_zeroing_finisher_card(int((act.payload or {}).get("card_id") or 0))
+            and not self._is_resource_zeroing_finisher_card(int((act.payload or {}).get("card_id") or 0), plan=active_plan)
             for act in legal_actions
         )
 
@@ -1472,8 +1526,9 @@ class LiveBattlePlanner:
         )
         has_playable_non_fin = any(
             a.action_type == "play_card"
-            and not self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0))
-            and not (live_rem_turns > 1 and self._is_resource_zeroing_finisher_card(int((a.payload or {}).get("card_id") or 0)))
+            and not (is_sense_plan and self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0)))
+            and not (live_rem_turns > 1 and self._is_resource_zeroing_finisher_card(int((a.payload or {}).get("card_id") or 0), plan=active_plan))
+            and not (kimegao_hold_now and self._is_kimegao_burst_card_id(int((a.payload or {}).get("card_id") or 0)))
             and int((a.payload or {}).get("card_id") or 0) != 23
             for a in legal_actions
         )
@@ -1485,10 +1540,13 @@ class LiveBattlePlanner:
             cid_nf = int((act.payload or {}).get("card_id") or 0)
             if cid_nf == 23:
                 continue
-            if live_rem_turns > 1 and self._is_resource_zeroing_finisher_card(cid_nf):
+            if live_rem_turns > 1 and self._is_resource_zeroing_finisher_card(cid_nf, plan=active_plan):
+                continue
+            if kimegao_hold_now and self._is_kimegao_burst_card_id(cid_nf):
                 continue
             if (
-                fin_window > 0
+                is_sense_plan
+                and fin_window > 0
                 and self._sim.double_card_effect_cards == 0
                 and hold_for_final_turns
                 and (
@@ -1527,7 +1585,7 @@ class LiveBattlePlanner:
                     dr_cfg = next((d for d in self._sim.available_drinks if d.drink_id == did), None)
                     if dr_cfg is not None and not self._sim.can_use_drink(dr_cfg, hand_size=live_hand_size):
                         return False
-                    if self._is_tutor_drink(did) and live_hand_size >= self._sim.MAX_HAND_SIZE:
+                    if is_sense_plan and self._is_tutor_drink(did) and live_hand_size >= self._sim.MAX_HAND_SIZE:
                         return False
                     if dr_cfg is not None and self._sim.should_defer_drink_now(
                         dr_cfg,
@@ -1538,33 +1596,52 @@ class LiveBattlePlanner:
                     ):
                         return False
                     if self._is_active_retrigger_drink(did):
-                        if not has_playable_non_l_active:
+                        if not is_logic_plan or not has_playable_non_l_active:
                             return False
                         if dr_cfg is not None and not self._sim.can_use_active_retrigger_drink_now(dr_cfg):
                             return False
-                    hold_drinks_now = fin_window > 0 and has_any_late_fin and (
-                        self._sim.double_card_effect_cards == 0
-                        or (has_unexhausted_zeroing and not has_unexhausted_813)
+                        if has_unexhausted_kimegao:
+                            if kimegao_hold_now:
+                                return False
+                            if (
+                                live_rem_turns >= 3
+                                and self._sim.count_active_retrigger_drinks() <= 1
+                                and not kimegao_in_live_hand
+                            ):
+                                return False
+                    hold_drinks_now = has_any_late_fin and (
+                        (
+                            is_sense_plan
+                            and fin_window > 0
+                            and (
+                                self._sim.double_card_effect_cards == 0
+                                or (has_unexhausted_zeroing and not has_unexhausted_813)
+                            )
+                        )
+                        or (is_logic_plan and has_unexhausted_zeroing and self.cfg.prefer_double_effect_before_finisher)
                     )
                     if hold_drinks_now:
-                        if self._is_tutor_drink(did) and live_rem_turns >= self.cfg.finisher_hold_min_turns_remaining:
+                        if is_sense_plan and self._is_tutor_drink(did) and live_rem_turns >= self.cfg.finisher_hold_min_turns_remaining:
                             return False
                         is_sb, sb_dur, _amt = self._score_buff_drink_info(did)
                         if is_sb and 0 < sb_dur < 999 and live_rem_turns > sb_dur:
                             return False
                 elif act.action_type == "play_card":
                     cid = int((act.payload or {}).get("card_id") or 0)
-                    # Core engine rule: hold resource-zeroing solo finishers (#618/#619, #152/#153) until final turn
-                    if live_rem_turns > 1 and self._is_resource_zeroing_finisher_card(cid):
+                    # Core engine rule: hold this plan's resource-zeroing solo finisher until final turn
+                    if live_rem_turns > 1 and self._is_resource_zeroing_finisher_card(cid, plan=active_plan):
                         return False
-                    if fin_window > 0 and self._sim.double_card_effect_cards == 0:
+                    if kimegao_hold_now and self._is_kimegao_burst_card_id(cid):
+                        return False
+                    if is_sense_plan and fin_window > 0 and self._sim.double_card_effect_cards == 0:
                         if hold_for_final_turns and (
                             self._is_late_scaling_finisher_card(cid)
                             or (self._is_double_effect_enabler_card(cid) and has_unexhausted_813)
                         ):
                             return False
                     if (
-                        fin_window > 0
+                        is_sense_plan
+                        and fin_window > 0
                         and has_any_late_fin
                         and (self._sim.double_card_effect_cards == 0 or (has_unexhausted_zeroing and not has_unexhausted_813))
                         and self._is_timed_score_buff_card_id(cid)
@@ -1598,7 +1675,7 @@ class LiveBattlePlanner:
                     allowed_root.discard(self._codec.end_turn_action_id)
 
             locked_fin_2x = False
-            if self._sim.double_card_effect_cards > 0 and allowed_root:
+            if is_sense_plan and self._sim.double_card_effect_cards > 0 and allowed_root:
                 fin_root_aids = {
                     aid
                     for aid in allowed_root
@@ -1627,7 +1704,7 @@ class LiveBattlePlanner:
                 other_root_2x_target = any(
                     aid_to_ui[aid].action_type == "play_card"
                     and int((aid_to_ui[aid].payload or {}).get("card_id") or 0) != 23
-                    and not self._is_resource_zeroing_finisher_card(int((aid_to_ui[aid].payload or {}).get("card_id") or 0))
+                    and not self._is_resource_zeroing_finisher_card(int((aid_to_ui[aid].payload or {}).get("card_id") or 0), plan=active_plan)
                     and (
                         self._sim.double_card_effect_cards > 0
                         or self._is_non_l_active_card_id(int((aid_to_ui[aid].payload or {}).get("card_id") or 0))
@@ -1639,7 +1716,7 @@ class LiveBattlePlanner:
                     if aid_to_ui[aid].action_type != "play_card":
                         continue
                     cid_2x = int((aid_to_ui[aid].payload or {}).get("card_id") or 0)
-                    if not self._is_resource_zeroing_finisher_card(cid_2x):
+                    if not self._is_resource_zeroing_finisher_card(cid_2x, plan=active_plan):
                         continue
                     inst_2x = next(
                         (c for c in self._sim.hand if c.cfg.card_id == cid_2x or c.cfg.base_id == cid_2x),
@@ -1653,15 +1730,28 @@ class LiveBattlePlanner:
                 if forbid_root_2x and len(forbid_root_2x) < len(allowed_root):
                     allowed_root = {aid for aid in allowed_root if aid not in forbid_root_2x}
 
-            if (not locked_fin_2x) and self._sim.has_armed_active_retrigger(same_turn_only=True) and allowed_root:
+            if (
+                is_logic_plan
+                and (not locked_fin_2x)
+                and self._sim.has_armed_active_retrigger(same_turn_only=True)
+                and allowed_root
+            ):
                 active_root_aids = {
                     aid
                     for aid in allowed_root
                     if aid_to_ui[aid].action_type == "play_card"
                     and self._is_non_l_active_card_id(int((aid_to_ui[aid].payload or {}).get("card_id") or 0))
-                    and not self._is_resource_zeroing_finisher_card(int((aid_to_ui[aid].payload or {}).get("card_id") or 0))
+                    and not self._is_resource_zeroing_finisher_card(int((aid_to_ui[aid].payload or {}).get("card_id") or 0), plan=active_plan)
                 }
                 if active_root_aids:
+                    if not kimegao_hold_now:
+                        kimegao_root_aids = {
+                            aid
+                            for aid in active_root_aids
+                            if self._is_kimegao_burst_card_id(int((aid_to_ui[aid].payload or {}).get("card_id") or 0))
+                        }
+                        if kimegao_root_aids:
+                            active_root_aids = kimegao_root_aids
                     armed_pool = {
                         aid
                         for aid in allowed_root
@@ -1673,6 +1763,64 @@ class LiveBattlePlanner:
                     }
                     if armed_pool:
                         allowed_root = armed_pool
+
+            if (
+                is_logic_plan
+                and not locked_fin_2x
+                and not kimegao_hold_now
+                and not self._sim.has_armed_active_retrigger(same_turn_only=True)
+                and self._sim.double_card_effect_cards == 0
+                and allowed_root
+                and any(
+                    a.action_type == "play_card"
+                    and self._is_kimegao_burst_card_id(int((a.payload or {}).get("card_id") or 0))
+                    for a in legal_actions
+                )
+            ):
+                d25_combo_root_aids = {
+                    aid
+                    for aid in allowed_root
+                    if aid_to_ui[aid].action_type == "use_drink"
+                    and self._is_active_retrigger_drink(int((aid_to_ui[aid].payload or {}).get("drink_id") or 0))
+                    and (
+                        dr_cfg_km := next(
+                            (
+                                d
+                                for d in self._sim.available_drinks
+                                if d.drink_id == int((aid_to_ui[aid].payload or {}).get("drink_id") or 0)
+                            ),
+                            None,
+                        )
+                    )
+                    is not None
+                    and self._sim.can_drink25_combo_kimegao_now(dr_cfg_km)
+                }
+                if d25_combo_root_aids:
+                    naked_km_aids = {
+                        aid
+                        for aid in allowed_root
+                        if aid_to_ui[aid].action_type == "play_card"
+                        and self._is_kimegao_burst_card_id(int((aid_to_ui[aid].payload or {}).get("card_id") or 0))
+                    }
+                    if naked_km_aids and len(naked_km_aids) < len(allowed_root):
+                        allowed_root = {aid for aid in allowed_root if aid not in naked_km_aids}
+                    if live_rem_turns >= 2:
+                        combo_root_pool = set(d25_combo_root_aids)
+                        for aid in allowed_root:
+                            act_c = aid_to_ui[aid]
+                            if act_c.action_type == "use_drink":
+                                if not self._is_active_retrigger_drink(int((act_c.payload or {}).get("drink_id") or 0)):
+                                    combo_root_pool.add(aid)
+                            elif act_c.action_type == "play_card":
+                                cid_c = int((act_c.payload or {}).get("card_id") or 0)
+                                inst_c = next(
+                                    (c for c in self._sim.hand if c.cfg.card_id == cid_c or c.cfg.base_id == cid_c),
+                                    None,
+                                )
+                                if inst_c is not None and self._sim.is_safe_dominating_free_card(inst_c):
+                                    combo_root_pool.add(aid)
+                        if combo_root_pool:
+                            allowed_root = combo_root_pool
 
         best_aid, mcts_stats = self._ismcts.select_action(self._sim, self._rng, allowed_root_actions=allowed_root)
         chosen_ui = aid_to_ui.get(best_aid)
@@ -1755,12 +1903,23 @@ class LiveBattlePlanner:
                 u_cid = int((u_act.payload or {}).get("card_id") or 0)
                 if u_cid == 23:
                     continue
+                if (kimegao_hold_now and self._is_kimegao_burst_card_id(u_cid)) or (
+                    live_rem_turns > 1 and self._is_resource_zeroing_finisher_card(u_cid, plan=active_plan)
+                ):
+                    continue
                 if hold_for_final_turns and (
                     self._is_late_scaling_finisher_card(u_cid)
                     or (self._is_double_effect_enabler_card(u_cid) and has_unexhausted_813)
                 ):
                     continue
                 if require_armed_active and not self._is_non_l_active_card_id(u_cid):
+                    continue
+                if (
+                    is_logic_plan
+                    and require_armed_active
+                    and self._is_kimegao_burst_card_id(int((chosen_ui.payload or {}).get("card_id") or 0))
+                    and not self._is_kimegao_burst_card_id(u_cid)
+                ):
                     continue
                 matched_u = _match_unmapped_hand(u_act)
                 if matched_u is None:
@@ -1804,14 +1963,17 @@ class LiveBattlePlanner:
         if chosen_ui.action_type == "end_turn" and obs.stamina >= 4:
             non_trouble_cards = [
                 a for a in legal_actions
-                if a.action_type == "play_card" and int((a.payload or {}).get("card_id") or 0) != 23
+                if a.action_type == "play_card"
+                and int((a.payload or {}).get("card_id") or 0) != 23
+                and not (kimegao_hold_now and self._is_kimegao_burst_card_id(int((a.payload or {}).get("card_id") or 0)))
+                and not (live_rem_turns > 1 and self._is_resource_zeroing_finisher_card(int((a.payload or {}).get("card_id") or 0), plan=active_plan))
             ]
-            if self._sim.double_card_effect_cards > 0 and live_rem_turns > 1 and has_unexhausted_813:
+            if is_sense_plan and self._sim.double_card_effect_cards > 0 and live_rem_turns > 1 and has_unexhausted_813:
                 non_trouble_cards = [
                     a for a in non_trouble_cards
                     if self._is_late_scaling_finisher_card(int((a.payload or {}).get("card_id") or 0))
                 ]
-            elif live_rem_turns >= self.cfg.finisher_hold_min_turns_remaining:
+            elif is_sense_plan and live_rem_turns >= self.cfg.finisher_hold_min_turns_remaining:
                 filtered_non_hold = []
                 for a in non_trouble_cards:
                     a_cid = int((a.payload or {}).get("card_id") or 0)
@@ -1873,7 +2035,7 @@ class LiveBattlePlanner:
                     chosen_ui = trouble_cards[0]
                     override_note = " [Exile #23 眠気 instead of blank SKIP]"
 
-        if self.cfg.prefer_double_effect_before_finisher and chosen_ui is not None:
+        if is_sense_plan and self.cfg.prefer_double_effect_before_finisher and chosen_ui is not None:
             chosen_cid = int((chosen_ui.payload or {}).get("card_id") or 0)
             playable_cards = [
                 a for a in legal_actions
@@ -2134,7 +2296,7 @@ class LiveBattlePlanner:
             chosen_already_free = bool(
                 chosen_ui.action_type == "play_card"
                 and (
-                    self._is_double_effect_enabler_card(chosen_cid_mem)
+                    (is_sense_plan and self._is_double_effect_enabler_card(chosen_cid_mem))
                     or (chosen_inst_mem is not None and self._sim.is_free_action_card(chosen_inst_mem))
                     or "不耗行动点" in str(chosen_ui.description or "")
                 )
@@ -2159,6 +2321,155 @@ class LiveBattlePlanner:
                     chosen_ui = mem_free_act
                     override_note += " [Memory Free+1 Action]"
 
+        def _is_card_held_now(card_id_chk: int) -> bool:
+            if live_rem_turns > 1 and self._is_resource_zeroing_finisher_card(card_id_chk, plan=active_plan):
+                return True
+            if kimegao_hold_now and self._is_kimegao_burst_card_id(card_id_chk):
+                return True
+            if is_sense_plan and hold_for_final_turns and (
+                self._is_late_scaling_finisher_card(card_id_chk)
+                or (self._is_double_effect_enabler_card(card_id_chk) and has_unexhausted_813)
+            ):
+                return True
+            return False
+
+        def _rank_non_held_card(act_c: LegalAction) -> Tuple[int, float]:
+            top_q_g = {str(nm): float(qv) for nm, _cnt, qv in (mcts_stats.get("top_actions") or [])}
+            aid_c = next((aid for aid, a in aid_to_ui.items() if a.choice_id == act_c.choice_id), None)
+            qv_c = top_q_g.get(self._codec.action_name(aid_c), -1e9) if aid_c is not None else -1e9
+            is_free_c = 1 if ("不耗行动点" in str(act_c.description or "") or "🟢0消耗" in str(act_c.description or "")) else 0
+            return (is_free_c, qv_c)
+
+        # Hard guard: hold #777/#778 for the last 5 turns (turns_remaining <= 5).
+        if (
+            chosen_ui is not None
+            and kimegao_hold_now
+            and chosen_ui.action_type == "play_card"
+            and self._is_kimegao_burst_card_id(int((chosen_ui.payload or {}).get("card_id") or 0))
+        ):
+            non_held_cards_km = [
+                a for a in legal_actions
+                if a.action_type == "play_card"
+                and int((a.payload or {}).get("card_id") or 0) != 23
+                and not _is_card_held_now(int((a.payload or {}).get("card_id") or 0))
+            ]
+            trouble_alt_km = next(
+                (a for a in legal_actions if a.action_type == "play_card" and int((a.payload or {}).get("card_id") or 0) == 23),
+                None,
+            )
+            end_alt_km = next((a for a in legal_actions if a.action_type == "end_turn"), None)
+            if non_held_cards_km:
+                chosen_ui = max(non_held_cards_km, key=_rank_non_held_card)
+            elif trouble_alt_km is not None and self._sim.is_trouble_exile_mandatory(turns_remaining=live_rem_turns):
+                chosen_ui = trouble_alt_km
+            elif end_alt_km is not None:
+                chosen_ui = end_alt_km
+            override_note += " [Hold #777/#778 for last 5 turns]"
+
+        # Hard guard: hold #25 for #777/#778 in the last 5 turns while #777/#778 remains unexhausted.
+        if (
+            chosen_ui is not None
+            and kimegao_hold_now
+            and has_unexhausted_kimegao
+            and chosen_ui.action_type == "use_drink"
+            and self._is_active_retrigger_drink(int((chosen_ui.payload or {}).get("drink_id") or 0))
+        ):
+            cur_uses_km = max(1, int(self._sim.card_uses_remaining))
+            non_held_cards_d25 = [
+                a for a in legal_actions
+                if a.action_type == "play_card"
+                and int((a.payload or {}).get("card_id") or 0) != 23
+                and not _is_card_held_now(int((a.payload or {}).get("card_id") or 0))
+            ]
+            trouble_alt_d25 = next(
+                (a for a in legal_actions if a.action_type == "play_card" and int((a.payload or {}).get("card_id") or 0) == 23),
+                None,
+            )
+            safe_drinks_d25 = [
+                a for a in legal_actions
+                if a.action_type == "use_drink"
+                and not self._is_active_retrigger_drink(int((a.payload or {}).get("drink_id") or 0))
+                and not self._is_tutor_drink(int((a.payload or {}).get("drink_id") or 0))
+                and not (int((a.payload or {}).get("drink_id") or 0) == 18 and live_playable_non_free <= cur_uses_km)
+                and not (int((a.payload or {}).get("drink_id") or 0) == 21 and live_hand_size <= 0)
+                and not _is_banned_drink(
+                    (a.payload or {}).get("drink_id"),
+                    str((a.payload or {}).get("name") or ""),
+                    str(a.description or ""),
+                    banned_ids=self.banned_drink_ids,
+                )
+            ]
+            end_alt_d25 = next((a for a in legal_actions if a.action_type == "end_turn"), None)
+            if non_held_cards_d25:
+                chosen_ui = max(non_held_cards_d25, key=_rank_non_held_card)
+            elif trouble_alt_d25 is not None and self._sim.is_trouble_exile_mandatory(turns_remaining=live_rem_turns):
+                chosen_ui = trouble_alt_d25
+            elif safe_drinks_d25:
+                chosen_ui = safe_drinks_d25[0]
+            elif end_alt_d25 is not None:
+                chosen_ui = end_alt_d25
+            override_note += " [Hold #25 for #777/#778 last 5 turns]"
+
+        # Hard guard: on Logic inside the last 5 turns, combo #25 -> #777/#778 cleanly and lock armed #25 onto #777/#778.
+        kimegao_act_guard = (
+            next(
+                (
+                    a for a in legal_actions
+                    if a.action_type == "play_card"
+                    and self._is_kimegao_burst_card_id(int((a.payload or {}).get("card_id") or 0))
+                ),
+                None,
+            )
+            if is_logic_plan
+            else None
+        )
+        if is_logic_plan and chosen_ui is not None and not kimegao_hold_now and kimegao_act_guard is not None:
+            chosen_cid_g3 = int((chosen_ui.payload or {}).get("card_id") or 0) if chosen_ui.action_type == "play_card" else 0
+            if self._sim.has_armed_active_retrigger(same_turn_only=True):
+                if chosen_ui.action_type == "end_turn" or (
+                    chosen_ui.action_type == "play_card" and not self._is_kimegao_burst_card_id(chosen_cid_g3)
+                ):
+                    chosen_ui = kimegao_act_guard
+                    override_note += " [Armed #25->#777/#778]"
+            elif self._sim.double_card_effect_cards == 0:
+                d25_combo_act = None
+                for a in legal_actions:
+                    if a.action_type != "use_drink":
+                        continue
+                    did_g3 = int((a.payload or {}).get("drink_id") or 0)
+                    if not self._is_active_retrigger_drink(did_g3):
+                        continue
+                    if _is_banned_drink(
+                        did_g3,
+                        str((a.payload or {}).get("name") or ""),
+                        str(a.description or ""),
+                        banned_ids=self.banned_drink_ids,
+                    ):
+                        continue
+                    dr_cfg_g3 = next((d for d in self._sim.available_drinks if d.drink_id == did_g3), None)
+                    if dr_cfg_g3 is not None and self._sim.can_drink25_combo_kimegao_now(dr_cfg_g3):
+                        d25_combo_act = a
+                        break
+                if d25_combo_act is not None:
+                    chosen_inst_g3 = (
+                        next((c for c in self._sim.hand if c.cfg.card_id == chosen_cid_g3 or c.cfg.base_id == chosen_cid_g3), None)
+                        if chosen_cid_g3 > 0
+                        else None
+                    )
+                    chosen_is_free_action = bool(
+                        chosen_ui.action_type == "play_card"
+                        and (
+                            "不耗行动点" in str(chosen_ui.description or "")
+                            or (chosen_inst_g3 is not None and self._sim.is_free_action_card(chosen_inst_g3))
+                        )
+                    )
+                    if chosen_ui.action_type == "play_card" and self._is_kimegao_burst_card_id(chosen_cid_g3):
+                        chosen_ui = d25_combo_act
+                        override_note += " [Combo #25->#777/#778]"
+                    elif live_rem_turns >= 2 and chosen_ui.action_type != "use_drink" and not chosen_is_free_action:
+                        chosen_ui = d25_combo_act
+                        override_note += " [Priority Combo #25->#777/#778]"
+
         # Final hard engine-rule guards:
         # 1. NEVER drink a tutor (#22 初星黒酢) or pure-draw drink when hand is already at 5-card cap.
         # 2. NEVER waste pure +1 use drink (#18) when playable non-free cards <= card_uses_remaining,
@@ -2167,23 +2478,33 @@ class LiveBattlePlanner:
         if chosen_ui is not None and chosen_ui.action_type == "use_drink":
             chosen_did_cap = int((chosen_ui.payload or {}).get("drink_id") or 0)
             dr_cfg_cap = next((d for d in self._sim.available_drinks if d.drink_id == chosen_did_cap), None)
+            rules_cap = self._sim.plan_rules
             forbidden_by_cap = (
                 live_hand_size >= self._sim.MAX_HAND_SIZE
                 and (
-                    self._is_tutor_drink(chosen_did_cap)
+                    (is_sense_plan and self._is_tutor_drink(chosen_did_cap))
                     or (dr_cfg_cap is not None and not self._sim.can_use_drink(dr_cfg_cap, hand_size=live_hand_size))
                 )
             )
             cur_uses_live = max(1, int(self._sim.card_uses_remaining))
-            forbidden_by_waste = (dr_cfg_cap is not None and (
-                not self._sim.can_use_drink(dr_cfg_cap, hand_size=live_hand_size)
-                or (self._sim.is_pure_extra_use_drink(dr_cfg_cap) and live_playable_non_free <= cur_uses_live)
-                or (self._sim.is_hand_upgrade_drink(dr_cfg_cap) and live_hand_size <= 0)
-            )) or (chosen_did_cap == 18 and live_playable_non_free <= cur_uses_live) or (chosen_did_cap == 21 and live_hand_size <= 0)
+            forbidden_by_waste = (
+                (
+                    dr_cfg_cap is not None
+                    and (
+                        not self._sim.can_use_drink(dr_cfg_cap, hand_size=live_hand_size)
+                        or (rules_cap.is_pure_extra_use_drink(dr_cfg_cap) and live_playable_non_free <= cur_uses_live)
+                        or (rules_cap.is_hand_upgrade_drink(dr_cfg_cap) and live_hand_size <= 0)
+                    )
+                )
+                or (chosen_did_cap == 18 and live_playable_non_free <= cur_uses_live)
+                or (is_sense_plan and chosen_did_cap == 21 and live_hand_size <= 0)
+            )
             if forbidden_by_cap or forbidden_by_waste:
                 safe_alt_cards = [
                     a for a in legal_actions
-                    if a.action_type == "play_card" and int((a.payload or {}).get("card_id") or 0) != 23
+                    if a.action_type == "play_card"
+                    and int((a.payload or {}).get("card_id") or 0) != 23
+                    and not _is_card_held_now(int((a.payload or {}).get("card_id") or 0))
                 ]
                 trouble_alt_cap = [
                     a for a in legal_actions
@@ -2194,8 +2515,8 @@ class LiveBattlePlanner:
                     if a.action_type == "use_drink"
                     and int((a.payload or {}).get("drink_id") or 0) != chosen_did_cap
                     and not (int((a.payload or {}).get("drink_id") or 0) == 18 and live_playable_non_free <= cur_uses_live)
-                    and not (int((a.payload or {}).get("drink_id") or 0) == 21 and live_hand_size <= 0)
-                    and not self._is_tutor_drink(int((a.payload or {}).get("drink_id") or 0))
+                    and not (is_sense_plan and int((a.payload or {}).get("drink_id") or 0) == 21 and live_hand_size <= 0)
+                    and not (is_sense_plan and self._is_tutor_drink(int((a.payload or {}).get("drink_id") or 0)))
                     and not self._is_active_retrigger_drink(int((a.payload or {}).get("drink_id") or 0))
                     and not _is_banned_drink(
                         (a.payload or {}).get("drink_id"),
@@ -2207,8 +2528,8 @@ class LiveBattlePlanner:
                         d.drink_id == int((a.payload or {}).get("drink_id") or 0)
                         and (
                             not self._sim.can_use_drink(d, hand_size=live_hand_size)
-                            or (self._sim.is_pure_extra_use_drink(d) and live_playable_non_free <= cur_uses_live)
-                            or (self._sim.is_hand_upgrade_drink(d) and live_hand_size <= 0)
+                            or (rules_cap.is_pure_extra_use_drink(d) and live_playable_non_free <= cur_uses_live)
+                            or (rules_cap.is_hand_upgrade_drink(d) and live_hand_size <= 0)
                         )
                         for d in self._sim.available_drinks
                     )
