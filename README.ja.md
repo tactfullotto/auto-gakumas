@@ -122,9 +122,12 @@ python -m demo.web.server --host 127.0.0.1 --port 8765 --open
 ## 環境要件
 
 - Python 3.11
-- MuMu Player（Android エミュレーター）ADB アドレス `127.0.0.1:16384`
+- MuMu Player（Android エミュレーター）ADB アドレス `127.0.0.1:16384`（**エミュレーター推奨設定：解像度 `720×1600`、`DPI 320`、縦画面**）
 - エミュレーター内に Gakumas インストール済み
 - `gakumas_library.db`（リポジトリに同梱）
+
+> **エミュレーター推奨ディスプレイ設定（`720×1600` / `DPI 320`）**
+> 画像認識 ROI（ショップグリッド・カード/ドリンクアイコン・選択枠・HUD P ポイント・扇形手札タップ座標）は **縦画面 `720×1600`・`DPI 320`** を基準に調整されています。OCR 精度とタップ安定性のため、この設定を推奨します。
 
 ```bash
 pip install -r demo/requirements.txt

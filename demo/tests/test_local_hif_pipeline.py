@@ -10387,6 +10387,796 @@ def test_shop_skill_card_preview_routing_and_priority_card_purchase(monkeypatch)
         db.close()
 
 
+def test_w8_shop_change_slots_confirm_fallback_and_priority_card_exchange(monkeypatch):
+    """Verify W8 second shop:
+    1) Top-right 2 cards (col 2,3 of row 0) are tagged as `change` (チェンジ) while other 4 cards & 2 drinks are `buy`.
+    2) `強化` price parses '0100' -> 100 (not 10).
+    3) Active orange confirm button (`交換する`/`チェンジする`) is detected via orange crop fallback even if full-frame OCR skips it,
+       with visual card icon fallback, and executes 1-for-1 priority card exchange without removing/double-adding the gained card.
+    """
+    import numpy as np
+    from demo.core.db import GakumasDB
+    from demo.core.hif_catalog import ProducePreferences
+    from demo.core.tracker import GameStateTracker
+    from demo.maa_bridge.mock_controller import MockController
+    from demo.maa_bridge.runner import GakumasRunner
+    from demo.schemas import BoundingBox, DecisionResult, LegalAction, ScreenObservation
+    from demo.sim.live_battle_planner import LiveBattlePlannerConfig
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        reco = LiveScreenRecognizer(db=db, plan="logic", scenario_id="hif_honsen")
+        h, w = 1600, 720
+        frame = np.full((h, w, 3), 245, dtype=np.uint8)
+        # Bright active orange confirm button in center bottom (~x=0.32..0.68, y=0.745..0.815),
+        # deliberately omitted from full-frame OCR lines to exercise crop fallback!
+        frame[int(h * 0.745) : int(h * 0.815), int(w * 0.32) : int(w * 0.68)] = (242, 130, 35)
+        # Bright orange selection rim around top-right slot 3 (row 0, col 3 -> スキルカード:3)
+        sx1, sy1, sx2, sy2 = int(w * 0.7417), int(h * 0.4119), int(w * 0.9167), int(h * 0.4950)
+        frame[max(0, sy1 - 6) : sy2 + 6, max(0, sx1 - 6) : sx2 + 6] = (242, 145, 40)
+        frame[sy1 + 4 : sy2 - 4, sx1 + 4 : sx2 - 4] = 248
+
+        syn_lines = [
+            {"text": "インターバル", "bbox": [30, 28, 165, 58]},
+            {"text": "Pポイント 455", "bbox": [300, 75, 430, 105]},
+            {"text": "Pポイントで利用するものを選んでください", "bbox": [120, 285, 600, 315]},
+            {"text": "チェンジ", "bbox": [500, 392, 575, 410]},
+            {"text": "80", "bbox": [100, 800, 140, 822]},
+            {"text": "50", "bbox": [260, 800, 300, 822]},
+            {"text": "50", "bbox": [420, 800, 460, 822]},
+            {"text": "50", "bbox": [580, 800, 620, 822]},
+            {"text": "50", "bbox": [100, 992, 140, 1014]},
+            {"text": "30", "bbox": [260, 992, 300, 1014]},
+            {"text": "100", "bbox": [420, 992, 470, 1014]},
+            {"text": "75", "bbox": [580, 992, 620, 1014]},
+            {"text": "強化", "bbox": [110, 1082, 175, 1110]},
+            {"text": "0100", "bbox": [195, 1078, 265, 1100]},
+            {"text": "強化可能枚数あと1枚", "bbox": [100, 1135, 255, 1152]},
+            {"text": "リフレッシュ", "bbox": [45, 1215, 180, 1240]},
+            {"text": "10", "bbox": [105, 1260, 140, 1280]},
+            {"text": "終了", "bbox": [595, 1225, 680, 1260]},
+        ]
+        # Make crop OCR identify `チェンジする` on button, slot prices, and return garbled preview so card icon fallback is used
+        def _fake_ocr(arr, *_a, **_kw):
+            ah, aw = arr.shape[:2]
+            if ah > 1400:
+                return {"text": " ".join(l["text"] for l in syn_lines), "lines": syn_lines}
+            return {"text": "", "lines": []}
+
+        monkeypatch.setattr(reco.ocr, "recognize_array", _fake_ocr)
+        orig_crop_ocr = reco._ocr_crop_upscaled
+        monkeypatch.setattr(
+            reco,
+            "_ocr_crop_upscaled",
+            lambda _f, box, **_kw: (
+                "455"
+                if box[1] < int(h * 0.14) and int(w * 0.30) <= box[0] <= int(w * 0.70)
+                else (
+                    "チェンジする"
+                    if box[1] > int(h * 0.72) and box[0] > int(w * 0.25)
+                    else ("50" if int(h * 0.40) <= box[1] < int(h * 0.68) else orig_crop_ocr(_f, box, **_kw))
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            reco,
+            "_match_square_card_slot",
+            lambda _f, x1, _y1, _x2, _y2, **_kw: db.get_card_by_id(170) if x1 > int(w * 0.70) and _y1 < int(h * 0.50) else None,
+        )
+        obs = reco.recognize(frame, plan="logic")
+        assert obs.scene_type == "shop"
+        chg_confirm = next((o for o in obs.options if o.get("name") == "チェンジする"), None)
+        assert chg_confirm is not None
+        assert chg_confirm.get("card_id") == 170
+        assert chg_confirm.get("shop_action_type") == "change"
+        assert chg_confirm.get("is_shop_change_card") is True
+        slot2 = next((o for o in obs.options if o.get("shop_slot_key") == "スキルカード:2"), None)
+        slot0 = next((o for o in obs.options if o.get("shop_slot_key") == "スキルカード:0"), None)
+        slot4 = next((o for o in obs.options if o.get("shop_slot_key") == "スキルカード:4"), None)
+        dr3 = next((o for o in obs.options if o.get("shop_slot_key") == "Pドリンク:3"), None)
+        assert slot2 is not None and slot2.get("shop_action_type") == "change" and slot2.get("is_shop_change_card") is True
+        assert slot0 is not None and slot0.get("shop_action_type") == "buy" and not slot0.get("is_shop_change_card")
+        assert slot4 is not None and slot4.get("shop_action_type") == "buy" and not slot4.get("is_shop_change_card")
+        assert dr3 is not None and dr3.get("shop_action_type") == "buy"
+        upg_opt = next((o for o in obs.options if o.get("name") == "強化"), None)
+        assert upg_opt is not None and upg_opt.get("price") == 100
+
+        # Agent executes `チェンジする` for priority card #170 BEFORE buying drinks, arms swap state
+        agent = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4),
+            preferences=ProducePreferences(priority_card_ids=[170]),
+        )
+        tracker = GameStateTracker(plan="logic", p_idol_id=136, scenario_id="hif_honsen")
+        tracker.set_initial_loadout(p_idol_id=136, plan="logic", deck_ids=[800, 129, 139], p_items=[], db=db)
+        agent.tracker = tracker
+
+        legal = [
+            LegalAction(
+                choice_id=int(o["choice_id"]),
+                action_type="pick_option",
+                description=f"{o['name']}: {o['description']}",
+                bbox=BoundingBox(**o["bbox"]),
+                payload=dict(o),
+            )
+            for o in obs.options
+        ]
+        dec = agent.decide("", legal, obs=obs)
+        assert dec.choice_id == chg_confirm["choice_id"]
+        assert agent._shop_expecting_priority_card_confirm == 170
+        assert agent._shop_expecting_priority_card_is_change is True
+        assert agent._came_from_change_pickup is True
+        assert agent._pending_change_gain_card_id == 170
+
+        # Confirmation popup for `チェンジする` must NOT prematurely add #170 (wait for swap) and must keep change state
+        pop_acts = [
+            LegalAction(choice_id=0, action_type="pick_option", description="チェンジする", bbox=BoundingBox(xmin=300, ymin=1400, xmax=500, ymax=1500), payload={"name": "チェンジする"}),
+            LegalAction(choice_id=1, action_type="pick_option", description="キャンセル", bbox=BoundingBox(xmin=100, ymin=1400, xmax=260, ymax=1500), payload={"name": "キャンセル"}),
+        ]
+        dec_pop = agent.decide(
+            "",
+            pop_acts,
+            obs=ScreenObservation(scene_type="popup", plan="logic", scenario_id="hif_honsen", week=8, raw_text="スキルカードをチェンジしますか"),
+        )
+        assert dec_pop.choice_id == 0
+        assert 170 not in tracker.produce_deck
+        assert agent._came_from_change_pickup is True
+        assert agent._pending_change_gain_card_id == 170
+
+        # Runner handling shop `チェンジする` sets `_pending_change_pickup_cid = 170` instead of calling add_card_to_deck or remove
+        agent._shop_attempted_card_ids.clear()
+        agent._shop_expecting_priority_card_confirm = None
+        agent._shop_expecting_priority_card_is_change = False
+        runner = GakumasRunner(mode="mock", controller=MockController(), agent=agent, db=db, plan="logic", scenario_id="hif_honsen", p_idol_id=136)
+        runner.tracker = tracker
+        runner.scene_routing_reco = type("_Stub", (), {"recognize": lambda _s, _f: obs})()
+        runner.run_once()
+        assert runner._pending_change_pickup_cid == 170
+        assert 170 not in tracker.produce_deck
+        assert len(tracker.produce_deck) == 3
+    finally:
+        db.close()
+
+
+def test_jugyo_produce_event_branch_alignment_and_preview_verification(monkeypatch):
+    """Verify 授業 screens:
+    1) Typo HUD OCR ('審百基準', '授只', pink selected pill) + preview mentioning 'トラブルカード以外のスキルカード' never misroutes to card_reward.
+    2) Bright-pink active pill + dimmed lavender unselected pills are all extracted with preview_text.
+    3) Motivation idol (#136) switches away from Option 1 ('好印象関係') to Option 2 ('やる気関係') with single-tap preview,
+       and confirms Option 2 once preview matches 'やる気'. GoodImpression idol (#163) does the exact opposite.
+    4) Option 3 with [T] トラブル追加 badge is detected and penalized.
+    """
+    import numpy as np
+    from demo.core.db import GakumasDB
+    from demo.schemas import BoundingBox, LegalAction
+    from demo.sim.live_battle_planner import LiveBattlePlannerConfig
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        reco = LiveScreenRecognizer(db=db, plan="logic", scenario_id="hif_honsen")
+        h, w = 1600, 720
+
+        def _make_lesson_frame(selected_idx: int) -> np.ndarray:
+            f = np.full((h, w, 3), 230, dtype=np.uint8)
+            slots = ((0.608, 0.662), (0.672, 0.726), (0.736, 0.790))
+            for idx, (yf1, yf2) in enumerate(slots):
+                if idx == selected_idx:
+                    f[int(h * yf1) : int(h * yf2), int(w * 0.08) : int(w * 0.92)] = (242, 65, 140)
+                else:
+                    f[int(h * yf1) : int(h * yf2), int(w * 0.08) : int(w * 0.92)] = (177, 173, 220)
+            # Dark trouble badge [T] トラブル追加 right above Pill 2
+            f[int(h * 0.720) : int(h * 0.742), int(w * 0.68) : int(w * 0.93)] = (45, 45, 55)
+            return f
+
+        def _ocr_for_selected(selected_idx: int):
+            pv = (
+                "ボーカル上昇+180 トラブルカード以外のスキルカードを選択して異なる好印象関係のスキルカードにセレクトチェンジ"
+                if selected_idx == 0
+                else "ボーカル上昇+180 トラブルカード以外のスキルカードを選択して異なるやる気関係のスキルカードにセレクトチェンジ"
+            )
+            full_lines = [
+                {"text": "授只", "bbox": [85, 45, 125, 110]},
+                {"text": "審百基準", "bbox": [550, 45, 630, 68]},
+                {"text": "自信の方はどうですか?", "bbox": [82, 1300, 360, 1326]},
+            ]
+            if selected_idx == 0:
+                full_lines.append({"text": "余裕です!", "bbox": [112, 1002, 265, 1034]})
+            else:
+                full_lines.append({"text": "不安です・・・", "bbox": [112, 1105, 275, 1138]})
+
+            def _fake_ocr(_arr, *_a, **_kw):
+                return {"text": " ".join(l["text"] for l in full_lines), "lines": full_lines}
+
+            def _fake_crop(_f, box, **_kw):
+                x1, y1, _x2, y2 = box
+                if y1 >= int(h * 0.45) and y2 <= int(h * 0.61):
+                    return pv
+                if x1 >= int(w * 0.64) and int(h * 0.70) <= y1 <= int(h * 0.74):
+                    return "-ル追加"
+                return ""
+
+            return _fake_ocr, _fake_crop
+
+        # Frame with Option 0 selected (好印象関係) -> Motivation idol #136 must switch to Option 1 (preview_only=True)
+        f0 = _make_lesson_frame(0)
+        o_fn0, c_fn0 = _ocr_for_selected(0)
+        monkeypatch.setattr(reco.ocr, "recognize_array", o_fn0)
+        monkeypatch.setattr(reco, "_ocr_crop_upscaled", c_fn0)
+        obs0 = reco.recognize(f0, plan="logic")
+        assert obs0.scene_type == "produce_event"
+        assert len(obs0.options) == 3
+        assert obs0.options[0]["is_selected"] is True
+        assert "好印象関係" in obs0.options[0]["preview_text"]
+        assert "トラブル" in obs0.options[2]["description"]
+
+        acts0 = [
+            LegalAction(
+                choice_id=int(o["choice_id"]),
+                action_type="pick_option",
+                description=f"{o['name']}: {o['description']}",
+                bbox=BoundingBox(**o["bbox"]),
+                payload=dict(o),
+            )
+            for o in obs0.options
+        ]
+        ag_136 = LocalHybridDecisionAgent(db=db, planner_cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4))
+        dec_136_0 = ag_136.decide("", acts0, obs=obs0, p_idol_id=136)
+        assert dec_136_0.choice_id == 1
+        assert acts0[1].payload.get("preview_only") is True
+
+        ag_163 = LocalHybridDecisionAgent(db=db, planner_cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4))
+        acts0_163 = [LegalAction(choice_id=a.choice_id, action_type=a.action_type, description=a.description, bbox=a.bbox, payload=dict(a.payload or {})) for a in acts0]
+        dec_163_0 = ag_163.decide("", acts0_163, obs=obs0, p_idol_id=163)
+        assert dec_163_0.choice_id == 0
+        assert not acts0_163[0].payload.get("preview_only")
+
+        # Frame with Option 1 selected (やる気関係) -> #136 confirms Option 1 (is_selected=True), #163 switches to Option 0
+        f1 = _make_lesson_frame(1)
+        o_fn1, c_fn1 = _ocr_for_selected(1)
+        monkeypatch.setattr(reco.ocr, "recognize_array", o_fn1)
+        monkeypatch.setattr(reco, "_ocr_crop_upscaled", c_fn1)
+        obs1 = reco.recognize(f1, plan="logic")
+        assert obs1.scene_type == "produce_event"
+        assert obs1.options[1]["is_selected"] is True
+        assert "やる気関係" in obs1.options[1]["preview_text"]
+
+        acts1 = [
+            LegalAction(
+                choice_id=int(o["choice_id"]),
+                action_type="pick_option",
+                description=f"{o['name']}: {o['description']}",
+                bbox=BoundingBox(**o["bbox"]),
+                payload=dict(o),
+            )
+            for o in obs1.options
+        ]
+        dec_136_1 = ag_136.decide("", acts1, obs=obs1, p_idol_id=136)
+        assert dec_136_1.choice_id == 1
+        assert not acts1[1].payload.get("preview_only")
+
+        acts1_163 = [LegalAction(choice_id=a.choice_id, action_type=a.action_type, description=a.description, bbox=a.bbox, payload=dict(a.payload or {})) for a in acts1]
+        dec_163_1 = ag_163.decide("", acts1_163, obs=obs1, p_idol_id=163)
+        assert dec_163_1.choice_id == 0
+        assert acts1_163[0].payload.get("preview_only") is True
+    finally:
+        db.close()
+
+
+def test_w8_shop_orange_confirm_detection_change_routing_and_refresh_cap(monkeypatch):
+    """Regression for W8 second shop loop + S223/S224 misrouting:
+    1) `_is_active_orange_button` rejects muted disabled (168,124,103) and accepts bright orange `交換する`/`チェンジする`
+       even with white text + dark corners dragging `mean(R-B) < 75`.
+    2) W8 shop with `チェンジする` + `リフレッシュ` + `カスタマイズ` + `終了` stays `shop` (never `produce_event`).
+    3) Unselected shop frame with `_shop_last_clicked_slot` set and `max_rim < rim_thresh` never clamps `p_pts`.
+    4) Missing `終了` OCR still emits fallback `終了` option so `LocalAgent._decide_shop` never leaks non-priority skill cards.
+    5) `_decide_shop` buys active `交換する` drink even without `drink_id`, and stops refreshing after 2 fruitless refreshes
+       even when `Pドリンク:` preview slots are clicked between refreshes.
+    """
+    import numpy as np
+    from demo.agent.local_agent import ProducePreferences
+    from demo.core.db import GakumasDB
+    from demo.schemas import BoundingBox, LegalAction, ScreenObservation
+    from demo.sim.live_battle_planner import LiveBattlePlannerConfig
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        reco = LiveScreenRecognizer(db=db, plan="logic", scenario_id="hif_honsen")
+        h, w = 1600, 720
+
+        # 1. `_is_active_orange_button` disabled vs active orange with white text & dark padding (mean R-B < 75)
+        disabled_patch = np.full((60, 200, 3), (168, 124, 103), dtype=np.uint8)
+        assert reco._is_active_orange_button(disabled_patch) is False
+
+        active_patch = np.full((80, 240, 3), (65, 65, 95), dtype=np.uint8)  # dark corner backdrop
+        active_patch[15:65, 30:210] = (232, 125, 35)  # vivid orange body (46.8% area)
+        active_patch[25:55, 60:180] = (255, 255, 255)  # white text punch-out (R-B = 0)
+        mean_rb = float((active_patch[:, :, 0].astype(np.float32) - active_patch[:, :, 2].astype(np.float32)).mean())
+        assert mean_rb < 75.0
+        assert reco._is_active_orange_button(active_patch) is True
+
+        # 2 & 3 & 4. Build W8 frame with active orange `チェンジする`, no orange selection rim, and omitted `終了` OCR
+        def _make_w8_frame(active_confirm: bool) -> np.ndarray:
+            f = np.full((h, w, 3), 235, dtype=np.uint8)
+            cols = [(0.0750, 0.2486), (0.2972, 0.4722), (0.5194, 0.6944), (0.7417, 0.9167)]
+            rows = [
+                (int(h * 0.4119), int(h * 0.4950)),
+                (int(h * 0.5325), int(h * 0.6156)),
+            ]
+            for iy1, iy2 in rows:
+                for cx1f, cx2f in cols:
+                    f[iy1:iy2, int(w * cx1f) : int(w * cx2f)] = (240, 240, 242)
+            # Center confirm pill: bright orange with white text vs muted disabled
+            cy1, cy2, cx1, cx2 = int(h * 0.750), int(h * 0.808), int(w * 0.33), int(w * 0.67)
+            if active_confirm:
+                f[cy1:cy2, cx1:cx2] = (235, 125, 35)
+                f[cy1 + 18 : cy2 - 18, cx1 + 50 : cx2 - 50] = (255, 255, 255)
+            else:
+                f[cy1:cy2, cx1:cx2] = (168, 124, 103)
+            # Customize & リフレッシュ bright boxes
+            f[int(h * 0.6575) : int(h * 0.7013), int(w * 0.444) : int(w * 0.778)] = (120, 210, 140)
+            f[int(h * 0.7544) : int(h * 0.7788), int(w * 0.026) : int(w * 0.276)] = (250, 250, 250)
+            return f
+
+        w8_lines = [
+            {"text": "インターバル", "bbox": [40, 30, 180, 60]},
+            {"text": "Pポイントで利用するものを選んでください", "bbox": [180, 320, 560, 355]},
+            {"text": "490", "bbox": [330, 50, 390, 80]},
+            {"text": "チェンジする", "bbox": [275, 1215, 445, 1255]},
+            {"text": "カスタマイズ", "bbox": [350, 1065, 510, 1105]},
+            {"text": "リフレッシュ", "bbox": [30, 1212, 180, 1242]},
+            {"text": "10", "bbox": [90, 1255, 130, 1280]},
+        ]
+        monkeypatch.setattr(reco.ocr, "recognize_array", lambda _arr, *_a, **_kw: {"text": " ".join(l["text"] for l in w8_lines), "lines": w8_lines})
+        monkeypatch.setattr(reco, "_ocr_crop_upscaled", lambda _f, box, **_kw: "100" if box[1] < int(h * 0.65) else "チェンジする")
+        monkeypatch.setattr(
+            reco,
+            "_ocr_bw_banner_number",
+            lambda _crop, prefix="", **_kw: 490 if prefix == "P:" else None,
+        )
+
+        # 3a. Disabled + stale `_shop_last_clicked_slot` + no rim must NOT clamp 490 -> 99
+        reco._shop_last_clicked_slot = "Pドリンク:2"
+        obs_disabled = reco.recognize(_make_w8_frame(active_confirm=False), plan="logic")
+        assert obs_disabled.scene_type == "shop"
+        assert obs_disabled.p_points == 490
+        assert any(o.get("name") == "終了" for o in obs_disabled.options)
+        assert not any(o.get("name") in ("交換する", "チェンジする") for o in obs_disabled.options)
+
+        # 2 & 3b. Active orange `チェンジする` keeps `shop` routing and emits confirm
+        obs_active = reco.recognize(_make_w8_frame(active_confirm=True), plan="logic")
+        assert obs_active.scene_type == "shop"
+        assert obs_active.p_points == 490
+        assert any(o.get("name") in ("チェンジする", "交換する") for o in obs_active.options)
+
+        # 4. Agent fallback when no drinks/features remain prefers `終了` over non-priority skill card `#135`
+        ag = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4),
+            preferences=ProducePreferences(priority_card_ids=[159, 521], spend_all_final_shop=True),
+        )
+        ag.tracker = GameStateTracker(plan="logic", p_idol_id=136, scenario_id="hif_honsen")
+        obs_no_drink = ScreenObservation(scene_type="shop", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=490)
+        acts_fallback = [
+            LegalAction(choice_id=0, action_type="pick_option", description="スキルカード4", bbox=BoundingBox(xmin=500, ymin=650, xmax=650, ymax=790), payload={"name": "スキルカード4", "shop_slot_key": "スキルカード:3", "card_id": 135, "price": 50}),
+            LegalAction(choice_id=1, action_type="pick_option", description="終了", bbox=BoundingBox(xmin=560, ymin=1200, xmax=700, ymax=1285), payload={"name": "終了"}),
+        ]
+        dec_fb = ag.decide("", acts_fallback, obs=obs_no_drink, p_idol_id=136)
+        assert dec_fb.choice_id == 1
+
+        # 5a. Active drink `交換する` without `drink_id` (only `shop_slot_key="Pドリンク:2"`) is still purchased
+        acts_drink_ex = [
+            LegalAction(choice_id=0, action_type="pick_option", description="交換する", bbox=BoundingBox(xmin=235, ymin=1200, xmax=485, ymax=1290), payload={"name": "交換する", "shop_slot_key": "Pドリンク:2", "price": 100}),
+            LegalAction(choice_id=1, action_type="pick_option", description="リフレッシュ", bbox=BoundingBox(xmin=18, ymin=1207, xmax=198, ymax=1246), payload={"name": "リフレッシュ", "shop_slot_key": "リフレッシュ", "price": 10}),
+            LegalAction(choice_id=2, action_type="pick_option", description="終了", bbox=BoundingBox(xmin=560, ymin=1200, xmax=700, ymax=1285), payload={"name": "終了"}),
+        ]
+        dec_dx = ag.decide("", acts_drink_ex, obs=obs_no_drink, p_idol_id=136)
+        assert dec_dx.choice_id == 0
+
+        # 5b. Two consecutive fruitless refreshes with Pドリンク preview clicks in between must stop refreshing
+        ag2 = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4),
+            preferences=ProducePreferences(priority_card_ids=[], spend_all_final_shop=True),
+        )
+        ag2.tracker = GameStateTracker(plan="logic", p_idol_id=136, scenario_id="hif_honsen")
+        for step_p, expected_act in [
+            (480, "Pドリンク3"),
+            (480, "Pドリンク4"),
+            (480, "リフレッシュ"),
+            (470, "Pドリンク3"),
+            (470, "Pドリンク4"),
+            (470, "リフレッシュ"),
+            (460, "Pドリンク3"),
+            (460, "Pドリンク4"),
+            (460, "カスタマイズ"),
+        ]:
+            obs_loop = ScreenObservation(scene_type="shop", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=step_p)
+            acts_loop = [
+                LegalAction(choice_id=0, action_type="pick_option", description="Pドリンク3", bbox=BoundingBox(xmin=370, ymin=850, xmax=500, ymax=980), payload={"name": "Pドリンク3", "shop_slot_key": "Pドリンク:2", "price": 75}),
+                LegalAction(choice_id=1, action_type="pick_option", description="Pドリンク4", bbox=BoundingBox(xmin=530, ymin=850, xmax=660, ymax=980), payload={"name": "Pドリンク4", "shop_slot_key": "Pドリンク:3", "price": 100}),
+                LegalAction(choice_id=2, action_type="pick_option", description="カスタマイズ", bbox=BoundingBox(xmin=320, ymin=1050, xmax=560, ymax=1120), payload={"name": "カスタマイズ", "shop_slot_key": "カスタマイズ"}),
+                LegalAction(choice_id=3, action_type="pick_option", description="リフレッシュ", bbox=BoundingBox(xmin=18, ymin=1207, xmax=198, ymax=1246), payload={"name": "リフレッシュ", "shop_slot_key": "リフレッシュ", "price": 10}),
+                LegalAction(choice_id=4, action_type="pick_option", description="終了", bbox=BoundingBox(xmin=560, ymin=1200, xmax=700, ymax=1285), payload={"name": "終了"}),
+            ]
+            # Filter out slot already visited on the same shelf before a refresh
+            dec_l = ag2.decide("", acts_loop, obs=obs_loop, p_idol_id=136)
+            assert acts_loop[dec_l.choice_id].payload["name"] == expected_act, f"At P={step_p}: got {acts_loop[dec_l.choice_id].payload['name']} ({dec_l.reason})"
+    finally:
+        db.close()
+
+
+def test_w8_shop_clicked_slot_allows_exchange_confirm_outer_rim_and_retry_modal(monkeypatch):
+    """Live ADB debugging regressions:
+    1) After clicking `Pドリンク3` (`shop_slot_key="Pドリンク:2"`), the active `交換する` option ALSO carries
+       `shop_slot_key="Pドリンク:2"`; `_decide_shop` must keep `交換する` in `allowed` and buy it (NOT filter it out).
+    2) Same 2-step flow for `[⇄チェンジ] スキルカード4` (`shop_slot_key="スキルカード:3"`) -> `チェンジする`.
+    3) Outer L-corner orange rim detection selects the true bracketed slot (outside box) while ignoring gold SR frames.
+    4) `"再挑戦が可能ですが本当に終了しますか?"` routes to `popup` with `再挑戦` (never `skip` -> `挑戦`).
+    """
+    import numpy as np
+    from demo.agent.local_agent import ProducePreferences
+    from demo.core.db import GakumasDB
+    from demo.core.tracker import GameStateTracker
+    from demo.schemas import BoundingBox, LegalAction, ScreenObservation
+    from demo.sim.live_battle_planner import LiveBattlePlannerConfig
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        # 1. Two-step drink purchase where active `交換する` shares `shop_slot_key="Pドリンク:2"`
+        ag_d = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4),
+            preferences=ProducePreferences(priority_card_ids=[], spend_all_final_shop=True),
+        )
+        ag_d.tracker = GameStateTracker(plan="logic", p_idol_id=136, scenario_id="hif_honsen")
+        obs_d = ScreenObservation(scene_type="shop", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=580)
+        b_dr = BoundingBox(xmin=373, ymin=852, xmax=499, ymax=984)
+        b_ex = BoundingBox(xmin=237, ymin=1200, xmax=482, ymax=1292)
+        b_ref = BoundingBox(xmin=18, ymin=1207, xmax=198, ymax=1246)
+        b_end = BoundingBox(xmin=564, ymin=1208, xmax=715, ymax=1280)
+        step1_acts = [
+            LegalAction(choice_id=0, action_type="pick_option", description="Pドリンク3 (100P)", bbox=b_dr, payload={"name": "Pドリンク3", "shop_slot_key": "Pドリンク:2", "drink_id": 24, "price": 100}),
+            LegalAction(choice_id=1, action_type="pick_option", description="リフレッシュ", bbox=b_ref, payload={"name": "リフレッシュ", "shop_slot_key": "リフレッシュ", "price": 10}),
+            LegalAction(choice_id=2, action_type="pick_option", description="終了", bbox=b_end, payload={"name": "終了"}),
+        ]
+        dec1 = ag_d.decide("", step1_acts, obs=obs_d, p_idol_id=136)
+        assert dec1.choice_id == 0
+        assert "Pドリンク:2" in ag_d._shop_clicked_slots
+
+        step2_acts = [
+            LegalAction(choice_id=0, action_type="pick_option", description="交換する (-100P)", bbox=b_ex, payload={"name": "交換する", "shop_slot_key": "Pドリンク:2", "shop_action_type": "buy", "drink_id": 24, "price": 100}),
+            LegalAction(choice_id=1, action_type="pick_option", description="リフレッシュ", bbox=b_ref, payload={"name": "リフレッシュ", "shop_slot_key": "リフレッシュ", "price": 10}),
+            LegalAction(choice_id=2, action_type="pick_option", description="終了", bbox=b_end, payload={"name": "終了"}),
+        ]
+        dec2 = ag_d.decide("", step2_acts, obs=obs_d, p_idol_id=136)
+        assert dec2.choice_id == 0, f"Expected 交換する even when Pドリンク:2 is in _shop_clicked_slots, got {dec2}"
+
+        # 2. Two-step priority card [⇄チェンジ] exchange where `チェンジする` shares `shop_slot_key="スキルカード:3"`
+        ag_c = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=4, ismcts_simulations=4),
+            preferences=ProducePreferences(priority_card_ids=[100], spend_all_final_shop=True),
+        )
+        ag_c.tracker = GameStateTracker(plan="logic", p_idol_id=136, scenario_id="hif_honsen")
+        c_step1 = [
+            LegalAction(choice_id=0, action_type="pick_option", description="スキルカード4", bbox=BoundingBox(xmin=534, ymin=659, xmax=660, ymax=792), payload={"name": "スキルカード4", "shop_slot_key": "スキルカード:3", "shop_action_type": "change", "is_shop_change_card": True, "card_id": 100, "price": 50}),
+            LegalAction(choice_id=1, action_type="pick_option", description="終了", bbox=b_end, payload={"name": "終了"}),
+        ]
+        assert ag_c.decide("", c_step1, obs=obs_d, p_idol_id=136).choice_id == 0
+        c_step2 = [
+            LegalAction(choice_id=0, action_type="pick_option", description="チェンジする (-50P)", bbox=b_ex, payload={"name": "チェンジする", "shop_slot_key": "スキルカード:3", "shop_action_type": "change", "is_shop_change_card": True, "card_id": 100, "price": 50}),
+            LegalAction(choice_id=1, action_type="pick_option", description="終了", bbox=b_end, payload={"name": "終了"}),
+        ]
+        assert ag_c.decide("", c_step2, obs=obs_d, p_idol_id=136).choice_id == 0
+
+        # 3. Outer L-corner orange bracket selects (0,0) over unselected gold SR frame on (1,3)
+        reco = LiveScreenRecognizer(db=db, plan="logic", scenario_id="hif_honsen")
+        h, w = 1600, 720
+        f_rim = np.full((h, w, 3), 240, dtype=np.uint8)
+        # Draw bright gold SR frame INSIDE slot (1,3) = x=534..660, y=852..984
+        f_rim[854:860, 536:658] = (245, 160, 35)
+        f_rim[978:983, 536:658] = (245, 160, 35)
+        # Draw real outer L-corner brackets OUTSIDE slot (0,0) = x=54..178, y=659..792
+        f_rim[647:654, 42:75] = (248, 145, 35)
+        f_rim[647:654, 155:190] = (248, 145, 35)
+        f_rim[797:804, 42:75] = (248, 145, 35)
+        f_rim[797:804, 155:190] = (248, 145, 35)
+        # Paint active orange confirm button
+        f_rim[1200:1292, 237:482] = (240, 130, 50)
+        f_rim[1235:1255, 310:410] = (255, 255, 255)
+        rim_lines = [
+            {"text": "インターバル", "bbox": [53, 38, 171, 56]},
+            {"text": "Pポイントで利用するものを選んでください", "bbox": [180, 320, 560, 355]},
+            {"text": "交換する", "bbox": [327, 1231, 435, 1257]},
+            {"text": "終了", "bbox": [594, 1228, 696, 1260]},
+        ]
+        monkeypatch.setattr(reco.ocr, "recognize_array", lambda _a, *_args, **_kw: {"text": " ".join(l["text"] for l in rim_lines), "lines": rim_lines})
+        monkeypatch.setattr(reco, "_ocr_crop_upscaled", lambda _f, _b, **_kw: "50")
+        monkeypatch.setattr(reco, "_ocr_bw_banner_number", lambda _c, prefix="", **_kw: 580 if prefix == "P:" else None)
+        obs_rim = reco.recognize(f_rim, plan="logic")
+        ex_rim = next(o for o in obs_rim.options if o.get("name") == "交換する")
+        assert ex_rim.get("shop_slot_key") == "スキルカード:0"
+        assert ex_rim.get("price") == 50
+
+        # 4. `"再挑戦が可能ですが本当に終了しますか?"` modal routes to `popup -> 再挑戦` (never `skip -> 挑戦`)
+        f_retry = np.full((h, w, 3), 240, dtype=np.uint8)
+        f_retry[10:120, 10:120] = (30, 30, 35)
+        retry_lines = [
+            {"text": "再挑戦が可能ですが本当に終了しますか?", "bbox": [59, 1270, 508, 1292]},
+            {"text": "プロデュース終了を選択した場合は失敗となります", "bbox": [61, 1306, 608, 1328]},
+            {"text": "デ終", "bbox": [213, 1450, 241, 1510]},
+            {"text": "〇再挑戦", "bbox": [389, 1456, 564, 1503]},
+            {"text": "あと3回", "bbox": [464, 1522, 539, 1541]},
+        ]
+        monkeypatch.setattr(reco.ocr, "recognize_array", lambda _a, *_args, **_kw: {"text": " ".join(l["text"] for l in retry_lines), "lines": retry_lines})
+        obs_retry = reco.recognize(f_retry, plan="logic")
+        assert obs_retry.scene_type == "popup"
+        assert [o.get("name") for o in obs_retry.options] == ["再挑戦"]
+    finally:
+        db.close()
+
+
+def test_w8_shop_sold_out_overlay_and_submodal_regressions(monkeypatch):
+    """Cover W8 live ADB regressions: 交換済み/チェンジ済み red-price guard, 獲得演出 & チェンジしました popups, passive 獲得時 wait, and garbled チェンジ grid."""
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        reco = LiveScreenRecognizer(db=db, plan="logic", scenario_id="hif_honsen")
+        h, w = 1600, 720
+
+        # 1. Sold-out 交換済み slot (mean < 182, p90 <= 245, p75 <= 215) with red 100 price must be skipped without clamping P=480 -> 99
+        f_sold = np.full((h, w, 3), 240, dtype=np.uint8)
+        # Slot (1, 2) = Pドリンク:2 in インターバル shop: x=374..500, y=852..985, price y=986..1024
+        f_sold[852:985, 374:500] = (165, 165, 165)
+        f_sold[890:915, 420:465] = (252, 252, 252)  # bright white ✓ checkmark -> p90 ~ 237, p75 ~ 165
+        f_sold[988:1022, 437:496] = (255, 95, 95)   # red unaffordable price pill
+        sold_lines = [
+            {"text": "インターバル", "bbox": [53, 38, 171, 56]},
+            {"text": "Pポイントで利用するものを選んでください", "bbox": [127, 462, 593, 485]},
+            {"text": "強化", "bbox": [110, 1070, 190, 1105]},
+            {"text": "リフレッシュ", "bbox": [69, 1220, 183, 1237]},
+            {"text": "交換する", "bbox": [327, 1231, 435, 1257]},
+            {"text": "X終了", "bbox": [594, 1228, 696, 1260]},
+            {"text": "100", "bbox": [437, 995, 480, 1018]},
+        ]
+        monkeypatch.setattr(reco.ocr, "recognize_array", lambda _a, *_args, **_kw: {"text": " ".join(l["text"] for l in sold_lines), "lines": sold_lines})
+        monkeypatch.setattr(
+            reco,
+            "_ocr_crop_upscaled",
+            lambda _f, box_t, **kw: "100" if box_t[1] >= int(h * 0.60) and box_t[1] <= int(h * 0.65) else "480",
+        )
+        monkeypatch.setattr(reco, "_ocr_bw_banner_number", lambda _c, prefix="", **_kw: 480 if prefix == "P:" else None)
+        obs_sold = reco.recognize(f_sold, plan="logic")
+        assert obs_sold.scene_type == "shop"
+        assert obs_sold.p_points == 480
+        assert not any(o.get("shop_slot_key") == "Pドリンク:2" for o in obs_sold.options)
+        assert any(o.get("shop_slot_key") == "強化" for o in obs_sold.options)
+
+        # 2. Acquisition celebration overlay (colored toast header + white body) -> tap-to-dismiss popup(次へ)
+        f_celeb = np.full((h, w, 3), 240, dtype=np.uint8)
+        f_celeb[int(h * 0.625) : int(h * 0.658), int(w * 0.12) : int(w * 0.88)] = (250, 180, 40)
+        f_celeb[int(h * 0.662) : int(h * 0.698), int(w * 0.12) : int(w * 0.88)] = (252, 252, 252)
+        celeb_lines = [
+            {"text": "インターバル", "bbox": [53, 38, 171, 56]},
+            {"text": "リフレッシュ", "bbox": [69, 1220, 183, 1237]},
+            {"text": "X終了", "bbox": [594, 1228, 696, 1260]},
+        ]
+        monkeypatch.setattr(reco.ocr, "recognize_array", lambda _a, *_args, **_kw: {"text": " ".join(l["text"] for l in celeb_lines), "lines": celeb_lines})
+        obs_celeb = reco.recognize(f_celeb, plan="logic")
+        assert obs_celeb.scene_type == "popup"
+        assert [o.get("name") for o in obs_celeb.options] == ["次へ"]
+        assert "獲得演出" in str(obs_celeb.raw_text or "")
+
+        # 3. Post-決定 change completion bottom white dialog (`眠気を思い出し笑いにチェンジしました`) -> popup(次へ)
+        f_chg_done = np.full((h, w, 3), 180, dtype=np.uint8)
+        f_chg_done[int(h * 0.805) : int(h * 0.880), int(w * 0.15) : int(w * 0.85)] = (242, 242, 242)
+        monkeypatch.setattr(reco.ocr, "recognize_array", lambda _a, *_args, **_kw: {"text": " ".join(l["text"] for l in celeb_lines), "lines": celeb_lines})
+        monkeypatch.setattr(
+            reco,
+            "_ocr_crop_upscaled",
+            lambda _f, box_t, **kw: "眠気を思い出し笑いにチェンジしました" if box_t[1] >= int(h * 0.75) else "295",
+        )
+        monkeypatch.setattr(reco, "_ocr_bw_banner_number", lambda _c, prefix="", **_kw: 295 if prefix == "P:" else None)
+        obs_chg_done = reco.recognize(f_chg_done, plan="logic")
+        assert obs_chg_done.scene_type == "popup"
+        assert [o.get("name") for o in obs_chg_done.options] == ["次へ"]
+        assert "チェンジしました" in str(obs_chg_done.raw_text or "")
+
+        # 4. Passive gain toast (`スキルカード獲得時` / `スター性獲得`) over shop chrome -> loading (never produce_event!)
+        f_gain = np.full((h, w, 3), 240, dtype=np.uint8)
+        gain_lines = [
+            {"text": "インターバル", "bbox": [53, 38, 171, 56]},
+            {"text": "スキルカード獲得時、", "bbox": [180, 450, 420, 476]},
+            {"text": "スター性獲得", "bbox": [190, 520, 530, 560]},
+            {"text": "カスタマイズ", "bbox": [389, 1090, 530, 1112]},
+            {"text": "リフレッシュ", "bbox": [69, 1220, 183, 1237]},
+            {"text": "交換する", "bbox": [327, 1231, 435, 1257]},
+            {"text": "X終了", "bbox": [594, 1228, 696, 1260]},
+        ]
+        monkeypatch.setattr(reco.ocr, "recognize_array", lambda _a, *_args, **_kw: {"text": " ".join(l["text"] for l in gain_lines), "lines": gain_lines})
+        monkeypatch.setattr(reco, "_ocr_crop_upscaled", lambda *_a, **_kw: "375")
+        obs_gain = reco.recognize(f_gain, plan="logic")
+        assert obs_gain.scene_type == "loading"
+        assert obs_gain.raw_text == "shop_passive_gain_banner"
+
+        # 5. Garbled `チェンジ` sub-modal (`ェン。るスキルカドを選択レてください` + `カスタマイズ確認`, bottom `キャンセル` missed by full OCR) -> card_reward
+        f_sub = np.full((h, w, 3), 240, dtype=np.uint8)
+        f_sub[0:100, 0:720] = (40, 40, 45)
+        for gx1, gx2 in ((66, 200), (222, 356), (378, 512), (534, 668)):
+            f_sub[640:780, gx1:gx2] = (185, 205, 235)
+            f_sub[670:740, gx1 + 18 : gx2 - 18] = (240, 120, 60)
+        sub_lines = [
+            {"text": "チェンジ", "bbox": [67, 43, 174, 68]},
+            {"text": "夏夜に咲く思い出+", "bbox": [195, 271, 445, 298]},
+            {"text": "カスタマイズ確認", "bbox": [46, 441, 171, 455]},
+            {"text": "ェン。るスキルカドを選択レてください", "bbox": [136, 583, 610, 608]},
+        ]
+        monkeypatch.setattr(reco.ocr, "recognize_array", lambda _a, *_args, **_kw: {"text": " ".join(l["text"] for l in sub_lines), "lines": sub_lines})
+        monkeypatch.setattr(
+            reco,
+            "_ocr_crop_upscaled",
+            lambda _f, box_t, **kw: "キャンセル" if box_t[1] >= int(h * 0.85) else "",
+        )
+        obs_sub = reco.recognize(f_sub, plan="logic")
+        assert obs_sub.scene_type == "card_reward"
+        assert any("待选卡" in str(o.get("name") or "") or "候选" in str(o.get("name") or "") or o.get("name") == "チェンジする" for o in obs_sub.options)
+    finally:
+        db.close()
+
+
+def test_w8_shop_all_three_complete_flows_and_deck_accounting():
+    """Verify full multi-step W8 shop flows via GakumasRunner + LocalHybridDecisionAgent + GameStateTracker:
+    (1) Drink buy, (2) Normal skill card buy, (3) Top-right [⇄チェンジ] exchange with final confirm + 獲得演出 dismiss.
+    """
+    from demo.agent.local_agent import LocalHybridDecisionAgent
+    from demo.core.hif_catalog import ProducePreferences
+    from demo.maa_bridge.runner import GakumasRunner
+    from demo.sim.live_battle_planner import LiveBattlePlannerConfig
+
+    class _DummyCtrl:
+        def __init__(self):
+            self.is_connected = True
+            self.clicks: List[Tuple[int, int]] = []
+
+        def connect(self) -> bool:
+            self.is_connected = True
+            return True
+
+        def screencap(self) -> np.ndarray:
+            return np.zeros((1600, 720, 3), dtype=np.uint8)
+
+        def click(self, x: int, y: int) -> bool:
+            self.clicks.append((int(x), int(y)))
+            return True
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        b_ex = {"xmin": 260, "ymin": 1200, "xmax": 460, "ymax": 1270}
+        b_end = {"xmin": 590, "ymin": 1220, "xmax": 700, "ymax": 1270}
+        b_ref = {"xmin": 50, "ymin": 1210, "xmax": 190, "ymax": 1260}
+        b_ok = {"xmin": 420, "ymin": 1440, "xmax": 620, "ymax": 1520}
+        b_no = {"xmin": 100, "ymin": 1440, "xmax": 300, "ymax": 1520}
+        b_ctr = {"xmin": 180, "ymin": 672, "xmax": 540, "ymax": 1024}
+
+        # --- Flow 1: Drink purchase (Pドリンク:3 -> 交換する -> 交換確認 交換 -> 獲得演出 次へ) ---
+        ctrl1 = _DummyCtrl()
+        tr1 = GameStateTracker(plan="logic", p_idol_id=136, scenario_id="hif_honsen")
+        tr1.set_initial_loadout(p_idol_id=136, plan="logic", deck_ids=[800, 133, 134, 158, 174, 23], p_items=[], db=db)
+        ag1 = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=2, ismcts_simulations=2),
+            preferences=ProducePreferences(preferred_drink_ids=[13]),
+        )
+        ag1._has_entered_produce = True
+        r1 = GakumasRunner(mode="mock", controller=ctrl1, agent=ag1, db=db, tracker=tr1, plan="logic", scenario_id="hif_honsen", p_idol_id=136)
+        r1._has_entered_produce = True
+        seq1 = iter([
+            ScreenObservation(scene_type="shop", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=480, options=[
+                {"choice_id": 0, "name": "Pドリンク4", "shop_slot_key": "Pドリンク:3", "shop_action_type": "buy", "drink_id": 13, "price": 75, "bbox": {"xmin": 534, "ymin": 852, "xmax": 660, "ymax": 984}},
+                {"choice_id": 1, "name": "リフレッシュ", "shop_slot_key": "リフレッシュ", "price": 10, "bbox": b_ref},
+                {"choice_id": 2, "name": "終了", "bbox": b_end},
+            ]),
+            ScreenObservation(scene_type="shop", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=480, options=[
+                {"choice_id": 0, "name": "交換する", "shop_slot_key": "Pドリンク:3", "shop_action_type": "buy", "drink_id": 13, "price": 75, "bbox": b_ex},
+                {"choice_id": 1, "name": "終了", "bbox": b_end},
+            ]),
+            ScreenObservation(scene_type="popup", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=405, raw_text="交換確認 Pポイントを使用して交換しますか? パワフル漢方ドリンク 75 480 -> 405 キャンセル 交換", options=[
+                {"choice_id": 0, "name": "交換", "bbox": b_ok},
+                {"choice_id": 1, "name": "キャンセル", "bbox": b_no},
+            ]),
+            ScreenObservation(scene_type="popup", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=405, raw_text="獲得演出 (タップして閉じる)", options=[
+                {"choice_id": 0, "name": "次へ", "bbox": b_ctr},
+            ]),
+        ])
+        r1.scene_routing_reco.recognize = lambda _f: next(seq1)  # type: ignore[method-assign]
+        acts1 = [r1.run_once().action_taken.payload.get("name") for _ in range(4)]
+        assert acts1 == ["Pドリンク4", "交換する", "交換", "次へ"]
+
+        # --- Flow 2: Normal skill card purchase (#91 -> 交換する -> 交換確認 交換 -> 獲得演出 次へ -> deck gains 91) ---
+        ctrl2 = _DummyCtrl()
+        tr2 = GameStateTracker(plan="logic", p_idol_id=136, scenario_id="hif_honsen")
+        tr2.set_initial_loadout(p_idol_id=136, plan="logic", deck_ids=[800, 133, 134, 158, 174, 23], p_items=[], db=db)
+        ag2 = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=2, ismcts_simulations=2),
+            preferences=ProducePreferences(priority_card_ids=[91]),
+        )
+        ag2._has_entered_produce = True
+        r2 = GakumasRunner(mode="mock", controller=ctrl2, agent=ag2, db=db, tracker=tr2, plan="logic", scenario_id="hif_honsen", p_idol_id=136)
+        r2._has_entered_produce = True
+        seq2 = iter([
+            ScreenObservation(scene_type="shop", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=375, options=[
+                {"choice_id": 0, "name": "スキルカード5", "shop_slot_key": "スキルカード:4", "shop_action_type": "buy", "card_id": 91, "price": 50, "bbox": {"xmin": 54, "ymin": 852, "xmax": 178, "ymax": 984}},
+                {"choice_id": 1, "name": "終了", "bbox": b_end},
+            ]),
+            ScreenObservation(scene_type="shop", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=375, options=[
+                {"choice_id": 0, "name": "交換する", "shop_slot_key": "スキルカード:4", "shop_action_type": "buy", "card_id": 91, "price": 50, "bbox": b_ex},
+                {"choice_id": 1, "name": "終了", "bbox": b_end},
+            ]),
+            ScreenObservation(scene_type="popup", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=325, raw_text="交換確認 Pポイントを使用して交換しますか? ありがとうの言葉+ 50 375 -> 325 キャンセル 交換", options=[
+                {"choice_id": 0, "name": "交換", "bbox": b_ok},
+                {"choice_id": 1, "name": "キャンセル", "bbox": b_no},
+            ]),
+            ScreenObservation(scene_type="popup", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=325, raw_text="獲得演出 (タップして閉じる)", options=[
+                {"choice_id": 0, "name": "次へ", "bbox": b_ctr},
+            ]),
+        ])
+        r2.scene_routing_reco.recognize = lambda _f: next(seq2)  # type: ignore[method-assign]
+        acts2 = [r2.run_once().action_taken.payload.get("name") for _ in range(4)]
+        assert acts2 == ["スキルカード5", "交換する", "交換", "次へ"]
+        assert 91 in r2.tracker.produce_deck
+
+        # --- Flow 3: Top-right [⇄チェンジ] exchange (#64: チェンジする -> チェンジ grid swaps #23 -> チェンジ確認 決定 -> チェンジしました 次へ) ---
+        ctrl3 = _DummyCtrl()
+        tr3 = GameStateTracker(plan="logic", p_idol_id=136, scenario_id="hif_honsen")
+        tr3.set_initial_loadout(p_idol_id=136, plan="logic", deck_ids=[800, 133, 134, 158, 174, 23, 91], p_items=[], db=db)
+        ag3 = LocalHybridDecisionAgent(
+            db=db,
+            planner_cfg=LiveBattlePlannerConfig(ppo_episodes=2, ismcts_simulations=2),
+            preferences=ProducePreferences(priority_card_ids=[64]),
+        )
+        ag3._has_entered_produce = True
+        r3 = GakumasRunner(mode="mock", controller=ctrl3, agent=ag3, db=db, tracker=tr3, plan="logic", scenario_id="hif_honsen", p_idol_id=136)
+        r3._has_entered_produce = True
+        seq3 = iter([
+            ScreenObservation(scene_type="shop", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=325, options=[
+                {"choice_id": 0, "name": "スキルカード3", "shop_slot_key": "スキルカード:2", "shop_action_type": "change", "is_shop_change_card": True, "card_id": 64, "price": 30, "bbox": {"xmin": 374, "ymin": 659, "xmax": 500, "ymax": 792}},
+                {"choice_id": 1, "name": "終了", "bbox": b_end},
+            ]),
+            ScreenObservation(scene_type="shop", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=325, options=[
+                {"choice_id": 0, "name": "チェンジする", "shop_slot_key": "スキルカード:2", "shop_action_type": "change", "is_shop_change_card": True, "card_id": 64, "price": 30, "bbox": b_ex},
+                {"choice_id": 1, "name": "終了", "bbox": b_end},
+            ]),
+            ScreenObservation(scene_type="card_reward", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=325, raw_text="チェンジ チェンジするスキルカードを選択してください 眠気 キャンセル チェンジ", options=[
+                {"choice_id": 0, "name": "チェンジする", "card_id": 23, "title": "眠気", "description": "トラブルカード", "bbox": b_ok},
+                {"choice_id": 1, "name": "キャンセル", "bbox": b_no},
+            ]),
+            ScreenObservation(scene_type="popup", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=295, raw_text="スキルカードチェンジ確認 Pポイントを使用して眠気を思い出し笑いに交換しますか? 325 -> 295 キャンセル 決定", options=[
+                {"choice_id": 0, "name": "決定", "bbox": b_ok},
+                {"choice_id": 1, "name": "キャンセル", "bbox": b_no},
+            ]),
+            ScreenObservation(scene_type="popup", plan="logic", scenario_id="hif_honsen", week=8, total_weeks=10, p_points=295, raw_text="獲得演出 (眠気を思い出し笑いにチェンジしました)", options=[
+                {"choice_id": 0, "name": "次へ", "bbox": b_ctr},
+            ]),
+        ])
+        r3.scene_routing_reco.recognize = lambda _f: next(seq3)  # type: ignore[method-assign]
+        acts3 = [r3.run_once().action_taken.payload.get("name") for _ in range(5)]
+        assert acts3 == ["スキルカード3", "チェンジする", "チェンジする", "決定", "次へ"]
+        assert 23 not in r3.tracker.produce_deck
+        assert 64 in r3.tracker.produce_deck
+    finally:
+        db.close()
+
+
+
+
+
+
 
 
 

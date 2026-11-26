@@ -10,6 +10,7 @@ Supports two modes:
 - Compact Mode (compact=True): Legacy <800-token condensed prompt format.
 """
 
+import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from demo.core.db import GakumasDB
@@ -283,6 +284,8 @@ class PromptBuilder:
                             desc += f" [⚡メモリー免费再动+1使用次数(不耗行动点){draw_seg}{rem_seg}]"
                         if custom_meta.get("exiles_trouble"):
                             desc += " [🧹免费除外1张眠気]"
+                        if re.search(r"\baddcardto(?:topof)?deck\s*\(\s*23\s*\)", raw_dsl_actions.lower()):
+                            desc += " [⚠️山札生成眠気]"
                         if card.cost_type == "red":
                             desc += f" (🔴红血直扣{card.hp_loss}·无视护盾)"
                         elif card.cost_type == "green" and card.effective_cost > 0:

@@ -707,9 +707,14 @@ class GameStateTracker:
                 if upg_id_i in self.produce_deck and fam_total >= seen_n:
                     continue
 
-            total_known = sum(1 for d in self.produce_deck if self._family_id(d, db=db) == fam)
+            total_known = self._total_battle_copies(cid, base_id=base_id, db=db)
             exhausted_n = int(self.battle_exhausted_counts.get(fam, 0) or 0)
             available_known = max(0, total_known - exhausted_n)
+            is_trouble_card = bool(
+                cid == 23
+                or base_id == 23
+                or (row is not None and str(row.get("type") or "").lower() == "trouble")
+            )
             is_unique_card = bool(
                 row is not None
                 and (
@@ -725,6 +730,12 @@ class GameStateTracker:
                 and "基本" in str(row.get("name") or "")
             )
             while seen_n > available_known:
+                if is_trouble_card:
+                    # Trouble cards generated mid-battle (e.g. #714/#715 -> #23 眠気) must stay battle-local.
+                    self.battle_generated_cards.append(cid)
+                    self.battle_draw_pile.append(cid)
+                    available_known += 1
+                    continue
                 if is_unique_card and self.has_card_family(cid, db=db):
                     break
                 if is_temp_basic_filler:
@@ -893,6 +904,26 @@ class GameStateTracker:
                 self.pending_top_deck.append(757)
                 self.battle_draw_pile.insert(0, 757)
                 self._record_zone_event("衍生生成《私を超えて(翔)》(#757) → 置入【牌堆】顶")
+
+        # Immediate battle-local deck generation (e.g. #714/#715 成長痛 -> addCardToDeck(23))
+        top_dsl = dsl_actions or ""
+        while "{" in top_dsl:
+            stripped_dsl = re.sub(r"\{[^{}]*\}", "", top_dsl)
+            if stripped_dsl == top_dsl:
+                break
+            top_dsl = stripped_dsl
+        for m_gen in re.finditer(r"\baddCardTo(TopOf)?Deck\(\s*(\d+)\s*\)", top_dsl):
+            gen_cid = int(m_gen.group(2))
+            if gen_cid <= 0:
+                continue
+            self.battle_generated_cards.append(gen_cid)
+            if m_gen.group(1):
+                self.pending_top_deck.append(gen_cid)
+                self.battle_draw_pile.insert(0, gen_cid)
+                self._record_zone_event(f"衍生生成{self._card_label(gen_cid, db=db)} → 置入【牌堆】顶")
+            else:
+                self.battle_draw_pile.append(gen_cid)
+                self._record_zone_event(f"衍生生成{self._card_label(gen_cid, db=db)} → 置入【牌堆】")
 
         if card_id in self.pending_top_deck:
             self.pending_top_deck.remove(card_id)

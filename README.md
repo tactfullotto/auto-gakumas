@@ -120,9 +120,12 @@ On the final shop visit, refresh the store until all P-points are exhausted. Upg
 ## Requirements
 
 - Python 3.11
-- MuMu Player (Android emulator) with ADB at `127.0.0.1:16384`
+- MuMu Player (Android emulator) with ADB at `127.0.0.1:16384` (**Recommended display config: `720×1600` resolution, `320 DPI`, portrait**)
 - Gakumas installed in emulator
 - `gakumas_library.db` (included in repo)
+
+> **Recommended Emulator Settings (`720×1600`, `DPI 320`)**
+> All vision ROIs (shop grids, card/drink icons, L-corner selection brackets, HUD P-points, and fanned hand tap regions) are calibrated for portrait **`720×1600` @ `320 DPI`**. Using this exact display configuration is strongly recommended for reliable OCR and tap accuracy.
 
 ```bash
 pip install -r demo/requirements.txt

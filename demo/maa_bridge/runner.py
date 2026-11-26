@@ -1449,13 +1449,17 @@ class GakumasRunner:
             click_ok = True
             card_play_confirmed = True
             if click_coords is not None:
-                already_selected = (
+                already_selected = bool(
                     chosen_action is not None
                     and chosen_action.action_type == "play_card"
                     and any(
                         getattr(c, "selected", False) and c.bbox.center() == click_coords
                         for c in (obs.cards or [])
                     )
+                ) or bool(
+                    obs.scene_type == "produce_event"
+                    and chosen_action is not None
+                    and bool((chosen_action.payload or {}).get("is_selected"))
                 )
                 confirm_click_coords = click_coords
                 if (
@@ -1509,10 +1513,12 @@ class GakumasRunner:
                 chosen_name = str((chosen_action.payload or {}).get("name") or "") if chosen_action is not None else ""
                 chosen_slot_key = str((chosen_action.payload or {}).get("shop_slot_key") or "") if chosen_action is not None else ""
                 is_drink_discard_click = chosen_name.startswith("破棄候補_")
+                is_preview_only = bool(chosen_action is not None and (chosen_action.payload or {}).get("preview_only"))
                 needs_double_tap = (
                     is_live_ctrl
                     and chosen_action is not None
                     and not already_selected
+                    and not is_preview_only
                     and not is_drink_discard_click
                     and (
                         chosen_action.action_type == "play_card"
@@ -1612,7 +1618,7 @@ class GakumasRunner:
                         if chosen_name == "リフレッシュ" or chosen_slot_key == "リフレッシュ":
                             time.sleep(1.60)
                         elif (
-                            chosen_name in ("交換する", "強化", "削除", "カスタマイズ", "セレクトチェンジ")
+                            chosen_name in ("交換する", "チェンジする", "チェンジ", "強化", "削除", "カスタマイズ", "セレクトチェンジ")
                             or chosen_slot_key in ("強化", "削除", "カスタマイズ", "セレクトチェンジ")
                             or is_drink_discard_click
                         ):
@@ -1620,9 +1626,11 @@ class GakumasRunner:
                         else:
                             time.sleep(0.65)
                     elif obs.scene_type == "popup" and chosen_name in (
-                        "交換", "交換する", "強化", "強化する", "削除", "削除する", "捨てる", "破棄", "破棄する", "決定", "更新する"
+                        "交換", "交換する", "チェンジ", "チェンジする", "強化", "強化する", "削除", "削除する", "捨てる", "破棄", "破棄する", "決定", "更新する"
                     ):
-                        time.sleep(1.25 if chosen_name in ("交換", "交換する", "更新する") else 1.00)
+                        time.sleep(1.35 if chosen_name in ("交換", "交換する", "チェンジ", "チェンジする", "決定", "更新する") else 1.00)
+                    elif obs.scene_type == "popup" and chosen_name in ("次へ", "閉じる"):
+                        time.sleep(0.85)
                     elif is_drink_discard_click and obs.scene_type in ("card_reward", "produce_schedule"):
                         time.sleep(0.90)
                     else:
@@ -1668,7 +1676,18 @@ class GakumasRunner:
                     and picked_name == "受け取る"
                     and self._claimed_card_in_reward_scene
                 )
-                if picked_name in ("受け取る", "交換する") and picked_cid and not is_dup_reward:
+                is_shop_card_change = (
+                    obs.scene_type == "shop"
+                    and (
+                        picked_name in ("チェンジする", "チェンジ")
+                        or (chosen_action.payload or {}).get("shop_action_type") == "change"
+                        or bool((chosen_action.payload or {}).get("is_shop_change_card"))
+                    )
+                    and picked_cid
+                )
+                if is_shop_card_change:
+                    self._pending_change_pickup_cid = int(picked_cid)
+                elif picked_name in ("受け取る", "交換する") and picked_cid and not is_dup_reward:
                     self._pending_change_pickup_cid = None
                     self.tracker.add_card_to_deck(int(picked_cid), db=self.db)
                     self._flush_produce_library()
@@ -1681,7 +1700,7 @@ class GakumasRunner:
                     and "チェンジで獲得" in (obs.raw_text or "")
                 ):
                     self._pending_change_pickup_cid = int(picked_cid)
-                elif picked_name in ("削除する", "チェンジする") and picked_cid:
+                elif obs.scene_type == "card_reward" and picked_name in ("削除する", "チェンジする") and picked_cid:
                     cid_int = int(picked_cid)
                     removed = False
                     removed_cid: Optional[int] = None
@@ -1753,7 +1772,7 @@ class GakumasRunner:
                                 reco_inner._shop_visited_slots.add(str(shop_slot_key))
                             if hasattr(reco_inner, "_shop_last_clicked_slot"):
                                 reco_inner._shop_last_clicked_slot = str(shop_slot_key)
-                if obs.scene_type == "shop" and (picked_name in ("交換する", "強化", "リフレッシュ") or str((chosen_action.payload or {}).get("shop_slot_key") or "") == "リフレッシュ"):
+                if obs.scene_type == "shop" and (picked_name in ("交換する", "チェンジする", "チェンジ", "強化", "リフレッシュ") or str((chosen_action.payload or {}).get("shop_slot_key") or "") == "リフレッシュ"):
                     if chosen_action.payload.get("price"):
                         spent = int(chosen_action.payload["price"])
                         base_p = (

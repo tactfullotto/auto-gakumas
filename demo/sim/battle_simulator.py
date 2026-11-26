@@ -1975,6 +1975,25 @@ class HeadlessBattleSimulator:
                 return True
         return False
 
+    def generates_trouble_card(self, card_cfg: CardConfig) -> bool:
+        """Return True when top-level or parsed actions generate a Trouble card (#23 眠気) into the deck."""
+        dsl_l = (card_cfg.dsl_actions or "").lower()
+        if re.search(r"\baddcardto(?:topof)?deck\s*\(\s*23\s*\)", dsl_l):
+            return True
+        for blk in (card_cfg.parsed_effects.get("actions") or ()):
+            for act in (blk.get("actions") or ()):
+                if (
+                    isinstance(act, dict)
+                    and act.get("type") == "call"
+                    and act.get("name") in ("addCardToDeck", "addCardToTopOfDeck")
+                ):
+                    args = act.get("args") or []
+                    if args and isinstance(args[0], dict) and args[0].get("type") == "number":
+                        cid = int(args[0].get("value") or 0)
+                        if cid == 23 or (cid > 0 and self.is_trouble_card(self._get_card_config_cached(cid))):
+                            return True
+        return False
+
     def is_safe_dominating_free_card(
         self,
         inst: CardInstance,
@@ -1987,6 +2006,10 @@ class HeadlessBattleSimulator:
         if (playable is None and not self.can_play_card(inst)) or not self.is_free_action_card(inst):
             return False
         cfg_c = inst.cfg
+        # Cards that inject #23 眠気 into the draw pile (e.g. #714/#715 成長痛, #712 気まぐれハート, #710 冒険心)
+        # carry real deck-pollution cost and must be evaluated by MCTS rather than blindly force-played.
+        if self.generates_trouble_card(cfg_c):
+            return False
         # Any non-L card (Mental or Active) consumes double_card_effect_cards in _use_card
         if self.double_card_effect_cards > 0 and cfg_c.rarity != "L":
             return False

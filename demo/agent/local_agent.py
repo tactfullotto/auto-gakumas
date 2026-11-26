@@ -151,6 +151,7 @@ class LocalHybridDecisionAgent:
         self._shop_card_popup_guard: bool = False
         self._shop_expecting_drink_confirm: bool = False
         self._shop_expecting_priority_card_confirm: Optional[int] = None
+        self._shop_expecting_priority_card_is_change: bool = False
         self._shop_attempted_drink_ids: Set[int] = set()
         self._shop_attempted_card_ids: Set[int] = set()
         self._shop_clicked_slots: Set[str] = set()
@@ -316,6 +317,7 @@ class LocalHybridDecisionAgent:
         self._shop_card_popup_guard = False
         self._shop_expecting_drink_confirm = False
         self._shop_expecting_priority_card_confirm = None
+        self._shop_expecting_priority_card_is_change = False
         self._shop_attempted_drink_ids.clear()
         self._shop_attempted_card_ids.clear()
         self._shop_clicked_slots.clear()
@@ -1123,20 +1125,64 @@ class LocalHybridDecisionAgent:
         resolved_pid_ev, target_eff, guide = self._resolve_idol_and_effect(obs, p_idol_id=p_idol_id)
         eff_kws = _EFFECT_KEYWORDS.get(target_eff or "goodImpressionTurns", ("好印象",))
         sec_kws = _SECONDARY_EFFECT_KEYWORDS.get(target_eff or "goodImpressionTurns", ("やる気", "元気"))
+        branch_map = {
+            "goodImpressionTurns": (("好印象",), ("やる気",)),
+            "motivation": (("やる気",), ("好印象",)),
+            "goodConditionTurns": (("好調",), ("集中",)),
+            "concentration": (("集中",), ("好調",)),
+            "fullPowerPoint": (("全力",), ("温存", "強気")),
+            "preservation": (("温存",), ("全力", "強気")),
+            "strength": (("強気",), ("全力", "温存")),
+        }
+        target_branch_kws, opp_branch_kws = branch_map.get(target_eff or "", ((), ()))
         is_jugyo_event = bool(
             obs and ("授業" in (obs.week_activity or "") or "授業" in (obs.raw_text or ""))
         )
+        raw_ev_txt = (obs.raw_text or "") if obs is not None else ""
+        is_jugyo_branch_event = is_jugyo_event or any(
+            tok in raw_ev_txt
+            for tok in ("自信の方はどうですか", "セレクトチェンジ", "余裕です", "不安です", "勝ってきます")
+        ) or any(
+            any(
+                tok in f"{(a.payload or {}).get('name') or ''} {a.description or ''}"
+                for tok in ("自信の方はどうですか", "セレクトチェンジ", "余裕です", "不安です", "勝ってきます", "授業选项")
+            )
+            for a in legal_actions
+        )
+
+        def _strip_safe_trouble_phrase(text: str) -> str:
+            return (
+                text.replace("トラブルカード以外", "")
+                .replace("トラプルカード以外", "")
+                .replace("トラブルカードをのぞく", "")
+            )
+
+        def _has_trouble_penalty(act: LegalAction) -> bool:
+            p = act.payload or {}
+            t_raw = f"{p.get('title') or p.get('name') or ''} {act.description or ''}".lower()
+            t_clean = _strip_safe_trouble_phrase(t_raw)
+            return any(tk in t_clean for tk in ("トラブル", "トラプル", "眠気", "睡眠", "干扰卡", "ル追加", "ブル追加"))
+
+        non_trouble_pos: Dict[int, int] = {}
+        nt_counter = 0
+        for a in legal_actions:
+            if not _has_trouble_penalty(a):
+                p_a = a.payload or {}
+                opt_i = p_a.get("option_index")
+                non_trouble_pos[a.choice_id] = int(opt_i) if opt_i is not None else nt_counter
+                nt_counter += 1
 
         def _score_event(act: LegalAction) -> int:
             p = act.payload or {}
             cid = p.get("card_id")
             title = str(p.get("title") or p.get("name") or "")
             desc = str(act.description or "")
-            combined = f"{title} {desc}".lower()
+            pv_text = str(p.get("preview_text") or "").lower()
+            combined = f"{title} {desc} {pv_text}".lower()
+            combined_no_safe_trouble = _strip_safe_trouble_phrase(combined)
 
             if any(bad in combined for bad in ("ジュエル", "リタイア")):
                 return -10_000
-            score = 0
             if cid:
                 return 2_000 + self._score_skill_card(
                     card_id=int(cid),
@@ -1146,7 +1192,8 @@ class LocalHybridDecisionAgent:
                     guide=guide,
                     plan=(obs.plan if obs else "logic"),
                 )
-            if any(tk in combined for tk in ("トラブル", "トラプル", "眠気", "睡眠", "干扰卡")):
+            score = 0
+            if any(tk in combined_no_safe_trouble for tk in ("トラブル", "トラプル", "眠気", "睡眠", "干扰卡", "ル追加", "ブル追加")):
                 score -= 4_500
             if any(k in combined for k in eff_kws):
                 score += 1_200 if target_eff == "goodConditionTurns" else 900
@@ -1155,6 +1202,18 @@ class LocalHybridDecisionAgent:
                 score -= 700
             elif any(k in combined for k in sec_kws):
                 score += 400
+            if pv_text and target_branch_kws:
+                if any(k in pv_text for k in target_branch_kws):
+                    score += 3_000
+                elif any(k in pv_text for k in opp_branch_kws):
+                    score -= 3_500
+            elif is_jugyo_branch_event and nt_counter >= 2 and act.choice_id in non_trouble_pos:
+                pos_idx = non_trouble_pos[act.choice_id]
+                # 授業 events systematically place 好印象/好調 on option #1 (idx 0) and やる気/集中 on option #2 (idx 1)
+                if target_eff in ("goodImpressionTurns", "goodConditionTurns") and pos_idx == 0:
+                    score += 800
+                elif target_eff in ("motivation", "concentration") and pos_idx == 1:
+                    score += 800
             attr_bonus = self._stat_attr_bonus(
                 obs,
                 combined,
@@ -1181,9 +1240,29 @@ class LocalHybridDecisionAgent:
             return score
 
         best = max(legal_actions, key=_score_event)
+        best_p = best.payload or {}
+        is_sel = bool(best_p.get("is_selected"))
+        pv_best = str(best_p.get("preview_text") or "")
+        if is_jugyo_branch_event and not is_sel:
+            if not any(k in f"{best_p.get('title') or best_p.get('name') or ''} {best.description or ''}" for k in target_branch_kws):
+                if best.payload is None:
+                    best.payload = {}
+                best.payload["preview_only"] = True
+        if is_sel and pv_best and any(k in pv_best for k in target_branch_kws):
+            ev_reason = f"LocalAgent(event): Confirming matched {target_eff or 'plan'} preview -> {best.description}"
+        elif any(
+            bool((a.payload or {}).get("is_selected"))
+            and any(k in str((a.payload or {}).get("preview_text") or "") for k in opp_branch_kws)
+            for a in legal_actions
+        ):
+            ev_reason = f"LocalAgent(event): Switching away from opposite branch preview -> {best.description}"
+        elif best_p.get("preview_only"):
+            ev_reason = f"LocalAgent(event): Previewing aligned {target_eff or 'plan'} slot -> {best.description}"
+        else:
+            ev_reason = f"LocalAgent(event): Matching {target_eff or 'plan'} -> {best.description}"
         return DecisionResult(
             choice_id=best.choice_id,
-            reason=f"LocalAgent(event): Matching {target_eff or 'plan'} -> {best.description}",
+            reason=ev_reason,
             source="local_hybrid",
         )
 
@@ -2676,7 +2755,7 @@ class LocalHybridDecisionAgent:
         title = str(p.get("title") or "")
         if slot_key.startswith("スキルカード:") or nm.startswith("スキルカード"):
             return True
-        if nm == "交換する" and (p.get("card_id") is not None or (p.get("drink_id") is None and "スキルカード" in title)):
+        if nm in ("交換する", "チェンジする", "チェンジ") and (p.get("card_id") is not None or (p.get("drink_id") is None and "スキルカード" in title)):
             return True
         return False
 
@@ -2724,6 +2803,7 @@ class LocalHybridDecisionAgent:
             self._shop_noop_features.clear()
             self._shop_clicked_slots.clear()
             self._shop_refresh_noop_streak = 0
+            self._shop_refresh_since_purchase = 0
             self._shop_last_clicked_feature = None
         if wk > 0:
             self._shop_last_week = wk
@@ -2754,6 +2834,7 @@ class LocalHybridDecisionAgent:
                 self._shop_attempted_drink_ids.clear()
                 self._shop_attempted_card_ids.clear()
                 self._shop_expecting_priority_card_confirm = None
+                self._shop_expecting_priority_card_is_change = False
                 self._customize_done_count = 0
                 self._customize_cards_tried = 0
             elif p_pts == self._shop_last_points:
@@ -2806,16 +2887,23 @@ class LocalHybridDecisionAgent:
             if (not self._is_shop_skill_card_action(a) or self._is_shop_buyable_priority_card(a, p_pts))
             and not self._is_shop_banned_drink_action(a)
             and not str((a.payload or {}).get("name") or "").startswith("破棄候補_")
-            and (_slot_id(a) not in self._shop_clicked_slots or _slot_id(a) in ("終了", "次へ", "交換する", "リフレッシュ"))
+            and (
+                _slot_id(a) not in self._shop_clicked_slots
+                or str((a.payload or {}).get("name") or "") in ("終了", "次へ", "交換する", "チェンジする", "チェンジ", "リフレッシュ")
+            )
             and _slot_id(a) not in self._shop_noop_features
         ]
         if not allowed:
+            exit_fallback = [
+                a for a in legal_actions
+                if str((a.payload or {}).get("name") or "") in ("終了", "次へ", "スキップ", "閉じる")
+            ]
             allowed = [
                 a for a in legal_actions
                 if (not self._is_shop_skill_card_action(a) or self._is_shop_buyable_priority_card(a, p_pts))
                 and not self._is_shop_banned_drink_action(a)
                 and not str((a.payload or {}).get("name") or "").startswith("破棄候補_")
-            ] or [
+            ] or exit_fallback or [
                 a for a in legal_actions
                 if not self._is_shop_banned_drink_action(a)
             ] or legal_actions
@@ -2829,11 +2917,11 @@ class LocalHybridDecisionAgent:
             None,
         )
 
-        # Top priority: if an active `交換する` matches an unowned user `priority_card_ids` card, buy it BEFORE drinks!
+        # Top priority: if an active `交換する` or `チェンジする` matches an unowned user `priority_card_ids` card, buy/exchange it BEFORE drinks!
         priority_card_exchange = next(
             (
                 a for a in allowed
-                if str((a.payload or {}).get("name") or "") == "交換する"
+                if str((a.payload or {}).get("name") or "") in ("交換する", "チェンジする", "チェンジ")
                 and (a.payload or {}).get("card_id") is not None
                 and self._is_shop_buyable_priority_card(a, p_pts)
             ),
@@ -2843,23 +2931,36 @@ class LocalHybridDecisionAgent:
             pcid = int((priority_card_exchange.payload or {}).get("card_id") or 0)
             prow = self.db.get_card_by_id(pcid)
             pbase = int(prow.get("base_id") or pcid) if prow else pcid
+            ppay = priority_card_exchange.payload or {}
+            is_chg_prio = bool(
+                ppay.get("is_shop_change_card")
+                or ppay.get("shop_action_type") == "change"
+                or str(ppay.get("name") or "") in ("チェンジする", "チェンジ")
+            )
             self._shop_card_popup_guard = False
             self._shop_expecting_drink_confirm = False
             self._shop_expecting_priority_card_confirm = pcid
+            self._shop_expecting_priority_card_is_change = is_chg_prio
+            if is_chg_prio:
+                self._came_from_change_pickup = True
+                self._pending_change_gain_card_id = pcid
+                self._pending_change_gain_base_id = pbase
             self._shop_attempted_card_ids.add(pcid)
             self._shop_attempted_card_ids.add(pbase)
             self._shop_refresh_since_purchase = 0
+            verb_cn = "Exchanging (チェンジ)" if is_chg_prio else "Purchasing"
             return DecisionResult(
                 choice_id=priority_card_exchange.choice_id,
-                reason=f"LocalAgent(shop): Purchasing priority skill card #{pcid} -> {priority_card_exchange.description}",
+                reason=f"LocalAgent(shop): {verb_cn} priority skill card #{pcid} -> {priority_card_exchange.description}",
                 source="local_hybrid",
             )
         self._shop_expecting_priority_card_confirm = None
+        self._shop_expecting_priority_card_is_change = False
 
         has_buyable_priority_card_slot = any(
             self._is_shop_buyable_priority_card(a, p_pts) for a in allowed
         )
-        # Next: if an active non-banned drink exchange ("交換する" with drink_id) is ready and affordable, buy it,
+        # Next: if an active non-banned drink exchange ("交換する" with drink_id or Pドリンク slot) is ready and affordable, buy it,
         # unless an unowned affordable ★ priority skill card is waiting in the shop!
         drink_exchange = (
             None
@@ -2868,9 +2969,15 @@ class LocalHybridDecisionAgent:
                 (
                     a for a in allowed
                     if str((a.payload or {}).get("name") or "") == "交換する"
-                    and (a.payload or {}).get("drink_id") is not None
+                    and (
+                        (a.payload or {}).get("drink_id") is not None
+                        or str((a.payload or {}).get("shop_slot_key") or "").startswith("Pドリンク:")
+                    )
                     and not self._is_shop_banned_drink_action(a)
-                    and int((a.payload or {}).get("drink_id") or 0) not in self._shop_attempted_drink_ids
+                    and (
+                        int((a.payload or {}).get("drink_id") or 0) <= 0
+                        or int((a.payload or {}).get("drink_id") or 0) not in self._shop_attempted_drink_ids
+                    )
                     and len(held_drinks) < cap_drinks
                     and int((a.payload or {}).get("price") or 0) <= p_pts
                 ),
@@ -2880,7 +2987,9 @@ class LocalHybridDecisionAgent:
         if drink_exchange is not None:
             self._shop_card_popup_guard = False
             self._shop_expecting_drink_confirm = True
-            self._shop_attempted_drink_ids.add(int((drink_exchange.payload or {}).get("drink_id") or 0))
+            ex_did = int((drink_exchange.payload or {}).get("drink_id") or 0)
+            if ex_did > 0:
+                self._shop_attempted_drink_ids.add(ex_did)
             self._shop_refresh_since_purchase = 0
             return DecisionResult(
                 choice_id=drink_exchange.choice_id,
@@ -2967,10 +3076,12 @@ class LocalHybridDecisionAgent:
                 if has_trouble:
                     return 1_100
             if nm == "リフレッシュ" or slot_key == "リフレッシュ":
+                noop_probe = self._shop_refresh_noop_streak > 0
                 if is_final_shop:
                     if (
                         self.preferences.spend_all_final_shop
                         and self._shop_refresh_count < 8
+                        and (refresh_since_purchase < 2 or noop_probe)
                         and price <= 200
                         and ((len(held_drinks) < cap_drinks and p_pts >= price + 60) or p_pts >= price + 70)
                     ):
@@ -2978,6 +3089,7 @@ class LocalHybridDecisionAgent:
                         return 2_100 if need_fill_drinks_first else 1_350
                 elif (
                     self._shop_refresh_count < 2
+                    and (refresh_since_purchase < 2 or noop_probe)
                     and price <= 30
                     and p_pts >= price + 100
                     and len(held_drinks) < cap_drinks
@@ -2992,14 +3104,13 @@ class LocalHybridDecisionAgent:
             best = exit_act
         self._shop_last_points = p_pts
         best_key = _slot_id(best)
+        best_name = str((best.payload or {}).get("name") or "")
         if best_key == "リフレッシュ":
             self._shop_refresh_count += 1
             self._shop_refresh_since_purchase = int(getattr(self, "_shop_refresh_since_purchase", 0) or 0) + 1
             self._shop_last_clicked_feature = "リフレッシュ"
-        elif best is not exit_act and best_key and best_key not in ("終了", "次へ", "交換する"):
+        elif best is not exit_act and best_key and best_name not in ("終了", "次へ", "交換する", "チェンジする", "チェンジ"):
             self._shop_clicked_slots.add(best_key)
-            if best_key in ("強化", "削除", "カスタマイズ", "セレクトチェンジ") or best_key.startswith("Pドリンク:"):
-                self._shop_refresh_since_purchase = 0
             if best_key in ("強化", "削除", "カスタマイズ", "セレクトチェンジ"):
                 self._shop_last_clicked_feature = best_key
         return DecisionResult(
@@ -3125,11 +3236,26 @@ class LocalHybridDecisionAgent:
         if self._shop_expecting_priority_card_confirm and (
             "交換しますか" in raw_l
             or "交換確認" in raw_l
-            or any("交換" in str((a.payload or {}).get("name") or a.description) for a in safe_acts)
+            or "チェンジしますか" in raw_l
+            or "チェンジ確認" in raw_l
+            or any(
+                k in str((a.payload or {}).get("name") or a.description)
+                for a in safe_acts
+                for k in ("交換", "チェンジ")
+            )
         ):
             bought_cid = int(self._shop_expecting_priority_card_confirm)
+            is_chg_prio = bool(self._shop_expecting_priority_card_is_change)
             self._shop_expecting_priority_card_confirm = None
-            if self.tracker is not None and not self._deck_has_card_family(bought_cid):
+            self._shop_expecting_priority_card_is_change = False
+            if is_chg_prio:
+                crow_b = self.db.get_card_by_id(bought_cid)
+                self._came_from_change_pickup = True
+                self._pending_change_gain_card_id = bought_cid
+                self._pending_change_gain_base_id = (
+                    int(crow_b.get("base_id") or bought_cid) if crow_b else bought_cid
+                )
+            elif self.tracker is not None and not self._deck_has_card_family(bought_cid):
                 self.tracker.produce_deck.append(bought_cid)
         if self._shop_expecting_drink_confirm and ("交換しますか" in raw_l or "交換確認" in raw_l or any("交換" in str((a.payload or {}).get("name") or a.description) for a in safe_acts)):
             self._shop_expecting_drink_confirm = False
@@ -3141,11 +3267,13 @@ class LocalHybridDecisionAgent:
             "続きから",
             "決定",
             "交換する",
+            "交換",
             "強化する",
             "削除する",
             "カスタマイズする",
             "強化",
             "削除",
+            "チェンジする",
             "チェンジ",
             "はい",
             "確認",
@@ -3267,6 +3395,7 @@ class LocalHybridDecisionAgent:
             self._shop_refresh_noop_streak = 0
             self._shop_expecting_drink_confirm = False
             self._shop_expecting_priority_card_confirm = None
+            self._shop_expecting_priority_card_is_change = False
             self._shop_attempted_drink_ids.clear()
             self._shop_attempted_card_ids.clear()
             self._reward_seen_slots.clear()
@@ -3286,9 +3415,10 @@ class LocalHybridDecisionAgent:
             self._reward_visited_grid_slots.clear()
             self._reward_cancel_attempts = 0
             self._reward_grid_scores.clear()
-            self._came_from_change_pickup = False
-            self._pending_change_gain_card_id = None
-            self._pending_change_gain_base_id = None
+            if scene == "produce_event" or not self._shop_expecting_priority_card_confirm:
+                self._came_from_change_pickup = False
+                self._pending_change_gain_card_id = None
+                self._pending_change_gain_base_id = None
             if scene == "produce_event":
                 self._shop_clicked_slots.clear()
                 self._shop_last_clicked_feature = None
@@ -3296,6 +3426,7 @@ class LocalHybridDecisionAgent:
                 self._shop_attempted_drink_ids.clear()
                 self._shop_attempted_card_ids.clear()
                 self._shop_expecting_priority_card_confirm = None
+                self._shop_expecting_priority_card_is_change = False
                 self._shop_refresh_count = 0
                 self._shop_refresh_noop_streak = 0
                 self._customize_clicked_tiles.clear()
