@@ -10,6 +10,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
@@ -1024,6 +1025,7 @@ class GakumasRunner:
                 else:
                     logger.info("Staying at top of deck grid for H.I.F チェンジ (no N-rarity basic cards in deck)...")
                     self._reward_grid_started_at_top = True
+                self._reward_step_count = 0
                 self._reward_grid_scrolled_bottom = True
 
             if obs.scene_type == "home":
@@ -1273,6 +1275,7 @@ class GakumasRunner:
                 and not self._reward_grid_flipped_scroll
             ):
                 self._reward_grid_flipped_scroll = True
+                self._reward_step_count = min(self._reward_step_count, 10)
                 if hasattr(self.agent, "_reward_grid_request_scroll"):
                     self.agent._reward_grid_request_scroll = None
                 if hasattr(self.agent, "_reward_grid_can_flip_scroll"):
@@ -1347,6 +1350,7 @@ class GakumasRunner:
                         source="rule_skip",
                     )
             elif obs.scene_type == "card_reward" and self._reward_step_count >= 20 and legal_actions:
+                triggered_reward_steps = self._reward_step_count
                 change_confirm_act = next(
                     (a for a in legal_actions if str((a.payload or {}).get("name") or "") == "チェンジする"),
                     None,
@@ -1356,13 +1360,24 @@ class GakumasRunner:
                     None,
                 )
                 is_active_removal_screen = (change_confirm_act is not None) or (delete_confirm_act is not None)
-                if is_active_removal_screen and self._reward_step_count < 24:
+                if is_active_removal_screen and self._reward_step_count < 30:
                     safe_reward_act = None
                 elif change_confirm_act is not None:
                     chg_cid = int((change_confirm_act.payload or {}).get("card_id") or 0)
                     chg_row = self.db.get_card_by_id(chg_cid) if (self.db and chg_cid > 0) else None
                     is_sig_change = bool(chg_row and chg_row.get("is_signature"))
                     is_custom_change = bool((change_confirm_act.payload or {}).get("is_customized"))
+                    is_protected_change = is_sig_change or is_custom_change
+                    if (not is_protected_change) and hasattr(self.agent, "is_protected_from_removal"):
+                        is_protected_change = bool(
+                            self.agent.is_protected_from_removal(
+                                chg_cid,
+                                is_customized=is_custom_change,
+                                desc=str(change_confirm_act.description or ""),
+                                p_idol_id=self.tracker.p_idol_id,
+                                plan=self.plan,
+                            )
+                        )
                     came_from_pickup = bool(getattr(self.agent, "_came_from_change_pickup", False))
                     cancel_cand_chg = next(
                         (
@@ -1371,14 +1386,29 @@ class GakumasRunner:
                         ),
                         None,
                     )
-                    if is_sig_change and (not came_from_pickup) and self._reward_forced_cancel_count < 1 and cancel_cand_chg is not None:
+                    if is_protected_change and (not came_from_pickup) and self._reward_forced_cancel_count < 1 and cancel_cand_chg is not None:
                         safe_reward_act = cancel_cand_chg
                         self._reward_forced_cancel_count += 1
-                    elif not is_custom_change:
-                        # H.I.F Page-2 mandatory チェンジ has no skip on Page 1; confirm non-customized slot or rotate away from customized.
+                    elif not is_protected_change:
+                        # H.I.F Page-2 mandatory チェンジ has no skip on Page 1; confirm unprotected slot cleanly.
                         safe_reward_act = change_confirm_act
                         self._reward_step_count = 0
                     else:
+                        def _preview_slot_idx(act: LegalAction) -> Optional[int]:
+                            p = act.payload or {}
+                            if p.get("slot_idx") is not None:
+                                return int(p["slot_idx"])
+                            m_s = re.search(
+                                r"(?:第|#|卡)\s*(\d+)",
+                                str(p.get("name") or act.description or ""),
+                            )
+                            return (int(m_s.group(1)) - 1) if m_s else None
+
+                        cur_chg_slot = (change_confirm_act.payload or {}).get("slot_idx")
+                        if cur_chg_slot is None:
+                            cur_chg_slot = getattr(self.agent, "_last_clicked_grid_slot", None)
+                        cur_chg_slot_i = int(cur_chg_slot) if cur_chg_slot is not None else None
+
                         nc_prevs = [
                             a for a in legal_actions
                             if any(
@@ -1386,12 +1416,54 @@ class GakumasRunner:
                                 for tok in ("换出候选卡", "待选卡", "预览")
                             )
                             and not (a.payload or {}).get("is_customized")
+                            and (_preview_slot_idx(a) is None or _preview_slot_idx(a) != cur_chg_slot_i)
                         ]
-                        safe_reward_act = (
-                            nc_prevs[self._reward_step_count % len(nc_prevs)]
-                            if nc_prevs
-                            else change_confirm_act
-                        )
+                        grid_scores = dict(getattr(self.agent, "_reward_grid_scores", None) or {})
+                        visited_slots = set(getattr(self.agent, "_reward_visited_grid_slots", None) or ())
+
+                        safe_reward_act = None
+                        if self._reward_step_count < 42 and nc_prevs:
+                            pos_scored = [
+                                (int(grid_scores[s]), a)
+                                for a in nc_prevs
+                                if (s := _preview_slot_idx(a)) is not None and int(grid_scores.get(s, -99_999)) > 0
+                            ]
+                            if pos_scored:
+                                pos_scored.sort(key=lambda item: item[0], reverse=True)
+                                safe_reward_act = pos_scored[0][1]
+                            else:
+                                unvisited_nc = [
+                                    a for a in nc_prevs
+                                    if (s := _preview_slot_idx(a)) is not None and s not in visited_slots
+                                ]
+                                if unvisited_nc:
+                                    safe_reward_act = unvisited_nc[self._reward_step_count % len(unvisited_nc)]
+                                else:
+                                    cur_slot_score = (
+                                        int(grid_scores[cur_chg_slot_i])
+                                        if cur_chg_slot_i is not None and cur_chg_slot_i in grid_scores
+                                        else -99_999
+                                    )
+                                    better_scored = [
+                                        (int(grid_scores[s]), a)
+                                        for a in nc_prevs
+                                        if (s := _preview_slot_idx(a)) is not None
+                                        and s in grid_scores
+                                        and int(grid_scores[s]) > cur_slot_score
+                                    ]
+                                    if better_scored:
+                                        better_scored.sort(key=lambda item: item[0], reverse=True)
+                                        safe_reward_act = better_scored[0][1]
+                                    else:
+                                        safe_reward_act = nc_prevs[self._reward_step_count % len(nc_prevs)]
+
+                        if safe_reward_act is None:
+                            if cancel_cand_chg is not None and (not came_from_pickup) and self._reward_forced_cancel_count < 2:
+                                safe_reward_act = cancel_cand_chg
+                                self._reward_forced_cancel_count += 1
+                            else:
+                                safe_reward_act = change_confirm_act
+                                self._reward_step_count = 0
                 elif delete_confirm_act is not None:
                     safe_reward_act = next(
                         (
@@ -1450,11 +1522,11 @@ class GakumasRunner:
                     if safe_reward_act is not None:
                         self._reward_forced_cancel_count += 1
                 if safe_reward_act is not None and chosen_action is not safe_reward_act:
-                    logger.warning("Reward anti-stall cap (%d steps) forcing: %s", self._reward_step_count, safe_reward_act.description)
+                    logger.warning("Reward anti-stall cap (%d steps) forcing: %s", triggered_reward_steps, safe_reward_act.description)
                     chosen_action = safe_reward_act
                     decision = DecisionResult(
                         choice_id=safe_reward_act.choice_id,
-                        reason=f"Reward anti-stall cap after {self._reward_step_count} steps",
+                        reason=f"Reward anti-stall cap after {triggered_reward_steps} steps",
                         source="rule_skip",
                     )
 

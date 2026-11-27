@@ -11499,6 +11499,197 @@ def test_schedule_1s_transition_settle_and_healthy_rest_guards(monkeypatch):
         db.close()
 
 
+def test_reward_antistall_protects_locked_and_memory_hook_card_297():
+    """Regression test for W3 #297 anti-stall swap bug:
+    1) LocalAgent.is_protected_from_removal protects #297 (via keep_card_ids, card_memory_hooks, and _CORE_KEEP_CARD_IDS),
+       while returning False for unprotected #290 幸せのおまじない.
+    2) At step 24 (< 30), active チェンジする screen does NOT trigger anti-stall.
+    3) At step 30 on mandatory Page-2 チェンジ with #297 selected, anti-stall refuses to swap #297,
+       switches to unvisited / least-costly slot (-3390 > -23510), and logs 'after 30 steps'.
+    4) On optional チェンジ (_came_from_change_pickup=False) at step 30 with #297, anti-stall clicks キャンセル.
+    5) On unprotected #290 at step 30, anti-stall confirms チェンジする and logs 'after 30 steps' (never 0).
+    6) Live ADB Page 1 -> Page 2 transition resets _reward_step_count from 5 cleanly to 1.
+    """
+    import numpy as np
+    from demo.core.db import GakumasDB
+    from demo.core.hif_catalog import ProducePreferences
+    from demo.core.tracker import GameStateTracker
+    from demo.maa_bridge.mock_controller import MockController
+    from demo.maa_bridge.runner import GakumasRunner
+    from demo.schemas import DecisionResult, ScreenObservation
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        # 1) is_protected_from_removal checks
+        agent_locked = LocalHybridDecisionAgent(
+            db=db,
+            preferences=ProducePreferences(keep_card_ids=[297]),
+        )
+        tr_locked = GameStateTracker(plan="logic", p_idol_id=163, scenario_id="hif_honsen")
+        tr_locked.produce_deck = [920, 922, 297, 290]
+        agent_locked.bind_tracker(tr_locked)
+        assert agent_locked.is_protected_from_removal(297, p_idol_id=163, plan="logic") is True
+        assert agent_locked.is_protected_from_removal(290, p_idol_id=163, plan="logic") is False
+
+        agent_mem = LocalHybridDecisionAgent(db=db)
+        tr_mem = GameStateTracker(plan="logic", p_idol_id=163, scenario_id="hif_honsen")
+        tr_mem.produce_deck = [920, 922, 297, 290]
+        tr_mem.card_memory_hooks = {297: {"exiles_trouble_on_play": True}, 290: {"exiles_trouble_on_play": True}}
+        agent_mem.bind_tracker(tr_mem)
+        assert agent_mem.is_protected_from_removal(297, p_idol_id=163, plan="logic") is True
+        assert agent_mem.is_protected_from_removal(290, p_idol_id=163, plan="logic") is True
+
+        agent_core = LocalHybridDecisionAgent(db=db)
+        tr_core = GameStateTracker(plan="logic", p_idol_id=163, scenario_id="hif_honsen")
+        tr_core.produce_deck = [920, 922, 297, 297, 290]
+        agent_core.bind_tracker(tr_core)
+        assert agent_core.is_protected_from_removal(297, p_idol_id=163, plan="logic") is True
+        assert agent_core.is_protected_from_removal(290, p_idol_id=163, plan="logic") is False
+
+        class _ChangeCardStubReco:
+            def __init__(self, card_id: int, slot_idx: int, title: str):
+                self.card_id = card_id
+                self.slot_idx = slot_idx
+                self.title = title
+
+            def recognize(self, _frame):
+                return ScreenObservation(
+                    scene_type="card_reward",
+                    plan="logic",
+                    week=3,
+                    raw_text=f"チェンジするスキルカードを選択してください\n{self.title}",
+                    options=[
+                        {
+                            "choice_id": 0,
+                            "name": "チェンジする",
+                            "card_id": self.card_id,
+                            "slot_idx": self.slot_idx,
+                            "title": f"确认换出: {self.title}",
+                            "bbox": {"xmin": 400, "ymin": 1440, "xmax": 620, "ymax": 1520},
+                        },
+                        {
+                            "choice_id": 1,
+                            "name": "预览第6张待选卡",
+                            "slot_idx": 5,
+                            "title": "待选卡 6",
+                            "bbox": {"xmin": 240, "ymin": 640, "xmax": 350, "ymax": 760},
+                        },
+                        {
+                            "choice_id": 2,
+                            "name": "预览第12张待选卡",
+                            "slot_idx": 11,
+                            "title": "待选卡 12",
+                            "bbox": {"xmin": 380, "ymin": 640, "xmax": 490, "ymax": 760},
+                        },
+                        {
+                            "choice_id": 3,
+                            "name": "キャンセル",
+                            "title": "キャンセル",
+                            "bbox": {"xmin": 100, "ymin": 1440, "xmax": 300, "ymax": 1520},
+                        },
+                    ],
+                )
+
+        # Stub decide to pick slot 11 so anti-stall overrides are clearly distinguishable
+        orig_decide = agent_locked.decide
+        agent_locked.decide = lambda **_kw: DecisionResult(choice_id=2, reason="keep scanning", source="stub")  # type: ignore[method-assign]
+        runner = GakumasRunner(
+            mode="mock",
+            controller=MockController(),
+            agent=agent_locked,
+            db=db,
+            plan="logic",
+            scenario_id="hif_honsen",
+            p_idol_id=163,
+            session_mode=False,
+        )
+        runner.tracker = tr_locked
+        runner.scene_routing_reco = _ChangeCardStubReco(297, 10, "止められない想い+")
+
+        # 2) Step 24 (< 30): active チェンジする screen does NOT trigger anti-stall
+        runner._reward_step_count = 23  # increments to 24
+        r24 = runner.run_once()
+        assert r24.decision is not None and r24.decision.source == "stub"
+        assert r24.action_taken is not None and r24.action_taken.payload.get("name") == "预览第12张待选卡"
+
+        # 3a) Step 30 mandatory Page-2 チェンジ with #297 and unvisited slot 5 -> switches to unvisited slot 5
+        agent_locked._came_from_change_pickup = True
+        agent_locked._reward_visited_grid_slots = {10, 11}
+        agent_locked._reward_grid_scores = {10: -23510, 11: -21000}
+        runner._reward_step_count = 29  # increments to 30
+        r30_unvisited = runner.run_once()
+        assert r30_unvisited.action_taken is not None
+        assert r30_unvisited.action_taken.payload.get("name") == "预览第6张待选卡"
+        assert r30_unvisited.decision is not None
+        assert "after 30 steps" in r30_unvisited.decision.reason
+
+        # 3b) Step 30 mandatory Page-2 チェンジ with #297 and all visited, slot 5 scored -3390 > -23510 -> switches to slot 5
+        agent_locked._reward_visited_grid_slots = {5, 10, 11}
+        agent_locked._reward_grid_scores = {10: -23510, 5: -3390, 11: -21000}
+        runner._reward_step_count = 29  # increments to 30
+        r30_better = runner.run_once()
+        assert r30_better.action_taken is not None
+        assert r30_better.action_taken.payload.get("name") == "预览第6张待选卡"
+        assert r30_better.decision is not None
+        assert "after 30 steps" in r30_better.decision.reason
+
+        # 4) Optional チェンジ (_came_from_change_pickup=False) at step 30 with #297 -> clicks キャンセル
+        agent_locked._came_from_change_pickup = False
+        runner._reward_forced_cancel_count = 0
+        runner._reward_step_count = 29  # increments to 30
+        r30_cancel = runner.run_once()
+        assert r30_cancel.action_taken is not None
+        assert r30_cancel.action_taken.payload.get("name") == "キャンセル"
+        assert r30_cancel.decision is not None and "after 30 steps" in r30_cancel.decision.reason
+
+        # 5) Unprotected #290 at step 30 -> confirms チェンジする and logs "after 30 steps" (never "after 0 steps")
+        agent_locked._came_from_change_pickup = True
+        runner.scene_routing_reco = _ChangeCardStubReco(290, 5, "幸せのおまじない")
+        runner._reward_step_count = 29  # increments to 30
+        r30_290 = runner.run_once()
+        assert r30_290.action_taken is not None
+        assert r30_290.action_taken.payload.get("name") == "チェンジする"
+        assert r30_290.decision is not None
+        assert "after 30 steps" in r30_290.decision.reason
+        assert "after 0 steps" not in r30_290.decision.reason
+        assert runner._reward_step_count == 0
+
+        # 6) Live ADB Page 1 -> Page 2 transition resets _reward_step_count from 5 cleanly to 1
+        agent_locked.decide = orig_decide  # type: ignore[method-assign]
+        dummy_frame = np.full((2400, 1080, 3), 235, dtype=np.uint8)
+        ctrl_stub = SimpleNamespace(
+            is_connected=True,
+            connect=lambda: True,
+            disconnect=lambda: None,
+            screencap=lambda: dummy_frame,
+            click=lambda _x, _y: True,
+            swipe=lambda _x1, _y1, _x2, _y2, duration_ms=650: None,
+        )
+        live_runner = GakumasRunner(
+            mode="adb",
+            controller=ctrl_stub,  # type: ignore[arg-type]
+            agent=SimpleNamespace(
+                decide=lambda **_kw: DecisionResult(choice_id=0, reason="scan", source="stub"),
+                bind_tracker=lambda _t: None,
+                is_protected_from_removal=lambda *a, **kw: False,
+            ),
+            db=db,
+            plan="logic",
+            scenario_id="hif_honsen",
+            p_idol_id=163,
+            session_mode=False,
+        )
+        live_runner.tracker.produce_deck = [920, 922, 297, 290]  # no N-rarity basic cards
+        live_runner.scene_routing_reco = _ChangeCardStubReco(297, 10, "止められない想い+")
+        live_runner._reward_step_count = 5
+        live_runner._reward_grid_scrolled_bottom = False
+        live_runner.run_once()
+        assert live_runner._reward_grid_scrolled_bottom is True
+        assert live_runner._reward_step_count == 1
+    finally:
+        db.close()
+
+
 
 
 

@@ -279,6 +279,85 @@ class LocalHybridDecisionAgent:
             b_i > 0 and b_i in self._keep_card_base_ids
         )
 
+    def is_protected_from_removal(
+        self,
+        card_id: Optional[int],
+        *,
+        is_customized: bool = False,
+        desc: str = "",
+        p_idol_id: Optional[int] = None,
+        plan: str = "",
+    ) -> bool:
+        """Return True when a card is locked/customized/signature/memory-hook/core-protected from チェンジ/削除."""
+        if is_customized or ("已加点强化" in desc) or ("カスタマイズ済" in desc):
+            return True
+        cid = int(card_id or 0)
+        if cid <= 0:
+            return False
+        row = self.db.get_card_by_id(cid)
+        base_id = int(row.get("base_id") or cid) if row else cid
+        if row and row.get("is_signature"):
+            return True
+        if (
+            self._is_keep_card(cid, base_id=base_id)
+            or self._is_priority_card(cid, base_id=base_id)
+            or self._get_card_score_override(cid, base_id=base_id) >= 500
+        ):
+            return True
+
+        family_ids: Set[int] = {cid}
+        if base_id > 0:
+            family_ids.add(base_id)
+        if row and row.get("upgraded_id"):
+            family_ids.add(int(row["upgraded_id"]))
+        elif base_id > 0 and base_id != cid:
+            b_row = self.db.get_card_by_id(base_id)
+            if b_row and b_row.get("upgraded_id"):
+                family_ids.add(int(b_row["upgraded_id"]))
+
+        tr_custs = (getattr(self.tracker, "card_customizations", None) or {}) if self.tracker is not None else {}
+        for fid in family_ids:
+            cm = tr_custs.get(fid) or tr_custs.get(str(fid))
+            if isinstance(cm, dict) and (cm.get("levels") or cm.get("custom_ids") or cm.get("modifiers")):
+                return True
+
+        from demo.core.idol_guides import resolve_card_family_meta
+
+        tracker_hooks = (getattr(self.tracker, "card_memory_hooks", None) or {}) if self.tracker is not None else {}
+        hook_meta = resolve_card_family_meta(tracker_hooks, cid, db=self.db)
+        eff_pid = p_idol_id if p_idol_id is not None else (
+            getattr(self.tracker, "p_idol_id", None) if self.tracker is not None else None
+        )
+        eff_plan = str(
+            plan or (getattr(self.tracker, "plan", "") if self.tracker is not None else "") or ""
+        ).strip().lower()
+        is_misuzu_logic = (eff_pid in (None, 163)) and (eff_plan == "logic")
+        has_real_hook = bool(
+            hook_meta.get("force_initial_hand")
+            or hook_meta.get("free_extra_use_first_play")
+            or int(hook_meta.get("extra_use_limit") or 0) > 0
+            or int(hook_meta.get("draw_on_play") or 0) > 0
+            or (hook_meta.get("exiles_trouble_on_play") and base_id != 426)
+            or (is_misuzu_logic and base_id in (126, 128, 136, 296, 298))
+        )
+        if has_real_hook:
+            deck_count = 0
+            if self.tracker is not None and self.tracker.produce_deck:
+                for cid_d in self.tracker.produce_deck:
+                    cid_di = int(cid_d)
+                    if cid_di in family_ids:
+                        deck_count += 1
+                        continue
+                    r_d = self.db.get_card_by_id(cid_di)
+                    if r_d and int(r_d.get("base_id") or cid_di) == base_id:
+                        deck_count += 1
+            if deck_count < 2:
+                return True
+
+        if (cid in _CORE_KEEP_CARD_IDS) or (base_id in _CORE_KEEP_BASE_IDS):
+            return True
+        return False
+
     def _get_card_score_override(self, card_id: Optional[int], base_id: int = 0) -> int:
         cid_i = int(card_id or 0)
         if cid_i > 0 and cid_i in self._card_score_overrides_exact:
