@@ -442,6 +442,21 @@ _SIGNATURE_CARD_TO_P_IDOL: Dict[int, int] = {
     757: 126,
     758: 126,
     876: 126,
+    783: 130,
+    784: 130,
+    853: 130,
+    799: 136,
+    800: 136,
+    854: 136,
+    829: 123,
+    830: 115,
+    831: 110,
+    834: 137,
+    835: 114,
+    836: 102,
+    837: 97,
+    838: 120,
+    875: 106,
     919: 163,
     920: 163,
     921: 163,
@@ -468,9 +483,7 @@ def resolve_p_idol_id(
     or plan default (currently only [赤裸々] 十王星南 #126 is registered for Logic).
     """
     if p_idol_id is not None:
-        pid = int(p_idol_id)
-        if pid in P_IDOL_GUIDE_REGISTRY:
-            return pid
+        return int(p_idol_id)
 
     for cid in deck_ids or ():
         mapped = _SIGNATURE_CARD_TO_P_IDOL.get(int(cid))

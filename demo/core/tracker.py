@@ -143,7 +143,13 @@ class GameStateTracker:
             self.plan = str(plan).lower()
         if p_idol_id is not None:
             self.p_idol_id = int(p_idol_id)
-        self.produce_deck = [int(cid) for cid in deck_ids if cid]
+        clean_deck = [int(cid) for cid in deck_ids if cid]
+        if self.p_idol_id is not None and db is not None:
+            clean_deck = [
+                cid for cid in clean_deck
+                if not self._is_foreign_idol_card(cid, db=db)
+            ]
+        self.produce_deck = clean_deck
         self.equipped_p_items = [dict(it) for it in (p_items or [])]
         self.card_memory_hooks = {
             int(k): dict(v) for k, v in (card_memory_hooks or {}).items()
@@ -277,6 +283,28 @@ class GameStateTracker:
             cleaned.append(cid_i)
         self.produce_deck = cleaned
 
+    def _is_foreign_idol_card(
+        self,
+        card_id: int,
+        db: Optional[Any] = None,
+        row: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Return True when `card_id` is exclusively owned by a different P-Idol (`p_idol_id` mismatch)."""
+        if self.p_idol_id is None or not card_id:
+            return False
+        c_row = row
+        if c_row is None and db is not None and hasattr(db, "get_card_by_id"):
+            try:
+                c_row = db.get_card_by_id(int(card_id))
+            except Exception:
+                c_row = None
+        if not isinstance(c_row, dict):
+            return False
+        card_pid = c_row.get("p_idol_id")
+        if card_pid is None:
+            return False
+        return int(card_pid) != int(self.p_idol_id)
+
     def has_card_family(self, card_id: int, db: Optional[Any] = None) -> bool:
         if not card_id:
             return False
@@ -289,6 +317,8 @@ class GameStateTracker:
         cid_int = int(card_id)
         if db is not None:
             row = db.get_card_by_id(cid_int)
+            if self._is_foreign_idol_card(cid_int, db=db, row=row):
+                return False
             is_unique_card = bool(
                 row is not None
                 and (
@@ -608,6 +638,17 @@ class GameStateTracker:
         self._ensure_battle_zones_initialized(db=db)
         if not obs_cards:
             return
+        if db is not None and self.p_idol_id is not None:
+            obs_cards = [
+                c
+                for c in obs_cards
+                if not (
+                    getattr(c, "card_id", None)
+                    and self._is_foreign_idol_card(int(c.card_id), db=db)
+                )
+            ]
+            if not obs_cards:
+                return
         self._reconcile_deck_additions_into_battle(db=db)
         self._restore_limit_card_if_still_in_hand(obs_cards, db=db)
 

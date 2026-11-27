@@ -322,9 +322,14 @@ def build_live_battle_config(
     use_misuzu_legacy = p_idol_id in (None, 163) and str(plan or "").lower() == "logic"
     deck_cfgs: List[CardConfig] = []
     for cid in deck_card_ids:
+        cid_int = int(cid)
+        if p_idol_id is not None:
+            row = db.get_card_by_id(cid_int)
+            if row is not None and row.get("p_idol_id") is not None and int(row["p_idol_id"]) != int(p_idol_id):
+                continue
         cfg_item = _build_card_config_with_hooks(
             db,
-            int(cid),
+            cid_int,
             hooks=hooks,
             custs=custs,
             use_misuzu_legacy=use_misuzu_legacy,
@@ -1473,6 +1478,37 @@ class LiveBattlePlanner:
                 return True
         return False
 
+    def _early_card_priority_tier(self, act: LegalAction) -> int:
+        """Return fallback card priority tier: 2=再动, 1=turn<=5 exiles deck/discard trouble, 0=normal."""
+        if act.action_type != "play_card":
+            return 0
+        desc = str(act.description or "")
+        is_desc_free = ("不耗行动点" in desc) or ("🟢0消耗" in desc)
+        sim = self._sim
+        cid = int((act.payload or {}).get("card_id") or 0)
+        inst = None
+        if sim is not None and cid > 0:
+            inst = next((c for c in sim.hand if c.cfg.card_id == cid), None)
+            if inst is None:
+                inst = next((c for c in sim.hand if c.cfg.base_id == cid), None)
+        if is_desc_free or (inst is not None and sim is not None and sim.is_free_action_card(inst)):
+            return 2
+        if sim is None or inst is None:
+            return 0
+        max_early_turn = int(
+            getattr(self._ismcts.cfg, "early_trouble_exile_max_turn", 5)
+            if self._ismcts is not None
+            else 5
+        )
+        if (
+            sim.turn <= max_early_turn
+            and sim.double_card_effect_cards == 0
+            and not sim.has_armed_active_retrigger(same_turn_only=True)
+            and sim.can_exile_deck_or_discard_trouble_on_play(inst)
+        ):
+            return 1
+        return 0
+
     def decide_battle_action(
         self,
         obs: ScreenObservation,
@@ -2244,8 +2280,7 @@ class LiveBattlePlanner:
                     aname = self._codec.action_name(aid) if aid is not None else ""
                     q_val = top_q_by_name.get(aname, -1e9)
                     p_val = aid_scores.get(aid, 0.0) if aid is not None else 0.0
-                    is_free = 1 if ("不耗行动点" in act.description or "🟢0消耗" in act.description) else 0
-                    return (1 + is_free, q_val, p_val)
+                    return (self._early_card_priority_tier(act), q_val, p_val)
 
                 has_unmapped = any(act.choice_id not in ui_to_aid for act in non_trouble_cards)
                 has_free_or_final = (
@@ -2302,7 +2337,7 @@ class LiveBattlePlanner:
                     best_alt = max(
                         alt_cards,
                         key=lambda a: (
-                            1 if ("不耗行动点" in a.description or "🟢0消耗" in a.description) else 0,
+                            self._early_card_priority_tier(a),
                             top_q_map.get(
                                 self._codec.action_name(ui_to_aid_hold[a.choice_id]), -1e9
                             )
@@ -2574,8 +2609,7 @@ class LiveBattlePlanner:
             top_q_g = {str(nm): float(qv) for nm, _cnt, qv in (mcts_stats.get("top_actions") or [])}
             aid_c = next((aid for aid, a in aid_to_ui.items() if a.choice_id == act_c.choice_id), None)
             qv_c = top_q_g.get(self._codec.action_name(aid_c), -1e9) if aid_c is not None else -1e9
-            is_free_c = 1 if ("不耗行动点" in str(act_c.description or "") or "🟢0消耗" in str(act_c.description or "")) else 0
-            return (is_free_c, qv_c)
+            return (self._early_card_priority_tier(act_c), qv_c)
 
         # Hard guard: hold #777/#778 for the last 5 turns (turns_remaining <= 5)
         # and #771/#772 for rem <= 6 so its 4-turn delayed burst lands before battle ends.

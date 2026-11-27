@@ -107,6 +107,7 @@ class CardConfig:
     _is_motivation_gainer: bool = field(init=False, repr=False, compare=False)
     _has_motivation_cost: bool = field(init=False, repr=False, compare=False)
     _has_card_uses_gain: bool = field(init=False, repr=False, compare=False)
+    _exiles_deck_or_discard_trouble_dsl: bool = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         pe = self.parsed_effects if isinstance(self.parsed_effects, dict) else {}
@@ -129,6 +130,16 @@ class CardConfig:
         self._is_motivation_gainer = "motivation+=" in dsl_txt
         self._has_motivation_cost = (self._static_cost is None) or (self._static_cost[0] == "motivation")
         self._has_card_uses_gain = "cardUsesRemaining+=" in dsl_txt
+        m_rem = re.search(r"removeRandom\s*\[([^\]]*)\]", dsl_txt, flags=re.IGNORECASE)
+        rem_tgt = m_rem.group(1) if m_rem else ""
+        self._exiles_deck_or_discard_trouble_dsl = bool(
+            m_rem
+            and re.search(r"\btrouble\b", rem_tgt, flags=re.IGNORECASE)
+            and (
+                re.search(r"\b(deck|discarded)\b", rem_tgt, flags=re.IGNORECASE)
+                or not re.search(r"\bhand\b", rem_tgt, flags=re.IGNORECASE)
+            )
+        )
 
 
 @dataclass
@@ -1595,6 +1606,35 @@ class HeadlessBattleSimulator:
             (c.cfg.card_type == "trouble" or c.cfg.base_id == 23)
             for z in (self.hand, self.draw_pile, self.discard_pile)
             for c in z
+        )
+
+    def has_trouble_in_deck_or_discard(self) -> bool:
+        """Return True if at least one trouble card (#23 眠気) is currently in draw_pile or discard_pile."""
+        return any(
+            self.is_trouble_card(c.cfg)
+            for z in (self.draw_pile, self.discard_pile)
+            for c in z
+        )
+
+    def can_exile_deck_or_discard_trouble_on_play(
+        self,
+        inst: CardInstance,
+        *,
+        has_deck_discard_trouble: Optional[bool] = None,
+    ) -> bool:
+        """Return True if playing `inst` now can exile a trouble card from draw_pile or discard_pile."""
+        if self.is_trouble_card(inst.cfg):
+            return False
+        has_t = (
+            self.has_trouble_in_deck_or_discard()
+            if has_deck_discard_trouble is None
+            else bool(has_deck_discard_trouble)
+        )
+        if not has_t:
+            return False
+        return bool(
+            self.has_unused_memory_exile(inst)
+            or getattr(inst.cfg, "_exiles_deck_or_discard_trouble_dsl", False)
         )
 
     def has_motivation_engine(self) -> bool:

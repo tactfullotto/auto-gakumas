@@ -348,9 +348,13 @@ def build_local_hif_runner(
                     reco_inner._last_stats = dict(clean_stats)
             if init_pid_arg is not None:
                 runner.p_idol_id = int(init_pid_arg)
+                if hasattr(runner.scene_routing_reco, "set_p_idol_id"):
+                    runner.scene_routing_reco.set_p_idol_id(runner.p_idol_id)
             runner._flush_produce_library()
         elif mode_l in ("hybrid", "auto"):
             # Keep auto-scanner active at produce_setup, while ALWAYS seeding manual memories/slots/passives/customizations
+            if init_pid_arg is not None and hasattr(runner.scene_routing_reco, "set_p_idol_id"):
+                runner.scene_routing_reco.set_p_idol_id(int(init_pid_arg))
             runner.tracker.memory_slots = [dict(s) for s in manual_slots if isinstance(s, dict)]
             runner.tracker.memory_passives = [dict(p) for p in manual_passives if isinstance(p, dict)]
             if manual_hooks_int or manual_custs_int:

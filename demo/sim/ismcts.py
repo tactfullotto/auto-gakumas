@@ -58,8 +58,12 @@ class ISMCTSConfig:
     score_scale: float = 1_000_000.0
     max_steps_per_rollout: int = 200
     prune_dominated_free_actions: bool = True
-    free_action_prior_floor: float = 0.25
+    free_action_prior_floor: float = 0.40
     memory_exile_prior_floor: float = 0.22
+    early_trouble_exile_max_turn: int = 5
+    early_trouble_exile_prior_floor: float = 0.34
+    early_trouble_exile_prior_mult: float = 1.6
+    early_trouble_exile_q_bonus: float = 0.03
     kimegao_combo_prior_floor: float = 0.45
 
 
@@ -99,18 +103,77 @@ class ISMCTSAgent:
 
         if sim is not None and action_map is not None and legal_actions:
             cfg = self.cfg
+            armed_2x = (
+                sim.double_card_effect_cards > 0
+                or sim.has_armed_active_retrigger(same_turn_only=True)
+            )
             has_troubles = sim.has_active_troubles() and sim.turns_remaining >= 3
+            early_exile_window = (
+                (not armed_2x)
+                and sim.turn <= int(cfg.early_trouble_exile_max_turn)
+                and sim.has_trouble_in_deck_or_discard()
+            )
+            extra_use_aids: List[int] = []
+            early_exile_aids: List[int] = []
+            late_mem_exile_aids: List[int] = []
             modified = False
             for a in legal_actions:
                 kind, idx = action_map.get(a, ("", -1))
                 if kind == "card" and 0 <= idx < len(sim.hand):
                     inst = sim.hand[idx]
+                    if sim.is_free_action_card(inst):
+                        extra_use_aids.append(a)
                     if sim.is_safe_dominating_free_card(inst) and float(priors[a]) < cfg.free_action_prior_floor:
                         priors[a] = cfg.free_action_prior_floor
                         modified = True
-                    if has_troubles and sim.has_unused_memory_exile(inst) and float(priors[a]) < cfg.memory_exile_prior_floor:
-                        priors[a] = max(float(priors[a]), cfg.memory_exile_prior_floor)
-                        modified = True
+                    if early_exile_window and sim.can_exile_deck_or_discard_trouble_on_play(
+                        inst, has_deck_discard_trouble=True
+                    ):
+                        early_exile_aids.append(a)
+                    elif has_troubles and sim.has_unused_memory_exile(inst):
+                        late_mem_exile_aids.append(a)
+
+            extra_set = set(extra_use_aids)
+            for a in early_exile_aids:
+                if a not in extra_set:
+                    continue
+                cur_p = float(priors[a])
+                target_p = max(
+                    cur_p * float(cfg.early_trouble_exile_prior_mult),
+                    float(cfg.free_action_prior_floor),
+                )
+                if target_p > cur_p:
+                    priors[a] = target_p
+                    modified = True
+
+            non_extra_cap: Optional[float] = None
+            if extra_use_aids:
+                min_extra_p = min(float(priors[e]) for e in extra_use_aids)
+                non_extra_cap = max(0.0, min(min_extra_p - 1e-4, min_extra_p * 0.90))
+
+            for a in early_exile_aids:
+                if a in extra_set:
+                    continue
+                cur_p = float(priors[a])
+                target_p = max(
+                    cur_p * float(cfg.early_trouble_exile_prior_mult),
+                    float(cfg.early_trouble_exile_prior_floor),
+                )
+                if non_extra_cap is not None:
+                    target_p = min(target_p, non_extra_cap)
+                if target_p > cur_p:
+                    priors[a] = target_p
+                    modified = True
+
+            for a in late_mem_exile_aids:
+                cur_p = float(priors[a])
+                target_p = max(cur_p, float(cfg.memory_exile_prior_floor))
+                if non_extra_cap is not None and a not in extra_set:
+                    target_p = min(target_p, non_extra_cap)
+                if target_p > cur_p:
+                    priors[a] = target_p
+                    modified = True
+
             if sim.plan_rules.apply_ismcts_priors(sim, legal_actions, action_map, priors, cfg):
                 modified = True
             if modified:
@@ -366,6 +429,29 @@ class ISMCTSAgent:
         root = ISMCTSNode()
         min_max = MinMaxStats()
         root_obs = self.encoder.encode(sim) if self.net is not None else None
+        root_action_bonus: Dict[int, float] = {}
+        if (
+            cfg.early_trouble_exile_q_bonus > 0.0
+            and sim.turn <= int(cfg.early_trouble_exile_max_turn)
+            and sim.double_card_effect_cards == 0
+            and not sim.has_armed_active_retrigger(same_turn_only=True)
+            and sim.has_trouble_in_deck_or_discard()
+        ):
+            root_extra_use_aids = {
+                a
+                for a in root_legal
+                if root_map.get(a, ("", -1))[0] == "card"
+                and 0 <= root_map[a][1] < len(sim.hand)
+                and sim.is_free_action_card(sim.hand[root_map[a][1]])
+            }
+            for a in root_legal:
+                kind, idx = root_map.get(a, ("", -1))
+                if kind == "card" and 0 <= idx < len(sim.hand):
+                    inst = sim.hand[idx]
+                    if (not root_extra_use_aids or a in root_extra_use_aids) and sim.can_exile_deck_or_discard_trouble_on_play(
+                        inst, has_deck_discard_trouble=True
+                    ):
+                        root_action_bonus[a] = float(cfg.early_trouble_exile_q_bonus)
 
         for _ in range(max(1, cfg.num_simulations)):
             d = sim.determinize(rng, keep_logs=False)
@@ -430,8 +516,9 @@ class ISMCTSAgent:
 
             leaf_val = self._evaluate_leaf(d, rng, leaf_obs=leaf_obs, leaf_mask=leaf_mask)
             for p_node, p_a in path:
+                eff_val = leaf_val + (root_action_bonus.get(p_a, 0.0) if p_node is root else 0.0)
                 new_v = p_node.edge_visits.get(p_a, 0) + 1
-                new_sum = p_node.edge_value_sum.get(p_a, 0.0) + leaf_val
+                new_sum = p_node.edge_value_sum.get(p_a, 0.0) + eff_val
                 p_node.edge_visits[p_a] = new_v
                 p_node.edge_value_sum[p_a] = new_sum
                 min_max.update(new_sum / float(new_v))
@@ -444,7 +531,8 @@ class ISMCTSAgent:
         best_action = max(root_legal, key=_action_key)
         best_vis = root.edge_visits.get(best_action, 0)
         best_q_score = (
-            (root.edge_value_sum.get(best_action, 0.0) / float(best_vis)) * cfg.score_scale
+            ((root.edge_value_sum.get(best_action, 0.0) / float(best_vis)) - root_action_bonus.get(best_action, 0.0))
+            * cfg.score_scale
             if best_vis > 0
             else float(sim.score)
         )
@@ -453,7 +541,11 @@ class ISMCTSAgent:
             (
                 self.codec.action_name(a),
                 root.edge_visits.get(a, 0),
-                (root.edge_value_sum.get(a, 0.0) / float(root.edge_visits[a])) * cfg.score_scale
+                (
+                    (root.edge_value_sum.get(a, 0.0) / float(root.edge_visits[a]))
+                    - root_action_bonus.get(a, 0.0)
+                )
+                * cfg.score_scale
                 if root.edge_visits.get(a, 0) > 0
                 else 0.0,
             )

@@ -375,3 +375,293 @@ def test_maskable_ppo_early_stopping_and_planner_disk_cache(tmp_path):
             assert planner2._net is not None
         finally:
             MaskablePPOTrainer.train = orig_train  # type: ignore[method-assign]
+
+
+def test_early_turn_trouble_exile_priority_below_extra_use_cards():
+    from demo.schemas import BoundingBox, LegalAction
+    from demo.sim.battle_simulator import BattleConfig, CardInstance, TurnMultiplierSpec, _make_card_config
+    from demo.sim.live_battle_planner import LiveBattlePlanner, LiveBattlePlannerConfig
+
+    with GakumasDB("gakumas_library.db") as db:
+        # 1. Verify CardConfig DSL trouble-exile detection
+        cfg_734 = _make_card_config(db, 734)
+        cfg_585 = _make_card_config(db, 585)
+        cfg_427 = _make_card_config(db, 427)
+        cfg_127 = _make_card_config(db, 127)
+        assert cfg_734._exiles_deck_or_discard_trouble_dsl is True
+        assert cfg_585._exiles_deck_or_discard_trouble_dsl is True
+        assert cfg_427._exiles_deck_or_discard_trouble_dsl is False
+        assert cfg_127._exiles_deck_or_discard_trouble_dsl is False
+
+        deck = [
+            _make_card_config(db, 127),
+            _make_card_config(db, 129, exiles_trouble_on_play=True),
+            _make_card_config(db, 734),
+            _make_card_config(db, 159),
+            _make_card_config(db, 137, free_extra_use_first_play=True),
+            _make_card_config(db, 173),
+            _make_card_config(db, 585),
+            _make_card_config(db, 920),
+            _make_card_config(db, 922),
+            _make_card_config(db, 23),
+        ]
+        bcfg = BattleConfig(
+            scenario_id="hif_honsen",
+            stage_name="HIF",
+            p_idol_id=163,
+            idol_name="[ガラクタロード] 秦谷 美鈴",
+            plan="logic",
+            idol_stats={"Vo": 1500, "Da": 1500, "Vi": 1500},
+            initial_stamina=44,
+            max_stamina=44,
+            total_turns=9,
+            turn_schedule=[TurnMultiplierSpec("Vo", 40.0) for _ in range(9)],
+            deck=deck,
+            drinks=[],
+            p_items=[],
+        )
+        codec = GakumasActionCodec(bcfg, db=db)
+        encoder = GakumasFeatureEncoder(codec)
+        agent_raw = ISMCTSAgent(
+            codec,
+            encoder,
+            net=None,
+            cfg=ISMCTSConfig(num_simulations=24, prune_dominated_free_actions=False),
+        )
+        agent_search = ISMCTSAgent(
+            codec,
+            encoder,
+            net=None,
+            cfg=ISMCTSConfig(num_simulations=24, prune_dominated_free_actions=True),
+        )
+
+        def _find_inst(sim: HeadlessBattleSimulator, card_id: int, *, mem_extra: bool = False) -> CardInstance:
+            return next(
+                c
+                for c in sim._all_instances.values()
+                if c.cfg.card_id == card_id and (not mem_extra or c.cfg.free_extra_use_first_play)
+            )
+
+        def _setup_state(
+            *,
+            turn: int,
+            hand_specs: list[tuple[int, bool]],
+            draw_ids: list[int],
+            discard_ids: list[int],
+            exhaust_ids: list[int] | None = None,
+            card_uses: int = 1,
+            double_cards: int = 0,
+            gi: int = 6,
+            mot: int = 6,
+        ) -> HeadlessBattleSimulator:
+            sim = HeadlessBattleSimulator(bcfg, db=db, seed=123, record_logs=False)
+            sim.turn = turn
+            sim.turns_elapsed = max(0, turn - 1)
+            sim.turns_remaining = max(1, bcfg.total_turns - turn + 1)
+            sim.stamina = 40
+            sim.genki = 20
+            sim.card_uses_remaining = card_uses
+            sim.double_card_effect_cards = double_cards
+            sim.buffs["goodImpressionTurns"] = gi
+            sim.buffs["motivation"] = mot
+            used: set[int] = set()
+
+            def _take(cid: int, mem_ex: bool = False) -> CardInstance:
+                inst = next(
+                    c
+                    for c in sim._all_instances.values()
+                    if c.uid not in used
+                    and c.cfg.card_id == cid
+                    and (not mem_ex or c.cfg.free_extra_use_first_play)
+                )
+                used.add(inst.uid)
+                return inst
+
+            sim.hand = [_take(cid, m) for cid, m in hand_specs]
+            sim.draw_pile = [_take(cid) for cid in draw_ids]
+            sim.discard_pile = [_take(cid) for cid in discard_ids]
+            sim.exhaust_pile = [_take(cid) for cid in (exhaust_ids or [])]
+            return sim
+
+        def _priors_for(agent: ISMCTSAgent, sim: HeadlessBattleSimulator) -> tuple[np.ndarray, dict[int, tuple[str, int]]]:
+            mask, action_map = codec.legal_mask_and_map(sim, prune_dominated=False)
+            legal = list(action_map.keys())
+            obs = np.empty(0, dtype=np.float64)
+            priors, _ = agent._priors_and_value(obs, mask, legal, sim=sim, action_map=action_map)
+            return priors, action_map
+
+        aid_127 = codec.card_slot_index(cfg_127)
+        aid_129_exile = codec.card_slot_index(_make_card_config(db, 129, exiles_trouble_on_play=True))
+        aid_734 = codec.card_slot_index(cfg_734)
+        aid_159 = codec.card_slot_index(_make_card_config(db, 159))
+        aid_137_extra = codec.card_slot_index(_make_card_config(db, 137, free_extra_use_first_play=True))
+        aid_173 = codec.card_slot_index(_make_card_config(db, 173))
+        aid_585 = codec.card_slot_index(cfg_585)
+
+        # 2. has_trouble_in_deck_or_discard zone checks
+        sim_draw = _setup_state(turn=2, hand_specs=[(127, False)], draw_ids=[23, 920], discard_ids=[922])
+        assert sim_draw.has_trouble_in_deck_or_discard() is True
+        sim_disc = _setup_state(turn=2, hand_specs=[(127, False)], draw_ids=[920], discard_ids=[23, 922])
+        assert sim_disc.has_trouble_in_deck_or_discard() is True
+        sim_hand_only = _setup_state(turn=2, hand_specs=[(127, False), (23, False)], draw_ids=[920], discard_ids=[922])
+        assert sim_hand_only.has_trouble_in_deck_or_discard() is False
+        sim_exhaust_only = _setup_state(
+            turn=2, hand_specs=[(127, False)], draw_ids=[920], discard_ids=[922], exhaust_ids=[23]
+        )
+        assert sim_exhaust_only.has_trouble_in_deck_or_discard() is False
+
+        # 3. Turn<=5 with trouble in draw/discard and NO 再动 card -> trouble-exile boosted & chosen over #127
+        for turn_val, draw_ids, disc_ids in (
+            (2, [23, 920], [922]),
+            (5, [920], [23, 922]),
+        ):
+            for exile_cid, exile_aid in ((129, aid_129_exile), (734, aid_734)):
+                sim_e = _setup_state(
+                    turn=turn_val,
+                    hand_specs=[(127, False), (exile_cid, False)],
+                    draw_ids=draw_ids,
+                    discard_ids=disc_ids,
+                )
+                p_e, _ = _priors_for(agent_raw, sim_e)
+                assert p_e[exile_aid] > p_e[aid_127]
+                chosen_e, _ = agent_search.select_action(sim_e, random.Random(17))
+                assert chosen_e == exile_aid
+
+        # 4a. Turn=2 with trouble in draw_pile + safe dominating intrinsic #159 (uses=2 and uses=1)
+        for uses in (2, 1):
+            sim_159 = _setup_state(
+                turn=2,
+                hand_specs=[(159, False), (734, False), (127, False)],
+                draw_ids=[23, 920],
+                discard_ids=[922],
+                card_uses=uses,
+            )
+            p_159, _ = _priors_for(agent_raw, sim_159)
+            assert p_159[aid_159] > p_159[aid_734] > p_159[aid_127]
+            if uses == 1:
+                chosen_159, _ = agent_search.select_action(sim_159, random.Random(29))
+                assert chosen_159 == aid_159
+
+        sim_159_pair = _setup_state(
+            turn=2,
+            hand_specs=[(159, False), (734, False)],
+            draw_ids=[23, 920],
+            discard_ids=[922],
+            card_uses=2,
+        )
+        chosen_159_pair, _ = agent_search.select_action(sim_159_pair, random.Random(29))
+        assert chosen_159_pair == aid_159
+
+        # 4b. Turn=2 with trouble in draw_pile + memory extra-use #137(mem:+1use)
+        sim_137 = _setup_state(
+            turn=2,
+            hand_specs=[(137, True), (734, False), (127, False)],
+            draw_ids=[23, 920],
+            discard_ids=[922],
+            card_uses=1,
+        )
+        p_137, _ = _priors_for(agent_raw, sim_137)
+        assert p_137[aid_137_extra] > p_137[aid_734] > p_137[aid_127]
+        chosen_137, _ = agent_search.select_action(sim_137, random.Random(31))
+        assert chosen_137 == aid_137_extra
+
+        # 4c. Turn=2 with trouble in draw_pile + non-dominating #173 at GI=6 (raw priors never invert)
+        sim_173 = _setup_state(
+            turn=2,
+            hand_specs=[(173, False), (734, False), (127, False)],
+            draw_ids=[23, 920],
+            discard_ids=[922],
+            card_uses=1,
+            gi=6,
+            mot=6,
+        )
+        p_173, _ = _priors_for(agent_raw, sim_173)
+        assert p_173[aid_173] >= p_173[aid_734]
+
+        class _StubNet:
+            def predict_single(self, _obs: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, float]:
+                probs = np.zeros(codec.num_actions, dtype=np.float64)
+                probs[aid_173] = 0.30
+                probs[aid_734] = 0.10
+                probs[aid_127] = 0.10
+                probs[codec.end_turn_action_id] = 0.50
+                probs[~mask] = 0.0
+                return probs, 0.0
+
+        agent_stub = ISMCTSAgent(
+            codec,
+            encoder,
+            net=_StubNet(),  # type: ignore[arg-type]
+            cfg=ISMCTSConfig(num_simulations=24, prune_dominated_free_actions=False),
+        )
+        p_173_stub, _ = _priors_for(agent_stub, sim_173)
+        assert p_173_stub[aid_173] > p_173_stub[aid_734] > p_173_stub[aid_127]
+
+        # At GI=10, #173 condition is satisfied and it becomes dominating -> strictly beats #734
+        sim_173_gi10 = _setup_state(
+            turn=2,
+            hand_specs=[(173, False), (734, False), (127, False)],
+            draw_ids=[23, 920],
+            discard_ids=[922],
+            card_uses=1,
+            gi=10,
+            mot=6,
+        )
+        p_173_gi10, _ = _priors_for(agent_raw, sim_173_gi10)
+        assert p_173_gi10[aid_173] > p_173_gi10[aid_734]
+        chosen_173_gi10, _ = agent_search.select_action(sim_173_gi10, random.Random(37))
+        assert chosen_173_gi10 == aid_173
+
+        # 5. Card with BOTH 再动 and deck/discard trouble-exile (#585) gets top priority
+        sim_585 = _setup_state(
+            turn=2,
+            hand_specs=[(585, False), (159, False), (734, False), (127, False)],
+            draw_ids=[23, 920],
+            discard_ids=[922],
+            card_uses=2,
+        )
+        p_585, _ = _priors_for(agent_raw, sim_585)
+        assert p_585[aid_585] >= p_585[aid_159] > p_585[aid_734] > p_585[aid_127]
+
+        # 6. Negative gates: turn=6, trouble only in hand, no trouble in draw/discard, double_card_effect_cards > 0
+        sim_t6 = _setup_state(
+            turn=6, hand_specs=[(127, False), (734, False)], draw_ids=[23, 920], discard_ids=[922]
+        )
+        p_t6, _ = _priors_for(agent_raw, sim_t6)
+        assert abs(float(p_t6[aid_734]) - float(p_t6[aid_127])) < 1e-9
+
+        sim_hand_t = _setup_state(
+            turn=2, hand_specs=[(127, False), (734, False), (23, False)], draw_ids=[920], discard_ids=[922]
+        )
+        p_hand_t, _ = _priors_for(agent_raw, sim_hand_t)
+        assert abs(float(p_hand_t[aid_734]) - float(p_hand_t[aid_127])) < 1e-9
+
+        sim_2x = _setup_state(
+            turn=2,
+            hand_specs=[(127, False), (734, False)],
+            draw_ids=[23, 920],
+            discard_ids=[922],
+            double_cards=1,
+        )
+        p_2x, _ = _priors_for(agent_raw, sim_2x)
+        assert abs(float(p_2x[aid_734]) - float(p_2x[aid_127])) < 1e-9
+
+        # 7. LiveBattlePlanner._early_card_priority_tier reflects 3-tier order (2 > 1 > 0)
+        planner = LiveBattlePlanner(db=db, cfg=LiveBattlePlannerConfig())
+        planner._sim = _setup_state(
+            turn=3,
+            hand_specs=[(159, False), (734, False), (127, False)],
+            draw_ids=[23, 920],
+            discard_ids=[922],
+        )
+        planner._ismcts = agent_search
+        box = BoundingBox(xmin=0, ymin=0, xmax=100, ymax=100)
+        act_159 = LegalAction(choice_id=0, action_type="play_card", description="#159", bbox=box, payload={"card_id": 159})
+        act_734 = LegalAction(choice_id=1, action_type="play_card", description="#734", bbox=box, payload={"card_id": 734})
+        act_127 = LegalAction(choice_id=2, action_type="play_card", description="#127", bbox=box, payload={"card_id": 127})
+        assert planner._early_card_priority_tier(act_159) == 2
+        assert planner._early_card_priority_tier(act_734) == 1
+        assert planner._early_card_priority_tier(act_127) == 0
+        planner._sim.turn = 6
+        assert planner._early_card_priority_tier(act_159) == 2
+        assert planner._early_card_priority_tier(act_734) == 0

@@ -85,10 +85,17 @@ class LiveScreenRecognizer:
         "強気",
     )
 
-    def __init__(self, db: Optional[GakumasDB] = None, plan: str = "logic", scenario_id: str = "hajime_regular"):
+    def __init__(
+        self,
+        db: Optional[GakumasDB] = None,
+        plan: str = "logic",
+        scenario_id: str = "hajime_regular",
+        p_idol_id: Optional[int] = None,
+    ):
         self.db = db or GakumasDB()
         self.plan = (plan or "logic").lower()
         self.scenario_id = scenario_id
+        self.p_idol_id: Optional[int] = int(p_idol_id) if p_idol_id is not None else None
         self.ocr = get_win_ocr("ja")
         self.en_ocr = get_win_ocr("en")
         self._cards_cache: Dict[str, List[Dict[str, Any]]] = {}
@@ -195,6 +202,27 @@ class LiveScreenRecognizer:
         if isinstance(data.get("reward_visited_slots"), (list, tuple)):
             self._reward_visited_slots = {int(x) for x in data["reward_visited_slots"]}
 
+    def set_p_idol_id(self, p_idol_id: Optional[int]) -> None:
+        """Configure active P-Idol ID so foreign P-Idol exclusive cards are excluded."""
+        new_pid = int(p_idol_id) if p_idol_id is not None else None
+        if new_pid != self.p_idol_id:
+            self.p_idol_id = new_pid
+            self._shop_card_icon_cache.clear()
+
+    def _is_foreign_idol_card(
+        self,
+        card_row: Optional[Dict[str, Any]],
+        p_idol_id: Optional[int] = None,
+    ) -> bool:
+        """Return True when the card strictly belongs to a different P-Idol (`p_idol_id` mismatch)."""
+        active_pid = p_idol_id if p_idol_id is not None else self.p_idol_id
+        if active_pid is None or not isinstance(card_row, dict):
+            return False
+        card_pid = card_row.get("p_idol_id")
+        if card_pid is None:
+            return False
+        return int(card_pid) != int(active_pid)
+
     def _get_plan_cards(self, plan: str) -> List[Dict[str, Any]]:
         key = plan.lower()
         if key not in self._cards_cache:
@@ -207,7 +235,14 @@ class LiveScreenRecognizer:
             self._drinks_cache[key] = self.db.get_drinks_for_plan(key)
         return self._drinks_cache[key]
 
-    def match_card_by_name(self, raw_name: str, plan: str, upgraded: bool = False) -> Optional[Dict[str, Any]]:
+    def match_card_by_name(
+        self,
+        raw_name: str,
+        plan: str,
+        upgraded: bool = False,
+        *,
+        p_idol_id: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
         norm_in = _normalize_jp(raw_name)
         if len(norm_in) < 2:
             return None
@@ -217,6 +252,8 @@ class LiveScreenRecognizer:
         has_plus = upgraded or ("+" in raw_name) or ("＋" in raw_name)
         in_has_paren = ("(" in raw_name) or ("（" in raw_name) or (")" in raw_name) or ("）" in raw_name)
         for c in candidates:
+            if self._is_foreign_idol_card(c, p_idol_id=p_idol_id):
+                continue
             cname = c.get("name") or ""
             cnorm = _normalize_jp(cname)
             if not cnorm:
@@ -510,7 +547,12 @@ class LiveScreenRecognizer:
 
         # Stamina via en-US OCR on top-center bar ("23/31" white on dark, or "44/44" dark on light in H.I.F)
         stamina, max_stamina = self._last_stamina
-        hp_found = False
+        is_rest_preview_modal = any(
+            tok in "".join(str(ln.get("text") or "") for ln in lines)
+            for tok in ("休み確認", "休みますか")
+        )
+        # Rest confirmation modals show post-rest preview HP on top bar; keep _last_stamina untouched.
+        hp_found = is_rest_preview_modal
 
         def _is_suspicious_stamina_drop(s_val: int, m_val: int) -> bool:
             prev_s, prev_m = self._last_stamina
@@ -536,7 +578,7 @@ class LiveScreenRecognizer:
         hp_probes = (dol_probes + (white_probe,)) if is_hif else ((white_probe,) + dol_probes)
         suspicious_candidates: List[Tuple[int, int]] = []
 
-        for hp_box, hp_mode, hp_en in hp_probes:
+        for hp_box, hp_mode, hp_en in (() if is_rest_preview_modal else hp_probes):
             hp_crop_text = self._ocr_crop_upscaled(
                 frame,
                 hp_box,
@@ -4727,6 +4769,8 @@ class LiveScreenRecognizer:
                 row = self.db.get_card_by_id(cid)
                 if not row or str(row.get("type") or "").lower() == "trouble":
                     continue
+                if self._is_foreign_idol_card(row):
+                    continue
                 pl = str(row.get("plan") or "").lower()
                 if allowed_plans is not None and pl not in allowed_plans:
                     continue
@@ -5733,6 +5777,7 @@ class LiveScreenRecognizer:
             any("相談" in str(ln.get("text") or "") and ln["bbox"][1] < int(h * 0.25) for ln in lines)
             or ("セレクトチェンジ" in full_joined_shop)
             or ("チェンジで獲得" in full_joined_shop)
+            or ("強化や削除" in full_joined_shop)
         )
         if has_interval_cue or (
             self.scenario_id in ("hif_honsen", "hif")
@@ -7478,6 +7523,18 @@ class LiveScreenRecognizer:
         # Fallback: recover dark-glass SSR cards (e.g. 私を超えて(翔)) strictly in bottom hand title strip
         half_card_w = max(70, int(round(w * 0.129)))
         min_sep = max(110, int(round(w * 0.170)))
+        seen_unique_fams: Set[int] = set()
+        for existing_c in cards:
+            if existing_c.card_id is None:
+                continue
+            erow = self.db.get_card_by_id(int(existing_c.card_id))
+            if erow and (
+                erow.get("is_unique")
+                or erow.get("is_unique_in_deck")
+                or erow.get("is_signature")
+                or str(erow.get("rarity") or "").upper() == "L"
+            ):
+                seen_unique_fams.add(int(erow.get("base_id") or existing_c.card_id))
         for ln in lines:
             bx1, by1, bx2, by2 = ln["bbox"]
             cy = (by1 + by2) // 2
@@ -7488,6 +7545,16 @@ class LiveScreenRecognizer:
                     continue
                 if any(abs(cx - prev) < min_sep for prev in seen_bottom_cxs):
                     continue
+                if (
+                    matched.get("is_unique")
+                    or matched.get("is_unique_in_deck")
+                    or matched.get("is_signature")
+                    or str(matched.get("rarity") or "").upper() == "L"
+                ):
+                    mfam = int(matched.get("base_id") or matched["id"])
+                    if mfam in seen_unique_fams:
+                        continue
+                    seen_unique_fams.add(mfam)
                 seen_bottom_cxs.append(cx)
                 c_x1, c_x2 = max(5, cx - half_card_w), min(w - 5, cx + half_card_w)
                 c_y1, c_y2 = int(h * 0.74), int(h * 0.91)

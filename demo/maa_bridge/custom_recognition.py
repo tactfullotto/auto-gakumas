@@ -143,11 +143,23 @@ class BaseGakumasRecognition(MaaCustomRecognition):
 class GakumasSceneRoutingRecognition(BaseGakumasRecognition):
     """Entry scene classifier that determines current scene and routes accordingly."""
 
-    def __init__(self, db: Optional[GakumasDB] = None, plan: str = "sense", scenario_id: str = "hajime_regular"):
+    def __init__(
+        self,
+        db: Optional[GakumasDB] = None,
+        plan: str = "sense",
+        scenario_id: str = "hajime_regular",
+        p_idol_id: Optional[int] = None,
+    ):
         super().__init__(db=db, plan=plan)
         self.scenario_id = scenario_id
+        self.p_idol_id: Optional[int] = int(p_idol_id) if p_idol_id is not None else None
         self._live_recognizer: Optional[Any] = None
         self._banned_drink_ids: List[int] = [19]
+
+    def set_p_idol_id(self, p_idol_id: Optional[int]) -> None:
+        self.p_idol_id = int(p_idol_id) if p_idol_id is not None else None
+        if self._live_recognizer is not None and hasattr(self._live_recognizer, "set_p_idol_id"):
+            self._live_recognizer.set_p_idol_id(self.p_idol_id)
 
     def set_banned_drink_ids(self, drink_ids: Optional[Any]) -> None:
         self._banned_drink_ids = [int(x) for x in (drink_ids or ())]
@@ -157,7 +169,12 @@ class GakumasSceneRoutingRecognition(BaseGakumasRecognition):
     def _get_live_recognizer(self) -> Any:
         if self._live_recognizer is None:
             from demo.vision.live_adb_recognizer import LiveScreenRecognizer
-            self._live_recognizer = LiveScreenRecognizer(db=self.db, plan=self.plan, scenario_id=self.scenario_id)
+            self._live_recognizer = LiveScreenRecognizer(
+                db=self.db,
+                plan=self.plan,
+                scenario_id=self.scenario_id,
+                p_idol_id=self.p_idol_id,
+            )
             self._live_recognizer.set_banned_drink_ids(self._banned_drink_ids)
         return self._live_recognizer
 

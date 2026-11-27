@@ -1155,8 +1155,12 @@ class HifLoadoutScanner:
         if not frames:
             return LoadoutScanResult(plan=plan.lower())
 
+        if hasattr(self.reco, "set_p_idol_id"):
+            self.reco.set_p_idol_id(None)
         meta = self._parse_header_metadata(frames[0], default_plan=plan)
         active_plan = meta["plan"]
+        if meta.get("p_idol_id") is not None and hasattr(self.reco, "set_p_idol_id"):
+            self.reco.set_p_idol_id(meta["p_idol_id"])
 
         cum_scroll = 0
         prev_vp: Optional[np.ndarray] = None

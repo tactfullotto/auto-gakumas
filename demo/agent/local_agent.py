@@ -167,6 +167,10 @@ class LocalHybridDecisionAgent:
         self._expecting_drink_discard: bool = False
         self._banned_drink_discard_attempts: int = 0
         self._banned_drink_discard_ctx: Optional[Tuple[str, int]] = None
+        self._pending_rest_hp_recheck: bool = False
+        self._rest_hp_recheck_confirmed: bool = False
+        self._rest_hp_recheck_week: Optional[int] = None
+        self._rest_hp_recheck_cancels: int = 0
         self.set_preferences(preferences)
 
     def _resolve_card_base_id(self, card_id: Optional[int], base_id: int = 0) -> int:
@@ -333,6 +337,10 @@ class LocalHybridDecisionAgent:
         self._expecting_drink_discard = False
         self._banned_drink_discard_attempts = 0
         self._banned_drink_discard_ctx = None
+        self._pending_rest_hp_recheck = False
+        self._rest_hp_recheck_confirmed = False
+        self._rest_hp_recheck_week = None
+        self._rest_hp_recheck_cancels = 0
         self.battle_planner.reset_battle()
 
     def reset_battle(self) -> None:
@@ -1029,11 +1037,47 @@ class LocalHybridDecisionAgent:
 
         stamina = int(getattr(obs, "stamina", 30) or 30)
         max_stam = max(1, int(getattr(obs, "max_stamina", 44) or 44))
-        low_hp = stamina < max(8, int(round(max_stam * 0.22)))
+        low_hp = stamina < 15
         deck_ids_sched = list(getattr(self.tracker, "produce_deck", []) or [])
         has_trouble_sched = any(self._is_trouble_card_id(cid_s) for cid_s in deck_ids_sched)
         p_pts_sched = int(getattr(obs, "p_points", 0) or 0) if obs is not None else 0
         wk_sched = int(getattr(obs, "week", 0) or 0) if obs is not None else 0
+
+        if self._pending_rest_hp_recheck:
+            self._pending_rest_hp_recheck = False
+            if stamina < 15:
+                rest_act = next(
+                    (
+                        a for a in legal_actions
+                        if any(
+                            k in f"{(a.payload or {}).get('title') or (a.payload or {}).get('name') or ''} {a.description or ''}".lower()
+                            for k in ("休む", "休息", "rest")
+                        )
+                    ),
+                    None,
+                )
+                has_w6_soudan_override = bool(
+                    stamina >= 6
+                    and (has_trouble_sched or (wk_sched >= 5 and p_pts_sched >= 125))
+                    and any(
+                        any(
+                            k in f"{(a.payload or {}).get('title') or (a.payload or {}).get('name') or ''} {a.description or ''}".lower()
+                            for k in ("特別指導", "相談")
+                        )
+                        for a in legal_actions
+                    )
+                )
+                if rest_act is not None and not has_w6_soudan_override:
+                    self._rest_hp_recheck_confirmed = True
+                    self._rest_hp_recheck_week = wk_sched
+                    return DecisionResult(
+                        choice_id=rest_act.choice_id,
+                        reason=f"LocalAgent(schedule): Re-verified HP={stamina}/{max_stam} < 15; confirming rest via {rest_act.description}",
+                        source="local_hybrid",
+                    )
+            else:
+                self._rest_hp_recheck_confirmed = False
+                self._rest_hp_recheck_week = None
 
         def _is_sp_action(act: LegalAction) -> bool:
             p = act.payload or {}
@@ -1096,6 +1140,9 @@ class LocalHybridDecisionAgent:
 
         best = max(legal_actions, key=_score_sched)
         best_combined = f"{(best.payload or {}).get('title') or (best.payload or {}).get('name') or ''} {best.description}".lower()
+        if not any(k in best_combined for k in ("休む", "休息", "rest")):
+            self._rest_hp_recheck_confirmed = False
+            self._rest_hp_recheck_cancels = 0
         if _is_sp_action(best) and self._stat_attr_bonus(obs, best_combined, est_gain=420, is_sp=True, p_idol_id=resolved_pid, db=self.db) > -5_000:
             return DecisionResult(
                 choice_id=best.choice_id,
@@ -3214,25 +3261,55 @@ class LocalHybridDecisionAgent:
                     reason="LocalAgent(popup): Cancelling unexpected card exchange confirmation",
                     source="local_hybrid",
                 )
-        if (
-            ("休み確認" in raw_l or "休みますか" in raw_l)
-            and obs is not None
-            and obs.scenario_id in ("hif_honsen", "hif")
-            and int(obs.week or 0) == 6
-        ):
-            cancel_rest = next(
-                (
-                    a for a in safe_acts
-                    if any(k in str((a.payload or {}).get("name") or a.description) for k in ("キャンセル", "いいえ", "閉じる", "とじる"))
-                ),
-                None,
+        cancel_rest = next(
+            (
+                a for a in safe_acts
+                if any(k in str((a.payload or {}).get("name") or a.description) for k in ("キャンセル", "いいえ", "閉じる", "とじる"))
+            ),
+            None,
+        )
+        is_rest_confirm_modal = bool(
+            ("休み確認" in raw_l)
+            or ("休みますか" in raw_l)
+            or (
+                cancel_rest is not None
+                and any(
+                    "休む" in f"{(a.payload or {}).get('name') or ''} {a.description or ''}"
+                    for a in safe_acts
+                )
             )
-            if cancel_rest is not None:
+        )
+        if is_rest_confirm_modal and cancel_rest is not None:
+            if (
+                obs is not None
+                and obs.scenario_id in ("hif_honsen", "hif")
+                and int(obs.week or 0) == 6
+            ):
                 return DecisionResult(
                     choice_id=cancel_rest.choice_id,
                     reason="LocalAgent(popup): Cancelling W6 rest modal to inspect 相談",
                     source="local_hybrid",
                 )
+            cur_wk = int(getattr(obs, "week", 0) or 0) if obs is not None else 0
+            if self._rest_hp_recheck_week != cur_wk:
+                self._rest_hp_recheck_confirmed = False
+                self._rest_hp_recheck_cancels = 0
+                self._rest_hp_recheck_week = cur_wk
+            if self._rest_hp_recheck_confirmed:
+                self._rest_hp_recheck_confirmed = False
+                self._pending_rest_hp_recheck = False
+            elif self._rest_hp_recheck_cancels < 2:
+                self._pending_rest_hp_recheck = True
+                self._rest_hp_recheck_week = cur_wk
+                self._rest_hp_recheck_cancels += 1
+                return DecisionResult(
+                    choice_id=cancel_rest.choice_id,
+                    reason="LocalAgent(popup): Exiting rest modal once to re-verify true HP on schedule",
+                    source="local_hybrid",
+                )
+        elif not is_rest_confirm_modal:
+            self._pending_rest_hp_recheck = False
+            self._rest_hp_recheck_confirmed = False
         if self._shop_expecting_priority_card_confirm and (
             "交換しますか" in raw_l
             or "交換確認" in raw_l

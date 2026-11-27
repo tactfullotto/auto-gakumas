@@ -10317,7 +10317,8 @@ def test_shop_skill_card_preview_routing_and_priority_card_purchase(monkeypatch)
             if live_img.exists():
                 bgr = cv2.imread(str(live_img))
                 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                obs_live = reco.recognize(rgb, plan="logic")
+                img_reco = LiveScreenRecognizer(db=db, plan="logic", scenario_id="hif_honsen")
+                obs_live = img_reco.recognize(rgb, plan="logic")
                 assert obs_live.scene_type == "shop", f"{live_img.name} misrouted to {obs_live.scene_type}"
                 ex_opt = next((o for o in obs_live.options if o.get("name") == "交換する"), None)
                 assert ex_opt is not None and ex_opt.get("card_id") == 170
@@ -11171,6 +11172,333 @@ def test_w8_shop_all_three_complete_flows_and_deck_accounting():
         assert 64 in r3.tracker.produce_deck
     finally:
         db.close()
+
+
+def test_p_idol_exclusive_l_card_alignment_136_vs_130():
+    """Verify #853 (p_idol_id=130) cannot leak onto #136 (whose sole exclusive L card is #854) and vice versa."""
+    from demo.core.idol_guides import resolve_p_idol_id
+    from demo.maa_bridge.custom_recognition import GakumasSceneRoutingRecognition
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        # 1. Signature / S3 L-card P-Idol resolution
+        assert resolve_p_idol_id(plan="logic", deck_ids=[854], default_logic_to_sekirara=False) == 136
+        assert resolve_p_idol_id(plan="logic", deck_ids=[800], default_logic_to_sekirara=False) == 136
+        assert resolve_p_idol_id(plan="logic", deck_ids=[853], default_logic_to_sekirara=False) == 130
+        assert resolve_p_idol_id(plan="logic", deck_ids=[783], default_logic_to_sekirara=False) == 130
+        assert resolve_p_idol_id(plan="logic", p_idol_id=130) == 130
+        assert resolve_p_idol_id(plan="logic", p_idol_id=136) == 136
+
+        # 2. LiveScreenRecognizer excludes foreign p_idol_id cards while keeping generic & related_p_idol_id cards
+        reco_136 = LiveScreenRecognizer(db=db, plan="logic", scenario_id="hif_honsen", p_idol_id=136)
+        m_136_foreign = reco_136.match_card_by_name("先陣を切る一番星", plan="logic")
+        assert m_136_foreign is None or m_136_foreign["id"] != 853
+        m_136_star = reco_136.match_card_by_name("一番星", plan="logic")
+        assert m_136_star is not None and m_136_star["id"] == 854
+        m_136_sleep = reco_136.match_card_by_name("眠気", plan="logic")
+        assert m_136_sleep is not None and m_136_sleep["id"] == 23
+
+        reco_130 = LiveScreenRecognizer(db=db, plan="logic", scenario_id="hif_honsen", p_idol_id=130)
+        m_130_exact = reco_130.match_card_by_name("先陣を切る一番星", plan="logic")
+        assert m_130_exact is not None and m_130_exact["id"] == 853
+        m_130_star = reco_130.match_card_by_name("一番星", plan="logic")
+        assert m_130_star is not None and m_130_star["id"] == 853
+        m_130_foreign = reco_130.match_card_by_name("証明し続ける一番星", plan="logic")
+        assert m_130_foreign is None or m_130_foreign["id"] != 854
+
+        # 3. GameStateTracker guards initial loadout, manual additions, and live battle hand sync
+        tracker = GameStateTracker(plan="logic", p_idol_id=136, scenario_id="hif_honsen")
+        tracker.set_initial_loadout(
+            p_idol_id=136,
+            plan="logic",
+            deck_ids=[800, 854, 853, 137],
+            p_items=[],
+            db=db,
+        )
+        assert tracker.produce_deck == [800, 854, 137]
+        assert tracker.add_card_to_deck(853, db=db) is False
+        assert 853 not in tracker.produce_deck
+
+        tracker.start_new_battle(db=db)
+        dummy_bbox = BoundingBox(xmin=10, ymin=1100, xmax=150, ymax=1400)
+        tracker.sync_observed_hand(
+            [
+                RecognizedCard(card_id=854, name="証明し続ける一番星", bbox=dummy_bbox, playable=True),
+                RecognizedCard(card_id=853, name="先陣を切る一番星", bbox=dummy_bbox, playable=True),
+                RecognizedCard(card_id=800, name="あたしがいるよ+", bbox=dummy_bbox, playable=True),
+            ],
+            db=db,
+            turn=1,
+            turns_remaining=9,
+        )
+        assert 853 not in tracker.produce_deck
+        assert 853 not in tracker.battle_hand
+        assert 853 not in tracker.battle_draw_pile
+        assert 853 not in tracker.battle_discard_pile
+        assert 854 in tracker.battle_hand
+
+        # 4. build_live_battle_config strips foreign exclusive L-cards and injects the idol's own S3 L-card
+        cfg_136 = build_live_battle_config(
+            db=db,
+            deck_card_ids=[800, 853, 137],
+            p_idol_id=136,
+            plan="logic",
+            scenario_id="hif_honsen",
+        )
+        cids_136 = [c.card_id for c in cfg_136.deck]
+        assert 853 not in cids_136
+        assert 854 in cids_136
+
+        cfg_130 = build_live_battle_config(
+            db=db,
+            deck_card_ids=[784, 854, 137],
+            p_idol_id=130,
+            plan="logic",
+            scenario_id="hif_honsen",
+        )
+        cids_130 = [c.card_id for c in cfg_130.deck]
+        assert 854 not in cids_130
+        assert 853 in cids_130
+
+        # 5. Scene routing and GakumasRunner propagate p_idol_id to LiveScreenRecognizer
+        routing = GakumasSceneRoutingRecognition(db=db, plan="logic", scenario_id="hif_honsen", p_idol_id=136)
+        assert routing._get_live_recognizer().p_idol_id == 136
+        routing.set_p_idol_id(130)
+        assert routing.p_idol_id == 130
+        assert routing._get_live_recognizer().p_idol_id == 130
+
+        runner = GakumasRunner(
+            mode="mock",
+            controller=MockController(),
+            db=db,
+            plan="logic",
+            scenario_id="hif_honsen",
+            p_idol_id=136,
+        )
+        assert runner.scene_routing_reco.p_idol_id == 136
+    finally:
+        db.close()
+
+
+def test_schedule_1s_transition_settle_and_healthy_rest_guards(monkeypatch):
+    """Verify 1s produce_schedule entry settle, rest-only healthy-HP re-capture, and popup exit-and-recheck HP (<15 rest / >=15 continue)."""
+    import demo.maa_bridge.runner as runner_mod
+    from demo.vision.live_adb_recognizer import LiveScreenRecognizer
+
+    db = GakumasDB("gakumas_library.db")
+    try:
+        dummy_frame = np.zeros((1600, 720, 3), dtype=np.uint8)
+        sleep_calls: list[float] = []
+        monkeypatch.setattr(runner_mod.time, "sleep", lambda s: sleep_calls.append(float(s)))
+
+        class _StubLiveCtrl:
+            is_connected = True
+
+            def __init__(self):
+                self.caps = 0
+
+            def connect(self):
+                return True
+
+            def screencap(self):
+                self.caps += 1
+                return dummy_frame
+
+            def click(self, _x, _y):
+                return True
+
+        b_opt = {"xmin": 260, "ymin": 1300, "xmax": 460, "ymax": 1380}
+        b_rest = {"xmin": 600, "ymin": 1140, "xmax": 690, "ymax": 1220}
+        b_da = {"xmin": 300, "ymin": 1280, "xmax": 420, "ymax": 1400}
+
+        obs_skip = ScreenObservation(
+            scene_type="skip",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=1,
+            stamina=41,
+            max_stamina=44,
+            options=[{"choice_id": 0, "name": "点击屏幕继续", "bbox": b_opt}],
+        )
+        obs_sched_rest_only = ScreenObservation(
+            scene_type="produce_schedule",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=2,
+            stamina=41,
+            max_stamina=44,
+            idol_stats={"vocal": 2393, "dance": 1288, "visual": 1704},
+            options=[{"choice_id": 0, "name": "休む", "title": "休む", "description": "休息恢复体力", "bbox": b_rest}],
+        )
+        obs_sched_lesson = ScreenObservation(
+            scene_type="produce_schedule",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=2,
+            stamina=41,
+            max_stamina=44,
+            idol_stats={"vocal": 2393, "dance": 1288, "visual": 1704},
+            options=[
+                {"choice_id": 0, "name": "Da.公開レッスン", "title": "Da.公開レッスン", "description": "Da.公開レッスン（Dance(Da)属性提升）", "bbox": b_da},
+                {"choice_id": 1, "name": "休む", "title": "休む", "description": "休息恢复体力", "bbox": b_rest},
+            ],
+        )
+
+        # 1) skip -> produce_schedule waits 1.0s on entry AND re-captures rest-only healthy-HP transitional frames
+        ctrl = _StubLiveCtrl()
+        agent = LocalHybridDecisionAgent(db=db)
+        agent._has_entered_produce = True
+        runner = GakumasRunner(
+            mode="adb",
+            controller=ctrl,
+            agent=agent,
+            db=db,
+            plan="logic",
+            scenario_id="hif_honsen",
+            p_idol_id=163,
+            session_mode=False,
+        )
+        runner.tracker.set_initial_loadout(
+            p_idol_id=163,
+            plan="logic",
+            deck_ids=[920, 922, 159, 137],
+            p_items=[],
+            db=db,
+        )
+        runner._has_entered_produce = True
+        seq = iter([obs_skip, obs_sched_rest_only, obs_sched_rest_only, obs_sched_lesson])
+        runner.scene_routing_reco = SimpleNamespace(recognize=lambda _f: next(seq))
+
+        res1 = runner.run_once()
+        assert res1.scene_type == "skip"
+        assert runner._last_scene_type == "skip"
+        sleep_calls.clear()
+        caps_before_sched = ctrl.caps
+
+        res2 = runner.run_once()
+        assert res2.scene_type == "produce_schedule"
+        assert (ctrl.caps - caps_before_sched) == 3
+        assert sleep_calls[:2] == [1.0, 1.0]
+        assert res2.action_taken is not None
+        assert res2.action_taken.payload.get("name") == "Da.公開レッスン"
+
+        # 2) Low-HP (12/44 < 15) on produce_schedule with rest-only proceeds directly to 休む without extra spins
+        obs_sched_low_hp = ScreenObservation(
+            scene_type="produce_schedule",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=2,
+            stamina=12,
+            max_stamina=44,
+            options=[{"choice_id": 0, "name": "休む", "title": "休む", "description": "休息恢复体力", "bbox": b_rest}],
+        )
+        runner.scene_routing_reco = SimpleNamespace(recognize=lambda _f: obs_sched_low_hp)
+        caps_before_low = ctrl.caps
+        sleep_calls.clear()
+        res_low = runner.run_once()
+        assert (ctrl.caps - caps_before_low) == 1
+        assert 1.0 not in sleep_calls
+        assert res_low.action_taken is not None
+        assert res_low.action_taken.payload.get("name") == "休む"
+
+        # 3) Safeguard #2 low-HP flow: rest modal shows preview HP (41/44); exit once -> re-read true 12/44 < 15 on schedule -> confirm on re-entry
+        pop_agent = LocalHybridDecisionAgent(db=db)
+        pop_agent.reset_session()
+        box = BoundingBox(xmin=10, ymin=10, xmax=50, ymax=50)
+        rest_acts = [
+            LegalAction(choice_id=0, action_type="pick_option", description="选择: 決定 (底部橙色主按钮: 休む)", bbox=box, payload={"name": "決定"}),
+            LegalAction(choice_id=1, action_type="pick_option", description="选择: キャンセル", bbox=box, payload={"name": "キャンセル"}),
+        ]
+        sched_acts_w2 = [
+            LegalAction(choice_id=0, action_type="pick_option", description="Da.公開レッスン（Dance(Da)属性提升）", bbox=box, payload={"name": "Da.公開レッスン"}),
+            LegalAction(choice_id=1, action_type="pick_option", description="休む (休息恢复体力)", bbox=box, payload={"name": "休む"}),
+        ]
+        obs_w2_modal_preview = ScreenObservation(
+            scene_type="popup",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=2,
+            stamina=41,
+            max_stamina=44,
+            raw_text="休み確認 決定 キャンセル",
+        )
+        dec_exit = pop_agent.decide("", rest_acts, obs=obs_w2_modal_preview)
+        assert dec_exit.choice_id == 1
+        assert "re-verify" in dec_exit.reason.lower()
+
+        obs_w2_recheck_low = ScreenObservation(
+            scene_type="produce_schedule",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=2,
+            stamina=12,
+            max_stamina=44,
+            idol_stats={"vocal": 2393, "dance": 1288, "visual": 1704},
+        )
+        dec_sched_low = pop_agent.decide("", sched_acts_w2, obs=obs_w2_recheck_low)
+        assert dec_sched_low.choice_id == 1
+        assert "< 15" in dec_sched_low.reason
+
+        # Re-entering rest modal still displays preview HP 41/44, but confirms 決定 with zero loop
+        dec_confirm_rest = pop_agent.decide("", rest_acts, obs=obs_w2_modal_preview)
+        assert dec_confirm_rest.choice_id == 0
+
+        # 4) Safeguard #2 healthy-HP flow: rest modal exits -> schedule re-reads true 18/44 >= 15 -> continues lessons
+        pop_agent.reset_session()
+        obs_w2_modal_full_preview = ScreenObservation(
+            scene_type="popup",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=2,
+            stamina=44,
+            max_stamina=44,
+            raw_text="",
+        )
+        assert pop_agent.decide("", rest_acts, obs=obs_w2_modal_full_preview).choice_id == 1
+        obs_w2_recheck_healthy = ScreenObservation(
+            scene_type="produce_schedule",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=2,
+            stamina=18,
+            max_stamina=44,
+            idol_stats={"vocal": 2393, "dance": 1288, "visual": 1704},
+        )
+        dec_sched_ok = pop_agent.decide("", sched_acts_w2, obs=obs_w2_recheck_healthy)
+        assert dec_sched_ok.choice_id == 0
+
+        # 5) W6 H.I.F rest modal still cancels to inspect 相談 even at low HP (6/44)
+        obs_w6_low = ScreenObservation(
+            scene_type="popup",
+            plan="logic",
+            scenario_id="hif_honsen",
+            week=6,
+            stamina=6,
+            max_stamina=44,
+            raw_text="休み確認 決定 キャンセル",
+        )
+        dec_w6 = pop_agent.decide("", rest_acts, obs=obs_w6_low)
+        assert dec_w6.choice_id == 1
+        assert "W6" in dec_w6.reason
+
+        # 6) Recognizer preserves _last_stamina=(12, 44) and ignores preview HP "41/44" on 休み確認 modals
+        reco = LiveScreenRecognizer(db=db, plan="logic", scenario_id="hif_honsen")
+        reco._last_stamina = (12, 44)
+        monkeypatch.setattr(reco, "_ocr_crop_upscaled", lambda *_a, **_kw: "41/44")
+        meta_modal = reco._parse_week_and_stats(
+            [
+                {"text": "休み確認", "bbox": [260, 410, 460, 445]},
+                {"text": "41/44", "bbox": [310, 50, 410, 80]},
+            ],
+            dummy_frame,
+        )
+        assert meta_modal["stamina"] == 12 and meta_modal["max_stamina"] == 44
+        assert reco._last_stamina == (12, 44)
+    finally:
+        db.close()
+
+
 
 
 

@@ -202,6 +202,7 @@ class GakumasRunner:
             db=self.db,
             plan=self.plan,
             scenario_id=self.scenario_id,
+            p_idol_id=self.tracker.p_idol_id,
         )
         agent_prefs = getattr(self.agent, "preferences", None)
         if agent_prefs is not None and hasattr(self.scene_routing_reco, "set_banned_drink_ids"):
@@ -255,6 +256,8 @@ class GakumasRunner:
         self._last_stable_shop_p_points: Optional[int] = None
         self._last_shop_expected_p: Optional[int] = None
         self._shop_settle_sleep: float = 0.90
+        self._schedule_settle_sleep: float = 1.0
+        self._last_scene_type: Optional[str] = None
 
     def tap_blank_area(self, reason: str = "") -> Tuple[int, int]:
         """Tap a safe HUD-free blank area on screen (e.g. when stalled >30s)."""
@@ -428,6 +431,10 @@ class GakumasRunner:
 
         if isinstance(data.get("tracker"), dict):
             self.tracker.load_checkpoint(data["tracker"], db=self.db)
+        if self.tracker.p_idol_id is not None:
+            self.p_idol_id = self.tracker.p_idol_id
+            if hasattr(self.scene_routing_reco, "set_p_idol_id"):
+                self.scene_routing_reco.set_p_idol_id(self.tracker.p_idol_id)
         if isinstance(data.get("recognizer"), dict):
             self.scene_routing_reco.load_state(data["recognizer"])
         restored_sess = False
@@ -471,6 +478,7 @@ class GakumasRunner:
         self._mid_battle_skip_streak = 0
         self._popup_fallback_streak = 0
         self._popup_fallback_key = None
+        self._last_scene_type = None
         if clear_checkpoint and self.checkpoint_path and self.checkpoint_path.exists():
             try:
                 self.checkpoint_path.unlink()
@@ -510,6 +518,7 @@ class GakumasRunner:
             precaptured_frame: Optional[np.ndarray] = None
             precaptured_ts: float = 0.0
             max_loading_waits = 6 if (self.mode != "mock" and not isinstance(self.controller, MockController)) else 1
+            schedule_entry_settled = False
             for load_try in range(max_loading_waits):
                 frame = None
                 cap_ts = 0.0
@@ -671,6 +680,58 @@ class GakumasRunner:
                         if self._shop_settle_sleep > 0:
                             time.sleep(self._shop_settle_sleep)
                         continue
+                if obs.scene_type == "produce_schedule" and max_loading_waits > 1:
+                    if (
+                        not schedule_entry_settled
+                        and self._last_scene_type is not None
+                        and self._last_scene_type != "produce_schedule"
+                        and load_try + 1 < max_loading_waits
+                    ):
+                        schedule_entry_settled = True
+                        logger.info(
+                            "Entered produce_schedule from %s; waiting %.2fs before re-capturing...",
+                            self._last_scene_type,
+                            self._schedule_settle_sleep,
+                        )
+                        if self._schedule_settle_sleep > 0:
+                            time.sleep(self._schedule_settle_sleep)
+                        continue
+                    if load_try < 3:
+                        has_non_rest_sched = any(
+                            tok in f"{(o or {}).get('name') or ''} {(o or {}).get('title') or ''} {(o or {}).get('description') or ''}"
+                            for o in (obs.options or ())
+                            for tok in (
+                                "授業",
+                                "公開レッスン",
+                                "レッスン",
+                                "追い込み",
+                                "差し入れ",
+                                "活動支給",
+                                "相談",
+                                "特別指導",
+                                "インターバル",
+                                "おでかけ",
+                                "破棄",
+                                "捨てる",
+                            )
+                        )
+                        sched_stam = int(getattr(obs, "stamina", 0) or 0)
+                        sched_max = max(1, int(getattr(obs, "max_stamina", 44) or 44))
+                        if sched_stam <= 0 and int(getattr(self.tracker, "stamina", 0) or 0) > 0:
+                            sched_stam = int(self.tracker.stamina)
+                            sched_max = max(1, int(getattr(self.tracker, "max_stamina", 44) or 44))
+                        sched_low_hp = sched_stam > 0 and sched_stam < 15
+                        if (not has_non_rest_sched) and sched_stam > 0 and (not sched_low_hp):
+                            logger.info(
+                                "Detected produce_schedule with rest-only/empty options at healthy HP (%d/%d, try %d/3); waiting %.2fs before re-capturing...",
+                                sched_stam,
+                                sched_max,
+                                load_try + 1,
+                                self._schedule_settle_sleep,
+                            )
+                            if self._schedule_settle_sleep > 0:
+                                time.sleep(self._schedule_settle_sleep)
+                            continue
                 break
 
             assert obs is not None
@@ -797,6 +858,8 @@ class GakumasRunner:
                                         reco_inner.plan = scan_res.plan
                                 if scan_res.p_idol_id is not None:
                                     self.p_idol_id = scan_res.p_idol_id
+                                    if hasattr(self.scene_routing_reco, "set_p_idol_id"):
+                                        self.scene_routing_reco.set_p_idol_id(scan_res.p_idol_id)
                                 self._flush_produce_library()
                                 break
                             logger.warning(
@@ -885,6 +948,7 @@ class GakumasRunner:
                                 except Exception as cb_err:
                                     logger.error("Error in on_action_executed callback: %s", cb_err)
                             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                            self._last_scene_type = obs.scene_type
                             retry_result = StepResult(
                                 step_idx=step_idx,
                                 success=True,
@@ -1045,6 +1109,10 @@ class GakumasRunner:
                     )
                     if detected_pid is not None and detected_pid != self.tracker.p_idol_id:
                         self.tracker.p_idol_id = detected_pid
+                        if self.p_idol_id is None:
+                            self.p_idol_id = detected_pid
+                        if hasattr(self.scene_routing_reco, "set_p_idol_id"):
+                            self.scene_routing_reco.set_p_idol_id(detected_pid)
                 if not self.tracker.produce_deck:
                     pid = self.tracker.p_idol_id if self.tracker.p_idol_id is not None else (
                         None if self.scenario_id in ("hif_honsen", "hif") else (126 if self.plan.lower() == "logic" else None)
@@ -1822,6 +1890,7 @@ class GakumasRunner:
                     logger.error("Error in on_action_executed callback: %s", cb_err)
 
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+            self._last_scene_type = obs.scene_type
 
             result = StepResult(
                 step_idx=step_idx,
